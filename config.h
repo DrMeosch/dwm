@@ -50,6 +50,12 @@ static const Rule rules[] = {
 	 *	WM_NAME(STRING) = title
 	*/
 	/* class    instance      title       	 tags mask    isfloating   isterminal  noswallow  monitor */
+  /* mine */
+  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
+  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
+  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
+  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
+  /* from larbs */
 	{ "Gimp",     NULL,       NULL,          1 << 8,      0,           0,          0,         -1 },
 	{ TERMCLASS,  NULL,       NULL,       	 0,           0,           1,          0,         -1 },
 	{ NULL,       NULL,       "Event Tester", 0,          0,           0,          1,         -1 },
@@ -83,6 +89,11 @@ static const Layout layouts[] = {
 	{ "><>",	NULL },	                /* no layout function means floating behavior */
 	{ NULL,		NULL },
 };
+
+static const char *brightness_up[]   = { "sb-brightnessctl", "set", "+5%", NULL };
+static const char *brightness_down[] = { "sb-brightnessctl", "set", "5%-", NULL };
+static const char *brightness_up_with_shift[]   = { "sb-brightnessctl", "set", "+1%", NULL };
+static const char *brightness_down_with_shuft[] = { "sb-brightnessctl", "set", "1%-", NULL };
 
 /* key definitions */
 #define MODKEY Mod4Mask
@@ -286,8 +297,11 @@ static const Key keys[] = {
 	{ 0, XF86XK_TouchpadToggle,                    spawn,                  SHCMD("(synclient | grep 'TouchpadOff.*1' && synclient TouchpadOff=0) || synclient TouchpadOff=1") },
 	{ 0, XF86XK_TouchpadOff,                       spawn,                  {.v = (const char*[]){ "synclient", "TouchpadOff=1", NULL } } },
 	{ 0, XF86XK_TouchpadOn,                        spawn,                  {.v = (const char*[]){ "synclient", "TouchpadOff=0", NULL } } },
-	{ 0, XF86XK_MonBrightnessUp,                   spawn,                  {.v = (const char*[]){ "xbacklight", "-inc", "15", NULL } } },
-	{ 0, XF86XK_MonBrightnessDown,                 spawn,                  {.v = (const char*[]){ "xbacklight", "-dec", "15", NULL } } },
+	{ MODKEY|ControlMask,		XK_space,	spawn,	SHCMD("cycle-keyboard") },
+  { 0, XF86XK_MonBrightnessUp,   spawn, {.v = brightness_up } },
+  { 0, XF86XK_MonBrightnessDown, spawn, {.v = brightness_down } },
+  { ControlMask, XF86XK_MonBrightnessUp,   spawn, {.v = brightness_up_with_shift } },
+  { ControlMask, XF86XK_MonBrightnessDown, spawn, {.v = brightness_down_with_shuft } },
 
 	/* { MODKEY|Mod4Mask,           XK_h,          incrgaps,               {.i = +1 } }, */
 	/* { MODKEY|Mod4Mask,           XK_l,          incrgaps,               {.i = -1 } }, */
@@ -334,3 +348,4 @@ static const Button buttons[] = {
 	{ ClkTagBar,		0,		     Button5,	     shiftview,      {.i = 1} },
 	{ ClkRootWin,		0,		     Button2,	     togglebar,      {0} },
 };
+
