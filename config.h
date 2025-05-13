@@ -33,7 +33,7 @@ static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize
 // https://github.com/dracula/dwm/blob/main/config.h
 static char normbgcolor[]       = "#282a36";
 static char normbordercolor[]       = "#444444";
-// static char selbordercolor[]       = "#ffb86c";
+//static char selbordercolor[]       = "#ffb86c";
 static char selbordercolor[]        = "#770000";
 static char normfgcolor[]       = "#ff79c6";
 static char selfgcolor[]       = "#ffb86c";
