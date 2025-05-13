@@ -6,7 +6,7 @@
 #define BROWSER "librewolf"
 
 /* appearance */
-static unsigned int borderpx  = 3;        /* border pixel of windows */
+static unsigned int borderpx  = 1;        /* border pixel of windows */
 static unsigned int snap      = 32;       /* snap pixel */
 static unsigned int gappih    = 20;       /* horiz inner gap between windows */
 static unsigned int gappiv    = 10;       /* vert inner gap between windows */
@@ -33,8 +33,8 @@ static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize
 // https://github.com/dracula/dwm/blob/main/config.h
 static char normbgcolor[]       = "#282a36";
 static char normbordercolor[]       = "#444444";
-//static char selbordercolor[]       = "#ffb86c";
-static char selbordercolor[]        = "#770000";
+static char selbordercolor[]       = "#ffb86c";
+//static char selbordercolor[]        = "#770000";
 static char normfgcolor[]       = "#ff79c6";
 static char selfgcolor[]       = "#ffb86c";
 static char selbgcolor[]        = "#282a36";
@@ -58,6 +58,7 @@ static Sp scratchpads[] = {
 
 /* tagging */
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
+static const int taglayouts[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 static const Rule rules[] = {
 	/* xprop(1):
