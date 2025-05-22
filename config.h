@@ -225,11 +225,9 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,		XK_f,          setlayout,              {.v = &layouts[8]} },
 	{ MODKEY,			XK_g,          shiftview,              { .i = -1 } },
 	{ MODKEY|ShiftMask,		XK_g,          shifttag,               { .i = -1 } },
-	/* { MODKEY,			XK_h,          setmfact,               {.f = -0.05} }, */
-  { MODKEY,			XK_Left,       setmfact,               {.f = -0.05} },
+  { MODKEY|ShiftMask,			XK_h,          setmfact,               {.f = -0.05} },
 	/* J and K are automatically bound above in STACKEYS */
-  { MODKEY,			XK_Right,      setmfact,               {.f = +0.05} },
-	/* { MODKEY,			XK_l,          setmfact,               {.f = +0.05} }, */
+  { MODKEY|ShiftMask,			XK_l,          setmfact,               {.f = +0.05} },
 	{ MODKEY,			XK_semicolon,  shiftview,              { .i = 1 } },
 	{ MODKEY|ShiftMask,		XK_semicolon,  shifttag,               { .i = 1 } },
 	{ MODKEY,			XK_apostrophe, togglescratch,          {.ui = 1} },
