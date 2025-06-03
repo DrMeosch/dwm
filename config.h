@@ -38,9 +38,15 @@ static char selbordercolor[]       = "#ffb86c";
 static char normfgcolor[]       = "#ff79c6";
 static char selfgcolor[]       = "#ffb86c";
 static char selbgcolor[]        = "#282a36";
+static const char col_gray1[]        = "#222222";
+static const char col_gray2[]        = "#444444";
+static const char col_gray3[]        = "#bbbbbb";
+
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
+       // [SchemeInv]  = { col_gray1, col_gray3, col_gray2 },
+       [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
 };
 
