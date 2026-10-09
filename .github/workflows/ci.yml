@@ -9,5 +9,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config \
+            libfontconfig1-dev libfreetype6-dev \
+            libx11-dev libx11-xcb-dev libxft-dev libxinerama-dev \
+            libxcb1-dev libxcb-res0-dev xvfb x11-utils
       - name: Run tests
         run: make test
+      - name: Build dwm
+        run: make

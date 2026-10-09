@@ -32,10 +32,8 @@ dwm: ${OBJ}
 	${CC} -o $@ ${OBJ} ${LDFLAGS}
 
 test:
-	@cd src && \
-	testbin=tests/righttile; \
-	trap 'rm -f "$$testbin"' 0 1 2 3 15; \
-	${CC} -std=c99 -Wall -Wno-unused-function tests/righttile.c -lm -o "$$testbin" && "$$testbin"
+	@TEST_CFLAGS='-std=c99 -pedantic -Wall -Wextra -Wno-unused-function -Wno-deprecated-declarations -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L ${INCS}' \
+		TEST_LIBS='${LDFLAGS}' sh src/tests/run.sh '${CURDIR}'
 
 dist: clean
 	mkdir -p dwm-${VERSION}

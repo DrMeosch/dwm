@@ -2781,7 +2781,9 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif /* __OpenBSD__ */
 	scan();
+#ifndef DWM_TEST
 	runAutostart();
+#endif
 	run();
 	if(restart) execvp(argv[0], argv);
 	cleanup();
