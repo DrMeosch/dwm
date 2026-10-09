@@ -16,8 +16,27 @@ jobs:
             build-essential pkg-config \
             libfontconfig1-dev libfreetype6-dev \
             libx11-dev libx11-xcb-dev libxft-dev libxinerama-dev \
-            libxcb1-dev libxcb-res0-dev xvfb x11-utils
+            libxcb1-dev libxcb-res0-dev xvfb x11-utils x11-xserver-utils
       - name: Run tests
+        env:
+          DWM_X11_CAPTURE_DIR: ${{ runner.temp }}/dwm-x11-captures
         run: make test
+      - name: Upload X11 reload screenshots
+        id: reload-screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: xresources-reload-screenshots
+          path: ${{ runner.temp }}/dwm-x11-captures/*.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Add screenshot link to workflow summary
+        env:
+          ARTIFACT_URL: ${{ steps.reload-screenshots.outputs.artifact-url }}
+        run: |
+          {
+            echo '## Xresources reload screenshots'
+            echo
+            echo "[Download the dark and light border captures](${ARTIFACT_URL})"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Build dwm
         run: make

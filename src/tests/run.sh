@@ -19,8 +19,14 @@ compile_and_run righttile "$root/src/tests/righttile.c"
 compile_and_run layouts "$root/src/tests/layouts.c"
 compile_and_run shiftview "$root/src/tests/shiftview.c"
 compile_and_run utilities "$root/src/tests/utilities.c"
+compile_and_run sigusr2 "$root/src/tests/sigusr2.c" "$root/src/sigusr2.c"
 
-$cc $test_cflags "$root/src/tests/core.c" "$root/src/drw.c" "$root/src/util.c" \
+$cc $test_cflags "$root/src/tests/selborder.c" "$root/src/selborder.c" \
+	$test_libs -lX11 -lm -o "$tmp/selborder"
+"$tmp/selborder"
+
+$cc $test_cflags "$root/src/tests/core.c" "$root/src/drw.c" "$root/src/sigusr2.c" \
+	"$root/src/selborder.c" "$root/src/util.c" \
 	$test_libs -lm -o "$tmp/core"
 "$tmp/core"
 

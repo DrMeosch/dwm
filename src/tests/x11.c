@@ -194,8 +194,9 @@ main(void)
 		pause_millis(25);
 	CHECK(viewable(dpy, tiled), "MapRequest was not dispatched for a tiled window");
 	if (XGetWindowAttributes(dpy, tiled, &attributes)) {
-		CHECK(attributes.border_width == 7,
-		      "X resource borderpx was not applied: %d", attributes.border_width);
+		CHECK(attributes.border_width == 1,
+		      "the selected window did not keep a one-pixel border: %d",
+		      attributes.border_width);
 		XResizeWindow(dpy, tiled, 111, 123);
 		XFlush(dpy);
 		got_configure = wait_tiled_configure(dpy, tiled, 111, 123, &configure_event);
@@ -231,8 +232,8 @@ main(void)
 		CHECK(transient_managed, "production transient window was not managed");
 		CHECK(related, "production transient relationship was not retained");
 		if (transient_managed && related && XGetWindowAttributes(dpy, transient, &attributes)) {
-			CHECK(attributes.border_width == 7,
-			      "production transient did not receive the configured border: %d",
+			CHECK(attributes.border_width == 1,
+			      "production transient did not keep a one-pixel border: %d",
 			      attributes.border_width);
 			CHECK(attributes.x == (DisplayWidth(dpy, DefaultScreen(dpy))
 			                         - attributes.width - 2 * attributes.border_width) / 2

@@ -21,6 +21,7 @@
  * To understand everything else, start reading main().
  */
 #include <errno.h>
+#include <poll.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -47,6 +48,8 @@
 #include <xcb/res.h>
 
 #include "drw.h"
+#include "selborder.h"
+#include "sigusr2.h"
 #include "util.h"
 
 /* macros */
@@ -232,6 +235,7 @@ static void resizeclient(Client *c, int x, int y, int w, int h);
 static void resizemouse(const Arg *arg);
 static void restack(Monitor *m);
 static void run(void);
+static void reloadcolors(void);
 static void runAutostart(void);
 static void scan(void);
 static int sendevent(Client *c, Atom proto);
@@ -656,6 +660,7 @@ cleanup(void)
 	XSync(dpy, False);
 	XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
 	XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
+	sigusr2_cleanup();
 }
 
 void
@@ -1646,11 +1651,39 @@ void
 run(void)
 {
 	XEvent ev;
+	struct pollfd fds[] = {
+		{ .fd = ConnectionNumber(dpy), .events = POLLIN },
+		{ .fd = sigusr2_fd(), .events = POLLIN },
+	};
+
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
-		if (handler[ev.type])
-			handler[ev.type](&ev); /* call handler */
+	while (running) {
+		if (sigusr2_dispatch(reloadcolors) < 0)
+			die("dwm: signal dispatch:");
+		while (XEventsQueued(dpy, QueuedAlready)) {
+			XNextEvent(dpy, &ev);
+			if (handler[ev.type])
+				handler[ev.type](&ev); /* call handler */
+		}
+		if (!running)
+			break;
+		if (poll(fds, LENGTH(fds), -1) < 0) {
+			if (errno == EINTR)
+				continue;
+			die("dwm: poll:");
+		}
+		if (fds[0].revents & POLLIN)
+			XEventsQueued(dpy, QueuedAfterReading);
+		if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+			die("dwm: X connection closed");
+	}
+}
+
+static void
+reloadcolors(void)
+{
+	xrdb(NULL);
 }
 
 void
@@ -1844,6 +1877,8 @@ setup(void)
 
 	/* clean up any zombies immediately */
 	sigchld(0);
+	if (sigusr2_setup() < 0)
+		die("dwm: SIGUSR2 setup:");
 
 	signal(SIGHUP, sighup);
 	signal(SIGTERM, sigterm);
@@ -2743,20 +2778,20 @@ load_xresources(void)
 	XrmDatabase db;
 	ResourcePref *p;
 
+	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	display = XOpenDisplay(NULL);
-	if (!display)
-		return;
-	resm = XResourceManagerString(display);
-	if (!resm) {
+	if (display) {
+		resm = XResourceManagerString(display);
+		if (resm) {
+			db = XrmGetStringDatabase(resm);
+			for (p = resources; p < resources + LENGTH(resources); p++)
+				resource_load(db, p->name, p->type, p->dst);
+			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
+			XrmDestroyDatabase(db);
+		}
 		XCloseDisplay(display);
-		return;
 	}
-
-	db = XrmGetStringDatabase(resm);
-	for (p = resources; p < resources + LENGTH(resources); p++)
-		resource_load(db, p->name, p->type, p->dst);
-	XrmDestroyDatabase(db);
-	XCloseDisplay(display);
+	borderpx = 1;
 }
 
 int

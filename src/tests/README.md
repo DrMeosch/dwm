@@ -17,5 +17,30 @@ ConfigureNotify delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
 
 The geometry harness supplies the monitor/client iteration and resize boundary
-used by the layout code. The normal `make` target remains the production build
-check.
+used by the layout code. It verifies requested rectangles; it does not test X
+server placement, size hints, or full key event dispatch. The normal `make`
+target remains the production build check.
+
+The `sigusr2` check builds the production signal-pipe module and sends SIGUSR2
+from a child process while the test process is blocked in `poll`. It verifies
+that the signal wakes the wait, the reload callback observes updated resource
+data, the callback runs outside the signal handler, and the pipe is drained.
+This behavioral check does not need an X server.
+
+The `selborder` check uses the Xresources parser with dark and light resource
+databases. It verifies that `dwm.selbordercolor` selects each theme color,
+`dwm.color8` cannot override it, and the configured orange value is used when
+the dedicated resource is absent.
+
+To capture the live reload visually, run:
+
+```sh
+DWM_X11_CAPTURE_DIR=/tmp/dwm-captures make test
+```
+
+The X11 integration test checks the same selected client's focus, one-pixel
+border width, and rendered border color before and after sending SIGUSR2 to the
+running test dwm, then writes `dark.png` and `light.png` to that directory. CI
+uploads both images as the `xresources-reload-screenshots` artifact and adds a
+direct download link to the workflow summary. SIGUSR1 stays reserved for
+dwmblocks; SIGUSR2 requests the Xresources reload.

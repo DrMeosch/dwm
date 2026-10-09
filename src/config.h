@@ -33,7 +33,8 @@ static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize
 // https://github.com/dracula/dwm/blob/main/config.h
 static char normbgcolor[]       = "#282a36";
 static char normbordercolor[]       = "#444444";
-static char selbordercolor[]       = "#ffb86c";
+#define SELBORDERCOLOR "#ffb86c"
+static char selbordercolor[]       = SELBORDERCOLOR;
 //static char selbordercolor[]        = "#770000";
 static char normfgcolor[]       = "#ff79c6";
 static char selfgcolor[]       = "#ffb86c";
@@ -142,16 +143,14 @@ static const char *brightness_down_with_shuft[] = { "sb-brightnessctl", "set", "
 static const char *termcmd[]  = { TERMINAL, NULL };
 
 /*
- * Xresources preferences to load at startup
+ * Xresources preferences to load at startup and on reload
  */
 ResourcePref resources[] = {
 		{ "color0",		STRING,	&normbordercolor },
-		{ "color8",		STRING,	&selbordercolor },
 		{ "color0",		STRING,	&normbgcolor },
 		{ "color4",		STRING,	&normfgcolor },
 		{ "color0",		STRING,	&selfgcolor },
 		{ "color4",		STRING,	&selbgcolor },
-		{ "borderpx",		INTEGER, &borderpx },
 		{ "snap",		INTEGER, &snap },
 		{ "showbar",		INTEGER, &showbar },
 		{ "topbar",		INTEGER, &topbar },

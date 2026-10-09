@@ -3,7 +3,7 @@
 
 include src/config.mk
 
-SRC = src/drw.c src/dwm.c src/util.c
+SRC = src/drw.c src/dwm.c src/selborder.c src/sigusr2.c src/util.c
 OBJ = ${SRC:.c=.o}
 
 .PHONY: clean dist install test uninstall
@@ -24,7 +24,7 @@ all: dwm
 .c.o:
 	${CC} -c ${CFLAGS} $< -o $@
 
-src/dwm.o: src/config.h src/config.mk src/drw.h src/util.h
+src/dwm.o: src/config.h src/config.mk src/drw.h src/selborder.h src/sigusr2.h src/util.h
 src/drw.o: src/config.mk src/drw.h src/util.h
 src/util.o: src/config.mk src/util.h
 
@@ -39,6 +39,7 @@ dist: clean
 	mkdir -p dwm-${VERSION}
 	cp -R src/Makefile src/README.md src/config.mk src/config.h\
 		src/dwm.1 src/drw.h src/util.h src/dwm.c src/drw.c src/util.c\
+		src/selborder.c src/selborder.h src/sigusr2.c src/sigusr2.h\
 		src/transient.c src/tests dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar

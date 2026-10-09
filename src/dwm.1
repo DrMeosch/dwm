@@ -192,6 +192,30 @@ Restart the dwm process.
 .TP
 .B SIGTERM - 15
 Cleanly terminate the dwm process.
+.TP
+.B SIGUSR2
+Reload colors from Xresources without restarting dwm or changing the selected tags.
+After updating Xresources, request the reload with
+.BR "pkill -USR2 -x dwm" .
+This has no effect if dwm is not running, and the command returns a nonzero status in that case.
+When no Xresources database is available, the selected border returns to its orange fallback.
+Set the dedicated
+.B dwm.selbordercolor
+resource to
+.B #ffb86c
+for the dark-theme accent or
+.B #000000
+for the light theme before requesting a reload.
+The selected border falls back to
+.B #ffb86c
+when that resource is absent.
+.B dwm.color8
+does not control the selected border, and
+.B dwm.borderpx
+does not change the one-pixel border width.
+.TP
+.B SIGUSR1
+Reserved for the dwmblocks notification protocol; it does not request a dwm reload.
 .SH SEE ALSO
 .BR dmenu (1),
 .BR st (1)
