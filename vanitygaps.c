@@ -514,7 +514,7 @@ tile(Monitor *m)
 	unsigned int i, n;
 	int mx = 0, my = 0, mh = 0, mw = 0;
 	int sx = 0, sy = 0, sh = 0, sw = 0;
-	float mfacts, sfacts;
+	float mfacts, sfacts, rightmfact;
 	int mrest, srest;
 	Client *c;
 
@@ -532,8 +532,10 @@ tile(Monitor *m)
 	sw = mw = m->ww - 2*ov;
 
 	if (m->nmaster && n > m->nmaster) {
-		sw = (mw - iv) * (1 - m->mfact);
-		mw = (mw - iv) * m->mfact;
+		/* Keep mfact adjustments while giving right-side-main a two-thirds master. */
+		rightmfact = MIN(MAX(m->mfact + (2.0 / 3.0 - mfact), 0.05), 0.95);
+		sw = (mw - iv) * (1 - rightmfact);
+		mw = (mw - iv) * rightmfact;
 		mx = sx + sw + iv;
 	}
 
