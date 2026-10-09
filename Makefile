@@ -53,8 +53,8 @@ dwm: ${OBJ}
 
 
 test:
-	cd src
-	@testbin=tests/righttile; \
+	@cd src && \
+	testbin=tests/righttile; \
 	trap 'rm -f "$$testbin"' 0 1 2 3 15; \
 	${CC} -std=c99 -Wall -Wno-unused-function tests/righttile.c -lm -o "$$testbin" && "$$testbin"
 
@@ -148,7 +148,7 @@ docker-multiarch-builder: qemu
 
 security: ${ARM64_TRIVY_REPORT} ${AMD64_TRIVY_REPORT}
 	@set -euo pipefail; \
-	@docker image rm -f "${ARM64_PATCHED_IMAGE}" "${AMD64_PATCHED_IMAGE}" >/dev/null 2>&1 || true; \
+	docker image rm -f "${ARM64_PATCHED_IMAGE}" "${AMD64_PATCHED_IMAGE}" >/dev/null 2>&1 || true; \
 	for arch in arm64 amd64; do \
 		case "$$arch" in \
 			arm64) \
