@@ -108,6 +108,7 @@ static const Layout layouts[] = {
 
 	{ "|M|",	centeredmaster },               /* Master in middle, slaves on sides */
 	{ ">M>",	centeredfloatingmaster },       /* Same but master floats */
+	{ "M>|",	righttile },                    /* Right-side master, two-thirds by default */
 
 	{ "><>",	NULL },	                /* no layout function means floating behavior */
 	{ NULL,		NULL },
@@ -205,7 +206,7 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,		XK_r,          spawn,                  {.v = (const char*[]){ TERMINAL, "-e", "htop", NULL } } },
 	{ MODKEY,			XK_t,          setlayout,              {.v = &layouts[0]} }, /* tile */
 	{ MODKEY|ShiftMask,		XK_t,          setlayout,              {.v = &layouts[1]} }, /* bstack */
-	{ MODKEY|ShiftMask,		XK_z,          setlayout,              {.v = &layouts[0]} }, /* right-side-main tile; free hotkey */
+	{ MODKEY|ShiftMask,		XK_z,          setlayout,              {.v = &layouts[8]} }, /* right-side-main tile */
 	{ MODKEY,			XK_y,          setlayout,              {.v = &layouts[2]} }, /* spiral */
 	{ MODKEY|ShiftMask,		XK_y,          setlayout,              {.v = &layouts[3]} }, /* dwindle */
 	{ MODKEY,			XK_u,          setlayout,              {.v = &layouts[4]} }, /* deck */
@@ -230,7 +231,7 @@ static const Key keys[] = {
 	{ MODKEY,			XK_d,          spawn,                  {.v = (const char*[]){ "dmenu_run", NULL } } },
 	{ MODKEY|ShiftMask,		XK_d,          spawn,                  {.v = (const char*[]){ "passmenu", NULL } } },
 	{ MODKEY,			XK_f,          togglefullscr,          {0} },
-	{ MODKEY|ShiftMask,		XK_f,          setlayout,              {.v = &layouts[8]} },
+	{ MODKEY|ShiftMask,		XK_f,          setlayout,              {.v = &layouts[9]} },
 	{ MODKEY,			XK_g,          shiftview,              { .i = -1 } },
 	{ MODKEY|ShiftMask,		XK_g,          shifttag,               { .i = -1 } },
   { MODKEY|ShiftMask,			XK_h,          setmfact,               {.f = -0.05} },

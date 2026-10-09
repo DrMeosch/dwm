@@ -19,6 +19,8 @@ static void dwindle(Monitor *m);
 static void fibonacci(Monitor *m, int s);
 static void spiral(Monitor *m);
 static void tile(Monitor *);
+static void righttile(Monitor *);
+static void tilelayout(Monitor *, int);
 
 /* Internals */
 static void getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc);
@@ -511,10 +513,22 @@ spiral(Monitor *m)
 static void
 tile(Monitor *m)
 {
+	tilelayout(m, 0);
+}
+
+static void
+righttile(Monitor *m)
+{
+	tilelayout(m, 1);
+}
+
+static void
+tilelayout(Monitor *m, int rightside)
+{
 	unsigned int i, n;
 	int mx = 0, my = 0, mh = 0, mw = 0;
 	int sx = 0, sy = 0, sh = 0, sw = 0;
-	float mfacts, sfacts, rightmfact;
+	float mfacts, sfacts, layoutmfact;
 	int mrest, srest;
 	Client *c;
 
@@ -532,11 +546,13 @@ tile(Monitor *m)
 	sw = mw = m->ww - 2*ov;
 
 	if (m->nmaster && n > m->nmaster) {
-		/* Keep mfact adjustments while giving right-side-main a two-thirds master. */
-		rightmfact = MIN(MAX(m->mfact + (2.0 / 3.0 - mfact), 0.05), 0.95);
-		sw = (mw - iv) * (1 - rightmfact);
-		mw = (mw - iv) * rightmfact;
-		mx = sx + sw + iv;
+		layoutmfact = rightside ? MIN(MAX(m->mfact + (2.0 / 3.0 - mfact), 0.05), 0.95) : m->mfact;
+		sw = (mw - iv) * (1 - layoutmfact);
+		mw = (mw - iv) * layoutmfact;
+		if (rightside)
+			mx = sx + sw + iv;
+		else
+			sx = mx + mw + iv;
 	}
 
 	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
