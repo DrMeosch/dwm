@@ -1,0 +1,53 @@
+FROM python:3.14-slim-bookworm AS python
+
+FROM node:bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS dev
+
+COPY --from=python /usr/local/ /usr/local/
+
+# Runtime libraries for Python and its standard-library extensions.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libbluetooth3 \
+      libbz2-1.0 \
+      libcrypt1 \
+      libdb5.3 \
+      libexpat1 \
+      libffi8 \
+      libgdbm6 \
+      libgdbm-compat4 \
+      liblzma5 \
+      libncursesw6 \
+      libreadline8 \
+      libsqlite3-0 \
+      libssl3 \
+      libtinfo6 \
+      libuuid1 \
+      libzstd1 \
+      zlib1g \
+      curl \
+      ca-certificates \
+      tar \
+      # docker-cli \
+      # docker-buildx \
+      # docker-compose \
+      # redis-tools \
+    && ldconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /app || exit 0
+RUN mkdir -p /home/node/.local/npm/bin /home/node/.codex || exit 0
+RUN chown -R node:node /app /home/node
+
+ENV PATH="/home/node/.local/bin:/home/node/.local/npm/bin:${PATH}"
+ENV NPM_CONFIG_PREFIX=/home/node/.local/npm
+
+ENV CODEX_HOME=/home/node/.codex
+ENV PATH=/home/node/.codex/bin:${PATH}
+
+USER node
+
+WORKDIR /app
+
+RUN curl -L https://github.com/kunchenguid/firstmate/archive/refs/heads/main.tar.gz \
+  | tar -xz --strip-components=1
+
+RUN mkdir -p /app/projects && chown node:node /app/projects
