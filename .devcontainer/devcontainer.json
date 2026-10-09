@@ -6,7 +6,7 @@
   },
   "workspaceFolder": "/app",
   "mounts": [
-    "source=${localWorkspaceFolder},target=/app,type=bind",
+    "source=${localWorkspaceFolder},target=/app/projects,type=bind",
     // "source=${localWorkspaceFolder}/../frontend,target=/workspace/frontend,type=bind,readonly",
     // "source=${localWorkspaceFolder}/../shared,target=/workspace/shared,type=bind,readonly",
     "source=dwm-home,target=/home/node/.codex,type=volume",
