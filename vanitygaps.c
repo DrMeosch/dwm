@@ -534,7 +534,7 @@ tile(Monitor *m)
 	if (m->nmaster && n > m->nmaster) {
 		sw = (mw - iv) * (1 - m->mfact);
 		mw = (mw - iv) * m->mfact;
-		sx = mx + mw + iv;
+		mx = sx + sw + iv;
 	}
 
 	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);

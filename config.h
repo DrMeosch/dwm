@@ -97,7 +97,7 @@ static const int refreshrate = 60;  /* refresh rate (per second) for client move
 #include "vanitygaps.c"
 static const Layout layouts[] = {
 	/* symbol     arrange function */
-	{ "[]=",	tile },	                /* Default: Master on left, slaves on right */
+	{ "[]=",	tile },	                /* Default: Master on right, slaves on left */
 	{ "TTT",	bstack },               /* Master on top, slaves on bottom */
 
 	{ "[@]",	spiral },               /* Fibonacci spiral */
