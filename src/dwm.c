@@ -2791,7 +2791,7 @@ load_xresources(void)
 		}
 		XCloseDisplay(display);
 	}
-	borderpx = 1;
+	borderpx = 2;
 }
 
 int

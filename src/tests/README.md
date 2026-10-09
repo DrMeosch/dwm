@@ -38,7 +38,7 @@ To capture the live reload visually, run:
 DWM_X11_CAPTURE_DIR=/tmp/dwm-captures make test
 ```
 
-The X11 integration test checks the same selected client's focus, one-pixel
+The X11 integration test checks the same selected client's focus, two-pixel
 border width, and rendered border color before and after sending SIGUSR2 to the
 running test dwm, then writes `dark.png` and `light.png` to that directory. CI
 uploads both images as the `xresources-reload-screenshots` artifact and adds a

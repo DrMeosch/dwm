@@ -44,7 +44,7 @@ draw(void)
 	XSetForeground(dpy, gc, rule);
 	XFillRectangle(dpy, win, gc, 38, 145, 584, 1);
 	draw_text(38, 187, "SIGUSR2  /  Xresources", ink);
-	draw_text(38, 216, "Selected client  |  borderpx: 1", muted);
+	draw_text(38, 216, "Selected client  |  borderpx: 2", muted);
 	XSetForeground(dpy, gc, rule);
 	XFillRectangle(dpy, win, gc, 38, 367, 584, 1);
 	draw_text(38, 394, "dwm issue #6  -  visual reload evidence", muted);
