@@ -1881,8 +1881,14 @@ setup(void)
 	cursor[CurMove] = drw_cur_create(drw, XC_fleur);
 	/* init appearance */
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
-	for (i = 0; i < LENGTH(colors); i++)
-		scheme[i] = drw_scm_create(drw, colors[i], 3);
+	for (i = 0; i < LENGTH(colors); i++) {
+		if (!(scheme[i] = drw_scm_create(drw, colors[i], 3))) {
+			while (i > 0)
+				drw_scm_free(drw, scheme[--i], 3);
+			free(scheme);
+			die("error, cannot allocate color scheme");
+		}
+	}
 	/* init bars */
 	updatebars();
 	updatestatus();
@@ -2671,13 +2677,27 @@ zoom(const Arg *arg)
 void
 xrdb(const Arg *arg)
 {
-    load_xresources();
+	Clr **new_scheme;
+	int i;
 
-    for (int i = 0; i < LENGTH(colors); i++)
-        scheme[i] = drw_scm_create(drw, colors[i], 3);
+	load_xresources();
+	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));
+	for (i = 0; i < LENGTH(colors); i++) {
+		if (!(new_scheme[i] = drw_scm_create(drw, colors[i], 3))) {
+			while (i > 0)
+				drw_scm_free(drw, new_scheme[--i], 3);
+			free(new_scheme);
+			return;
+		}
+	}
 
-    focus(NULL);
-    arrange(NULL);
+	for (i = 0; i < LENGTH(colors); i++)
+		drw_scm_free(drw, scheme[i], 3);
+	free(scheme);
+	scheme = new_scheme;
+
+	focus(NULL);
+	arrange(NULL);
 }
 
 void

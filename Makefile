@@ -11,7 +11,9 @@ all: dwm
 .c.o:
 	${CC} -c ${CFLAGS} $<
 
-${OBJ}: config.h config.mk
+dwm.o: config.h config.mk drw.h util.h
+drw.o: config.mk drw.h util.h
+util.o: config.mk util.h
 
 dwm: ${OBJ}
 	${CC} -o $@ ${OBJ} ${LDFLAGS}

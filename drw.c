@@ -166,18 +166,27 @@ drw_fontset_free(Fnt *font)
 	}
 }
 
-void
+int
 drw_clr_create(Drw *drw, Clr *dest, const char *clrname)
 {
+	Visual *visual;
+
 	if (!drw || !dest || !clrname)
-		return;
+		return 0;
+	visual = DefaultVisual(drw->dpy, drw->screen);
 
-	if (!XftColorAllocName(drw->dpy, DefaultVisual(drw->dpy, drw->screen),
+	if (!XftColorAllocName(drw->dpy, visual,
 	                       DefaultColormap(drw->dpy, drw->screen),
-	                       clrname, dest))
-		die("error, cannot allocate color '%s'", clrname);
+	                       clrname, dest)) {
+		fprintf(stderr, "error, cannot allocate color '%s'\n", clrname);
+		return 0;
+	}
 
-	dest->pixel |= 0xff << 24;
+	/* Keep colormap pixels unchanged so XftColorFree can release them. */
+	if (visual->class == TrueColor)
+		dest->pixel |= 0xffUL << 24;
+
+	return 1;
 }
 
 /* Create color schemes. */
@@ -191,8 +200,12 @@ drw_scm_create(Drw *drw, char *clrnames[], size_t clrcount)
 	if (!drw || !clrnames || clrcount < 2 || !(ret = ecalloc(clrcount, sizeof(Clr))))
 		return NULL;
 
-	for (i = 0; i < clrcount; i++)
-		drw_clr_create(drw, &ret[i], clrnames[i]);
+	for (i = 0; i < clrcount; i++) {
+		if (!drw_clr_create(drw, &ret[i], clrnames[i])) {
+			drw_scm_free(drw, ret, i);
+			return NULL;
+		}
+	}
 	return ret;
 }
 
