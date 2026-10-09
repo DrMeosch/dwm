@@ -1825,14 +1825,10 @@ void
 setmfact(const Arg *arg)
 {
 	float f;
-	float delta;
 
 	if (!arg || !selmon->lt[selmon->sellt]->arrange)
 		return;
-	delta = arg->f < 1.0 ? arg->f : arg->f - 1.0;
-	if (selmon->lt[selmon->sellt]->arrange == righttile)
-		delta = -delta;
-	f = selmon->mfact + delta;
+	f = adjustmfact(selmon->mfact, arg->f, selmon->lt[selmon->sellt]->arrange);
 	if (f < 0.05 || f > 0.95)
 		return;
 	selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag] = f;

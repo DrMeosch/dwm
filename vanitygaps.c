@@ -21,6 +21,7 @@ static void spiral(Monitor *m);
 static void tile(Monitor *);
 static void righttile(Monitor *);
 static void tilelayout(Monitor *, int);
+static float adjustmfact(float, float, void (*)(Monitor *));
 
 /* Internals */
 static void getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc);
@@ -520,6 +521,16 @@ static void
 righttile(Monitor *m)
 {
 	tilelayout(m, 1);
+}
+
+static float
+adjustmfact(float current, float value, void (*layout)(Monitor *))
+{
+	float delta = value < 1.0 ? value : value - 1.0;
+
+	if (layout == righttile)
+		delta = -delta;
+	return current + delta;
 }
 
 static void

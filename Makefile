@@ -20,6 +20,12 @@ dwm: ${OBJ}
 
 clean:
 	rm -f dwm ${OBJ} dwm-${VERSION}.tar.gz *.orig *.rej
+	rm -f tests/righttile
+
+test:
+	${CC} -std=c99 -Wall -Wno-unused-function tests/righttile.c -lm -o tests/righttile
+	./tests/righttile
+	rm -f tests/righttile
 
 dist: clean
 	mkdir -p dwm-${VERSION}
@@ -43,4 +49,4 @@ uninstall:
 		${DESTDIR}${PREFIX}/share/dwm/larbs.mom\
 		${DESTDIR}${MANPREFIX}/man1/dwm.1
 
-.PHONY: all clean dist install uninstall
+.PHONY: all clean dist install test uninstall
