@@ -23,14 +23,14 @@ clean:
 	rm -f tests/righttile
 
 test:
-	${CC} -std=c99 -Wall -Wno-unused-function tests/righttile.c -lm -o tests/righttile
-	./tests/righttile
-	rm -f tests/righttile
+	@testbin=tests/righttile; \
+	trap 'rm -f "$$testbin"' 0 1 2 3 15; \
+	${CC} -std=c99 -Wall -Wno-unused-function tests/righttile.c -lm -o "$$testbin" && "$$testbin"
 
 dist: clean
 	mkdir -p dwm-${VERSION}
-	cp -R LICENSE Makefile README config.mk\
-		dwm.1 drw.h util.h ${SRC} transient.c dwm-${VERSION}
+	cp -R LICENSE Makefile README.md config.mk\
+		dwm.1 drw.h util.h ${SRC} transient.c tests dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}
