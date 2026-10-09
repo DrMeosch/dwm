@@ -2399,13 +2399,13 @@ updatesizehints(Client *c)
 void
 updatestatus(void)
 {
-  Monitor* m;
+	Monitor *m;
 	if (!gettextprop(root, XA_WM_NAME, rawstext, sizeof(rawstext)))
 		strcpy(stext, "dwm-"VERSION);
 	else
 		copyvalidchars(stext, rawstext);
-	for(m = mons; m; m = m->next)
-		drawbar(selmon);
+	for (m = mons; m; m = m->next)
+		drawbar(m);
 }
 
 void
