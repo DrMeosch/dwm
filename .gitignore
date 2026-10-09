@@ -1,4 +1,5 @@
 .gitignore
+.env
 *.orig
 *.rej
 larbs.pdf
