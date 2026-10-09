@@ -205,7 +205,7 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,		XK_r,          spawn,                  {.v = (const char*[]){ TERMINAL, "-e", "htop", NULL } } },
 	{ MODKEY,			XK_t,          setlayout,              {.v = &layouts[0]} }, /* tile */
 	{ MODKEY|ShiftMask,		XK_t,          setlayout,              {.v = &layouts[1]} }, /* bstack */
-	{ MODKEY|ShiftMask,		XK_p,          setlayout,              {.v = &layouts[0]} }, /* right-side-main tile */
+	{ MODKEY|ShiftMask,		XK_z,          setlayout,              {.v = &layouts[0]} }, /* right-side-main tile; free hotkey */
 	{ MODKEY,			XK_y,          setlayout,              {.v = &layouts[2]} }, /* spiral */
 	{ MODKEY|ShiftMask,		XK_y,          setlayout,              {.v = &layouts[3]} }, /* dwindle */
 	{ MODKEY,			XK_u,          setlayout,              {.v = &layouts[4]} }, /* deck */
@@ -215,7 +215,7 @@ static const Key keys[] = {
 	{ MODKEY,			XK_o,          incnmaster,             {.i = +1 } },
 	{ MODKEY|ShiftMask,		XK_o,          incnmaster,             {.i = -1 } },
 	{ MODKEY,			XK_p,          spawn,                  {.v = (const char*[]){ "mpc", "toggle", NULL } } },
-	/* Mod+Shift+p is reserved for the right-side-main tile layout; the former media-pause binding was removed. */
+	{ MODKEY|ShiftMask,		XK_p,          spawn,                  SHCMD("mpc pause; pauseallmpv") },
 	{ MODKEY,			XK_bracketleft, spawn,                 {.v = (const char*[]){ "mpc", "seek", "-10", NULL } } },
 	{ MODKEY|ShiftMask,		XK_bracketleft, spawn,                 {.v = (const char*[]){ "mpc", "seek", "-60", NULL } } },
 	{ MODKEY,			XK_bracketright, spawn,                {.v = (const char*[]){ "mpc", "seek", "+10", NULL } } },
