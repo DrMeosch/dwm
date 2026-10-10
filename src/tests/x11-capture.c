@@ -1,4 +1,5 @@
 #include <X11/Xlib.h>
+#include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,19 +45,22 @@ draw(void)
 	XSetForeground(dpy, gc, rule);
 	XFillRectangle(dpy, win, gc, 38, 145, 584, 1);
 	draw_text(38, 187, "SIGUSR2  /  Xresources", ink);
-	draw_text(38, 216, "Selected client  |  borderpx: 2", muted);
+	draw_text(38, 216, "Selected client  |  borderpx: 1 dark / 2 light", muted);
 	XSetForeground(dpy, gc, rule);
 	XFillRectangle(dpy, win, gc, 38, 367, 584, 1);
-	draw_text(38, 394, "dwm issue #6  -  visual reload evidence", muted);
+	draw_text(38, 394, "dwm issue #10  -  border width reload evidence", muted);
 }
 
 static int
 client(const char *idfile)
 {
 	Window root;
-	XClassHint class_hint = { "issue6", "Issue6Evidence" };
+	Window tagged;
+	XClassHint class_hint = { "issue10", "Issue10Evidence" };
+	XClassHint tagged_class = { "issue10", "Issue10Tagged" };
 	XSizeHints size_hints;
 	XEvent event;
+	unsigned long tag_info[] = { 1UL << 1, 0 };
 	FILE *file;
 
 	dpy = XOpenDisplay(NULL);
@@ -71,23 +75,30 @@ client(const char *idfile)
 	muted = named("#555b6e");
 	rule = named("#c7cad4");
 	win = XCreateSimpleWindow(dpy, root, 270, 165, 660, 420, 0, ink, appbg);
-	XStoreName(dpy, win, "Issue #6 | selected window");
+	XStoreName(dpy, win, "Issue #10 | selected window");
 	XSetClassHint(dpy, win, &class_hint);
 	memset(&size_hints, 0, sizeof size_hints);
 	size_hints.flags = PMinSize | PMaxSize;
 	size_hints.min_width = size_hints.max_width = 660;
 	size_hints.min_height = size_hints.max_height = 420;
 	XSetWMNormalHints(dpy, win, &size_hints);
+	tagged = XCreateSimpleWindow(dpy, root, 30, 30, 100, 100, 0, ink, appbg);
+	XStoreName(dpy, tagged, "Issue #10 | retained tag");
+	XSetClassHint(dpy, tagged, &tagged_class);
+	XChangeProperty(dpy, tagged, XInternAtom(dpy, "_NET_CLIENT_INFO", False),
+	                XA_CARDINAL, 32, PropModeReplace,
+	                (unsigned char *)tag_info, 2);
 	XSelectInput(dpy, win, ExposureMask | StructureNotifyMask);
 	gc = XCreateGC(dpy, win, 0, NULL);
 	XMapWindow(dpy, win);
+	XMapWindow(dpy, tagged);
 	XFlush(dpy);
 	file = fopen(idfile, "w");
 	if (!file) {
 		perror(idfile);
 		return EXIT_FAILURE;
 	}
-	fprintf(file, "%lu\n", win);
+	fprintf(file, "%lu %lu\n", win, tagged);
 	fclose(file);
 	while (1) {
 		while (XPending(dpy)) {
@@ -100,15 +111,22 @@ client(const char *idfile)
 }
 
 static int
-check(const char *idarg, const char *expected_name)
+check(const char *idarg, const char *expected_name, const char *widtharg,
+      const char *taggedarg)
 {
-	Window target, focus;
-	XWindowAttributes wa;
+	Window target, tagged, focus;
+	XWindowAttributes wa, tagged_attributes;
+	Atom actual, client_info, wm_state;
+	int format;
+	unsigned long items, after;
+	unsigned char *data = NULL;
 	XImage *frame;
 	XColor expected, screen_color;
 	int revert, x, y, colored = 0;
 	int frame_x, frame_y;
 	unsigned long id = strtoul(idarg, NULL, 10);
+	int expected_width = (int)strtoul(widtharg, NULL, 10);
+	unsigned long tagged_id = strtoul(taggedarg, NULL, 10);
 
 	dpy = XOpenDisplay(NULL);
 	if (!dpy)
@@ -139,9 +157,36 @@ check(const char *idarg, const char *expected_name)
 	printf("window=%lu geometry=%dx%d+%d+%d borderpx=%d focus=%s border-color-pixels=%d\n",
 	       id, wa.width, wa.height, wa.x, wa.y, wa.border_width,
 	       focus == target ? "selected" : "other", colored);
-	if (wa.border_width != 1 || focus != target
+	if (wa.border_width != expected_width || focus != target
 	|| colored < (wa.width + wa.height) / 2)
 		return EXIT_FAILURE;
+	tagged = (Window)tagged_id;
+	client_info = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
+	wm_state = XInternAtom(dpy, "WM_STATE", False);
+	if (!XGetWindowAttributes(dpy, tagged, &tagged_attributes)
+	|| tagged_attributes.x + tagged_attributes.width
+	   + 2 * tagged_attributes.border_width > 0
+	|| tagged_attributes.border_width != expected_width
+	|| XGetWindowProperty(dpy, tagged, wm_state, 0, 2, False, wm_state,
+	                     &actual, &format, &items, &after, &data) != Success
+	|| actual != wm_state || format != 32 || items < 1) {
+		fprintf(stderr, "tagged client is not managed and hidden offscreen on its retained tag\n");
+		if (data)
+			XFree(data);
+		return EXIT_FAILURE;
+	}
+	XFree(data);
+	data = NULL;
+	if (XGetWindowProperty(dpy, tagged, client_info, 0, 2, False, XA_CARDINAL,
+	                       &actual, &format, &items, &after, &data) != Success
+	|| actual != XA_CARDINAL || format != 32 || items != 2
+	|| ((unsigned long *)data)[0] != (1UL << 1)) {
+		fprintf(stderr, "dwm did not retain the tagged client's tag assignment\n");
+		if (data)
+			XFree(data);
+		return EXIT_FAILURE;
+	}
+	XFree(data);
 	XDestroyImage(frame);
 	return EXIT_SUCCESS;
 }
@@ -223,12 +268,12 @@ main(int argc, char **argv)
 {
 	if (argc == 3 && !strcmp(argv[1], "client"))
 		return client(argv[2]);
-	if (argc == 4 && !strcmp(argv[1], "check"))
-		return check(argv[2], argv[3]);
+	if (argc == 6 && !strcmp(argv[1], "check"))
+		return check(argv[2], argv[3], argv[4], argv[5]);
 	if (argc == 3 && !strcmp(argv[1], "capture"))
 		return capture(argv[2]);
 	if (argc == 3 && !strcmp(argv[1], "root"))
 		return rootcolor(argv[2]);
-	fprintf(stderr, "usage: %s client idfile | check window-id color | capture ppm-file | root color\n", argv[0]);
+	fprintf(stderr, "usage: %s client idfile | check window-id color border-width tagged-window-id | capture ppm-file | root color\n", argv[0]);
 	return EXIT_FAILURE;
 }

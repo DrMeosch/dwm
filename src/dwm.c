@@ -48,6 +48,7 @@
 #include <xcb/res.h>
 
 #include "drw.h"
+#include "borderwidth.h"
 #include "selborder.h"
 #include "sigusr2.h"
 #include "util.h"
@@ -236,6 +237,7 @@ static void resizemouse(const Arg *arg);
 static void restack(Monitor *m);
 static void run(void);
 static void reloadcolors(void);
+static void updateborderwidth(void);
 static void runAutostart(void);
 static void scan(void);
 static int sendevent(Client *c, Atom proto);
@@ -2716,6 +2718,7 @@ xrdb(const Arg *arg)
 	int i;
 
 	load_xresources();
+	updateborderwidth();
 	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));
 	for (i = 0; i < LENGTH(colors); i++) {
 		if (!(new_scheme[i] = drw_scm_create(drw, colors[i], 3))) {
@@ -2733,6 +2736,26 @@ xrdb(const Arg *arg)
 
 	focus(NULL);
 	arrange(NULL);
+}
+
+static void
+updateborderwidth(void)
+{
+	Monitor *m;
+	Client *c;
+	XWindowChanges wc;
+
+	for (m = mons; m; m = m->next) {
+		for (c = m->clients; c; c = c->next) {
+			if (c->isfullscreen) {
+				c->oldbw = borderpx;
+				continue;
+			}
+			c->bw = borderpx;
+			wc.border_width = c->bw;
+			XConfigureWindow(dpy, c->win, CWBorderWidth, &wc);
+		}
+	}
 }
 
 void
@@ -2778,6 +2801,7 @@ load_xresources(void)
 	XrmDatabase db;
 	ResourcePref *p;
 
+	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	display = XOpenDisplay(NULL);
 	if (display) {
@@ -2786,12 +2810,12 @@ load_xresources(void)
 			db = XrmGetStringDatabase(resm);
 			for (p = resources; p < resources + LENGTH(resources); p++)
 				resource_load(db, p->name, p->type, p->dst);
+			(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
 			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 			XrmDestroyDatabase(db);
 		}
 		XCloseDisplay(display);
 	}
-	borderpx = 2;
 }
 
 int

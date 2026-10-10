@@ -194,7 +194,7 @@ Restart the dwm process.
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors from Xresources without restarting dwm or changing the selected tags.
+Reload colors and border width from Xresources without restarting dwm or changing the selected tags.
 After updating Xresources, request the reload with
 .BR "pkill -USR2 -x dwm" .
 This has no effect if dwm is not running, and the command returns a nonzero status in that case.
@@ -210,9 +210,14 @@ The selected border falls back to
 .B #ffb86c
 when that resource is absent.
 .B dwm.color8
-does not control the selected border, and
+does not control the selected border.
+.TP
 .B dwm.borderpx
-does not change the two-pixel border width.
+Sets the window border width in pixels. Use a positive decimal integer up to
+65535. For example, set this to 1 for a dark theme or 2 for a light theme.
+Existing windows receive the new width after a SIGUSR2 reload. If the resource
+is missing, invalid, or non-positive, dwm uses the configured fallback, which
+is 2 pixels by default.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

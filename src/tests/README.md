@@ -27,10 +27,13 @@ that the signal wakes the wait, the reload callback observes updated resource
 data, the callback runs outside the signal handler, and the pipe is drained.
 This behavioral check does not need an X server.
 
-The `selborder` check uses the Xresources parser with dark and light resource
-databases. It verifies that `dwm.selbordercolor` selects each theme color,
-`dwm.color8` cannot override it, and the configured orange value is used when
-the dedicated resource is absent.
+The `borderwidth` check uses the Xresources parser to verify that
+`dwm.borderpx` selects one or two pixels, ignores `dwm.color8` and dwmblocks
+resources, and falls back to the configured width for missing, invalid, zero,
+negative, and out-of-range values. The `selborder` check uses the Xresources
+parser with dark and light resource databases. It verifies that
+`dwm.selbordercolor` selects each theme color, `dwm.color8` cannot override it,
+and the configured orange value is used when the dedicated resource is absent.
 
 To capture the live reload visually, run:
 
@@ -38,9 +41,11 @@ To capture the live reload visually, run:
 DWM_X11_CAPTURE_DIR=/tmp/dwm-captures make test
 ```
 
-The X11 integration test checks the same selected client's focus, two-pixel
-border width, and rendered border color before and after sending SIGUSR2 to the
-running test dwm, then writes `dark.png` and `light.png` to that directory. CI
+The X11 integration test checks a one-pixel dark-theme border and a two-pixel
+light-theme border on the same selected client before and after sending SIGUSR2
+to the running test dwm. It also verifies a hidden client's tag assignment and
+the selected tag view survive the reload. When capture is enabled, it writes
+`dark.png` and `light.png` to that directory. CI
 uploads both images as the `xresources-reload-screenshots` artifact and adds a
 direct download link to the workflow summary. SIGUSR1 stays reserved for
 dwmblocks; SIGUSR2 requests the Xresources reload.

@@ -21,12 +21,16 @@ compile_and_run shiftview "$root/src/tests/shiftview.c"
 compile_and_run utilities "$root/src/tests/utilities.c"
 compile_and_run sigusr2 "$root/src/tests/sigusr2.c" "$root/src/sigusr2.c"
 
+$cc $test_cflags "$root/src/tests/borderwidth.c" "$root/src/borderwidth.c" \
+	$test_libs -lX11 -lm -o "$tmp/borderwidth"
+"$tmp/borderwidth"
+
 $cc $test_cflags "$root/src/tests/selborder.c" "$root/src/selborder.c" \
 	$test_libs -lX11 -lm -o "$tmp/selborder"
 "$tmp/selborder"
 
 $cc $test_cflags "$root/src/tests/core.c" "$root/src/drw.c" "$root/src/sigusr2.c" \
-	"$root/src/selborder.c" "$root/src/util.c" \
+	"$root/src/borderwidth.c" "$root/src/selborder.c" "$root/src/util.c" \
 	$test_libs -lm -o "$tmp/core"
 "$tmp/core"
 
