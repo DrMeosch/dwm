@@ -8,7 +8,7 @@
   "mounts": [
     "source=${localWorkspaceFolder},target=/app/projects,type=bind",
     // "source=${localWorkspaceFolder}/../frontend,target=/workspace/frontend,type=bind,readonly",
-    // "source=${localWorkspaceFolder}/../shared,target=/workspace/shared,type=bind,readonly",
+    "source=/shared,target=/shared,type=bind,readonly",
     "source=dwm-home,target=/home/node/.codex,type=volume",
     "source=${localEnv:HOME}/.codex/config.toml,target=/etc/codex/config.toml,type=bind,readonly"
   ],
