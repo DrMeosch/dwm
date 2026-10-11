@@ -26,7 +26,7 @@
   },
   // "postCreateCommand": "cd /app/src && uv sync",
   // "postCreateCommand": "npm ci",
-  "postCreateCommand": "sudo chown -R node:node /home/node/.codex",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.codex; gh auth setup-git",
   "remoteEnv": {
     "PATH": "/home/node/.venv/bin:${containerEnv:PATH}"
   },
