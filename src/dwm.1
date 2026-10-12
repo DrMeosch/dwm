@@ -199,8 +199,9 @@ After updating Xresources, request the reload with
 .BR "pkill -USR2 -x dwm" .
 This has no effect if dwm is not running, and the command returns a nonzero status in that case.
 When the loaded background (dwm.color0) is light, every monitor's bar uses a
-pale-pink background, a deeper pink for selected tags and titles, and the
-loaded foreground (dwm.color4) for text. The bar requests 92% opacity through
+pale-pink background, with a deeper pink shared by selected tags, titles, and
+the status area; text uses the loaded foreground (dwm.color4). The bar requests
+92% opacity through
 _NET_WM_WINDOW_OPACITY, which requires an existing X11 compositor honoring
 that property on override-redirect windows. Returning to a dark background
 restores the original palette and removes the opacity property, restoring
