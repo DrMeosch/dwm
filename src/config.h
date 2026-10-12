@@ -55,6 +55,7 @@ static char *colors[][3] = {
        // [SchemeInv]  = { col_gray1, col_gray3, col_gray2 },
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
+       [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
 };
 
 /* Light bars use the existing Xresources palette's foreground for contrast. */
