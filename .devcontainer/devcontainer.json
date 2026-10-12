@@ -7,32 +7,46 @@
   "workspaceFolder": "/app",
   "mounts": [
     "source=${localWorkspaceFolder},target=/app/projects,type=bind",
-    // "source=${localWorkspaceFolder}/../frontend,target=/workspace/frontend,type=bind,readonly",
     "source=/shared,target=/shared,type=bind",
     "source=dwm-home,target=/home/node/.codex,type=volume",
     "source=${localEnv:HOME}/.codex/config.toml,target=/etc/codex/config.toml,type=bind,readonly"
+    "source=${localEnv:HOME}/.codex/config.toml,target=/etc/codex/config.toml,type=bind,readonly",
+    "source=${localEnv:HOME}/.claude/settings.json,target=/etc/claude-code/managed-settings.json,type=bind,readonly"
   ],
+  "initializeCommand": "for v in OPENAI_API_KEY CLAUDE_CODE_OAUTH_TOKEN; do [ -n \"$(printenv $v)\" ] || { echo \"$v is not set on the host\" >&2; exit 1; }; done",
   "shutdownAction": "stopContainer",
   "remoteUser": "node",
   "features": {
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/common-utils:2": {},
-    "ghcr.io/jungaretti/features/make:1": {},
-    "ghcr.io/jungaretti/features/ripgrep:1": {},
-    "ghcr.io/eitsupi/devcontainer-features/jq-likes:2": {},
-    "ghcr.io/devcontainers-extra/features/uv:1": {},
     "ghcr.io/ttyrho/devcontainer-features/gcc:1": {}
+    "ghcr.io/devcontainers/features/git:1.3.8": {},
+    "ghcr.io/devcontainers/features/github-cli:1.1.3": {},
+    "ghcr.io/devcontainers/features/common-utils:2.6.0": {},
+    "ghcr.io/jungaretti/features/make:1.0.1": {},
+    "ghcr.io/jungaretti/features/ripgrep:1.0.1": {},
+    "ghcr.io/eitsupi/devcontainer-features/jq-likes:2.1.1": {},
+    "ghcr.io/devcontainers-extra/features/uv:1.0.2": {},
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
   },
   // "postCreateCommand": "cd /app/src && uv sync",
   // "postCreateCommand": "npm ci",
   "postCreateCommand": "sudo chown -R node:node /home/node/.codex; gh auth setup-git",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.codex /home/node/.claude",
   "remoteEnv": {
     "PATH": "/home/node/.venv/bin:${containerEnv:PATH}"
   },
   "containerEnv": {
+    "UV_LINK_MODE": "copy",
+    "UV_PROJECT_ENVIRONMENT": "/home/node/.venv",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONUNBUFFERED": "1",
+    "RTK_TELEMETRY_DISABLED": "1",
     "LITELLM_API_KEY": "${localEnv:OPENAI_API_KEY}",
-    "GH_TOKEN": "${localEnv:GITHUB_TOKEN}"
+    "GH_TOKEN": "${localEnv:GITHUB_TOKEN}",
+    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+    "DISABLE_AUTOUPDATER": "1", // claude-code
+    "CLAUDE_CODE_NO_FLICKER": "0",
+    // claude setup-token
+    "CLAUDE_CODE_OAUTH_TOKEN": "${localEnv:CLAUDE_CODE_OAUTH_TOKEN}"
   },
   // "runArgs": ["--env-file",".devcontainer/devcontainer.env"]
   "customizations": {

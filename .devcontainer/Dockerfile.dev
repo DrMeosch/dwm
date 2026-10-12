@@ -1,6 +1,6 @@
-FROM python:3.14-slim-bookworm AS python
+FROM python:3.14-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS python
 
-FROM node:bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS dev
+FROM node:22-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS dev
 
 COPY --from=python /usr/local/ /usr/local/
 
@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libxcb-res0-dev \
       libfontconfig1-dev \
       curl \
+      tmux \
       ca-certificates \
       tar \
       build-essential \
@@ -42,8 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && ldconfig \
     && rm -rf /var/lib/apt/lists/*
 
-RUN mkdir -p /app || exit 0
-RUN mkdir -p /home/node/.local/npm/bin /home/node/.codex || exit 0
+RUN mkdir -p /app /home/node/.local/npm/bin /home/node/.codex /home/node/.claude
 RUN chown -R node:node /app /home/node
 
 ENV PATH="/home/node/.local/bin:/home/node/.local/npm/bin:${PATH}"
@@ -56,7 +56,9 @@ USER node
 
 WORKDIR /app
 
-RUN curl -L https://github.com/kunchenguid/firstmate/archive/refs/heads/main.tar.gz \
-  | tar -xz --strip-components=1
+ARG FIRSTMATE_REF=20dcbf91520b1816663b81873ad67d0b93b3e4d6
+RUN curl -fsSL -o /tmp/firstmate.tar.gz "https://github.com/kunchenguid/firstmate/archive/${FIRSTMATE_REF}.tar.gz" \
+  && tar -xzf /tmp/firstmate.tar.gz --strip-components=1 \
+  && rm /tmp/firstmate.tar.gz
 
 RUN mkdir -p /app/projects && chown node:node /app/projects
