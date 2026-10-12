@@ -4,9 +4,12 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 `pkg-config`, the configured X11, Xft, fontconfig, XCB, and Xinerama development
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
-geometry and gap branches, core monitor/client state helpers, tag shifting,
+geometry and gap branches, core monitor/client state helpers (including
+refusing scratchpad-only tag views and rejecting Xresources strings that exceed
+their buffer), tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
-build/configuration/manpage contracts.
+build/configuration/manpage contracts, including the PKGBUILD source and
+dependencies and the LICENSE file shipped by `make dist`.
 
 The state and geometry checks are headless and never execute configured desktop
 commands. If Xvfb, `xdpyinfo`, `xrdb`, and `pkg-config` are available, `run.sh`

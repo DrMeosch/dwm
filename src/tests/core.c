@@ -278,15 +278,61 @@ test_xresources(void)
 	db = XrmGetStringDatabase("dwm.name: world\n"
 	                          "dwm.integer: 17\n"
 	                          "dwm.real: 0.75\n");
-	resource_load(db, "name", STRING, name);
-	resource_load(db, "integer", INTEGER, &integer);
-	resource_load(db, "real", FLOAT, &real);
+	resource_load(db, "name", STRING, name, sizeof name);
+	resource_load(db, "integer", INTEGER, &integer, sizeof integer);
+	resource_load(db, "real", FLOAT, &real, sizeof real);
 	CHECK(strcmp(name, "world") == 0 && integer == 17
 	      && fabsf(real - 0.75f) < 0.001f,
 	      "resource_load decoded values incorrectly: %s %d %.2f", name, integer, real);
-	resource_load(db, "missing", INTEGER, &integer);
+	resource_load(db, "missing", INTEGER, &integer, sizeof integer);
 	CHECK(integer == 17, "resource_load changed a missing preference");
 	XrmDestroyDatabase(db);
+
+	{
+		/* guard bytes after the buffer must survive an overlong value */
+		struct { char color[COLORLEN]; char guard[8]; } buf = { "#282a36", "guard!!" };
+
+		db = XrmGetStringDatabase("dwm.color: #123456789\n"
+		                          "dwm.exact: #abcdef\n");
+		resource_load(db, "color", STRING, buf.color, sizeof buf.color);
+		CHECK(strcmp(buf.color, "#282a36") == 0 && strcmp(buf.guard, "guard!!") == 0,
+		      "resource_load accepted an overlong color: %s", buf.color);
+		resource_load(db, "exact", STRING, buf.color, sizeof buf.color);
+		CHECK(strcmp(buf.color, "#abcdef") == 0 && strcmp(buf.guard, "guard!!") == 0,
+		      "resource_load rejected a color that fits: %s", buf.color);
+		XrmDestroyDatabase(db);
+	}
+}
+
+static void
+test_scratchpad_tag_views(void)
+{
+	Monitor *m = createmon();
+	Arg arg;
+	unsigned int onlysp = SPTAG(0);
+
+	mons = selmon = m;
+
+	/* Hiding the last normal tag while a scratchpad is shown must be refused. */
+	m->tagset[m->seltags] = 1 | onlysp;
+	arg.ui = 1;
+	toggleview(&arg);
+	CHECK(m->tagset[m->seltags] == (1 | onlysp) && m->pertag->curtag == 1,
+	      "toggleview left only a scratchpad tag: tagset %#x curtag %u",
+	      m->tagset[m->seltags], m->pertag->curtag);
+
+	/* A view request naming only scratchpad tags has no per-tag slot. */
+	m->tagset[m->seltags] = 1;
+	m->tagset[m->seltags ^ 1] = 1;
+	arg.ui = onlysp;
+	view(&arg);
+	CHECK(m->tagset[m->seltags] == 1 && m->pertag->curtag == 1
+	      && m->pertag->curtag <= LENGTH(tags),
+	      "view accepted a scratchpad-only tagset: tagset %#x curtag %u",
+	      m->tagset[m->seltags], m->pertag->curtag);
+
+	mons = selmon = NULL;
+	free_monitor(m);
 }
 
 static void
@@ -341,6 +387,7 @@ main(void)
 	test_bar_geometry();
 	test_stackpos();
 	test_xresources();
+	test_scratchpad_tag_views();
 	test_process_helpers();
 	test_terminal_lookup();
 	test_xerror_filters();

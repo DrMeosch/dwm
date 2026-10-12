@@ -38,7 +38,7 @@ test:
 
 dist: clean
 	mkdir -p dwm-${VERSION}/src
-	cp Makefile dwm-${VERSION}
+	cp Makefile LICENSE dwm-${VERSION}
 	cp -R src/README.md src/config.mk src/config.h src/PKGBUILD\
 		src/dwm.1 src/drw.h src/util.h src/dwm.c src/drw.c src/util.c\
 		src/borderwidth.c src/borderwidth.h src/selborder.c src/selborder.h src/sigusr2.c src/sigusr2.h\

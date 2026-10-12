@@ -179,6 +179,7 @@ typedef struct {
 	char *name;
 	enum resource_type type;
 	void *dst;
+	size_t size; /* capacity of dst */
 } ResourcePref;
 
 /* function declarations */
@@ -294,7 +295,7 @@ static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 static void xrdb(const Arg *arg);
 static void load_xresources(void);
-static void resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst);
+static void resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size);
 
 static pid_t getparentprocess(pid_t p);
 static int isdescprocess(pid_t p, pid_t c);
@@ -2162,7 +2163,8 @@ toggleview(const Arg *arg)
 	unsigned int newtagset = selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK);
 	int i;
 
-	if (newtagset) {
+	/* scratchpad tags have no per-tag slot; keep at least one normal tag */
+	if (newtagset & ~SPTAGMASK) {
 		selmon->tagset[selmon->seltags] = newtagset;
 
 		if (newtagset == ~0) {
@@ -2509,6 +2511,9 @@ view(const Arg *arg)
 
 	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
+	/* scratchpad tags have no per-tag slot */
+	if ((arg->ui & TAGMASK) && !(arg->ui & TAGMASK & ~SPTAGMASK))
+		return;
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK) {
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
@@ -2812,7 +2817,7 @@ updateborderwidth(void)
 }
 
 void
-resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst)
+resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size)
 {
 	char *sdst = NULL;
 	int *idst = NULL;
@@ -2834,7 +2839,8 @@ resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst)
 	{
 		switch (rtype) {
 		case STRING:
-			strcpy(sdst, ret.addr);
+			if (strlen(ret.addr) < size)
+				memcpy(sdst, ret.addr, strlen(ret.addr) + 1);
 			break;
 		case INTEGER:
 			*idst = strtoul(ret.addr, NULL, 10);
@@ -2865,7 +2871,7 @@ load_xresources(void)
 		if (resm) {
 			db = XrmGetStringDatabase(resm);
 			for (p = resources; p < resources + LENGTH(resources); p++)
-				resource_load(db, p->name, p->type, p->dst);
+				resource_load(db, p->name, p->type, p->dst, p->size);
 			(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
 			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 			XrmDestroyDatabase(db);

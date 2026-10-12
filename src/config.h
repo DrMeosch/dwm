@@ -38,11 +38,12 @@ static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize
 #define SELFGCOLOR_DEFAULT      "#ffb86c"
 #define SELBGCOLOR_DEFAULT      "#282a36"
 #define SELBORDERCOLOR          "#ffb86c"
-static char normbgcolor[]       = NORMBGCOLOR_DEFAULT;
+#define COLORLEN 8 /* "#rrggbb" plus NUL; Xresources values must fit */
+static char normbgcolor[COLORLEN]       = NORMBGCOLOR_DEFAULT;
 static char normbordercolor[]  = NORMBORDERCOLOR_DEFAULT;
 static char selbordercolor[]       = SELBORDERCOLOR;
 //static char selbordercolor[]        = "#770000";
-static char normfgcolor[]       = NORMFGCOLOR_DEFAULT;
+static char normfgcolor[COLORLEN]       = NORMFGCOLOR_DEFAULT;
 static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
 static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
 static const char col_gray1[]        = "#222222";
@@ -157,20 +158,20 @@ static const char *termcmd[]  = { TERMINAL, NULL };
  * Xresources preferences to load at startup and on reload
  */
 ResourcePref resources[] = {
-		{ "color0",		STRING,	&normbgcolor },
-		{ "color4",		STRING,	&normfgcolor },
-		{ "snap",		INTEGER, &snap },
-		{ "showbar",		INTEGER, &showbar },
-		{ "topbar",		INTEGER, &topbar },
-		{ "nmaster",		INTEGER, &nmaster },
-		{ "resizehints",	INTEGER, &resizehints },
-		{ "mfact",		FLOAT,	&mfact },
-		{ "gappih",		INTEGER, &gappih },
-		{ "gappiv",		INTEGER, &gappiv },
-		{ "gappoh",		INTEGER, &gappoh },
-		{ "gappov",		INTEGER, &gappov },
-		{ "swallowfloating",	INTEGER, &swallowfloating },
-		{ "smartgaps",		INTEGER, &smartgaps },
+		{ "color0",		STRING,	normbgcolor, sizeof normbgcolor },
+		{ "color4",		STRING,	normfgcolor, sizeof normfgcolor },
+		{ "snap",		INTEGER, &snap, sizeof snap },
+		{ "showbar",		INTEGER, &showbar, sizeof showbar },
+		{ "topbar",		INTEGER, &topbar, sizeof topbar },
+		{ "nmaster",		INTEGER, &nmaster, sizeof nmaster },
+		{ "resizehints",	INTEGER, &resizehints, sizeof resizehints },
+		{ "mfact",		FLOAT,	&mfact, sizeof mfact },
+		{ "gappih",		INTEGER, &gappih, sizeof gappih },
+		{ "gappiv",		INTEGER, &gappiv, sizeof gappiv },
+		{ "gappoh",		INTEGER, &gappoh, sizeof gappoh },
+		{ "gappov",		INTEGER, &gappov, sizeof gappov },
+		{ "swallowfloating",	INTEGER, &swallowfloating, sizeof swallowfloating },
+		{ "smartgaps",		INTEGER, &smartgaps, sizeof smartgaps },
 };
 
 #include <X11/XF86keysym.h>

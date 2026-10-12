@@ -13,3 +13,6 @@ tmp
 coverage.xml
 .coverage
 junit
+/dwm
+*.o
+/dwm-*.tar.gz
