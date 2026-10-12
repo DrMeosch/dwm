@@ -27,7 +27,7 @@
     "ghcr.io/devcontainers-extra/features/uv:1.0.2": {},
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
   },
-  "postCreateCommand": "sudo chown -R node:node /home/node/.codex /home/node/.claude; gh auth setup-git",
+  "postCreateCommand": "sudo chown -R node:node /home/node; gh auth setup-git",
   "remoteEnv": {
     "PATH": "/home/node/.venv/bin:${containerEnv:PATH}"
   },
