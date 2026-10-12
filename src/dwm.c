@@ -2771,7 +2771,7 @@ createbarscheme(int index, int light)
 
 	if (light) {
 		barcolors[ColFg] = normfgcolor;
-		barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+		barcolors[ColBg] = lightbarbg;
 	} else {
 		barcolors[ColFg] = index == SchemeSel ? selfgcolor : normfgcolor;
 		barcolors[ColBg] = normbgcolor;
