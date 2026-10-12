@@ -238,6 +238,9 @@ static void restack(Monitor *m);
 static void run(void);
 static void reloadcolors(void);
 static void updateborderwidth(void);
+static int lightbarpalette(void);
+static Clr *createbarscheme(int index, int light);
+static void updatebaropacity(Monitor *m);
 static void runAutostart(void);
 static void scan(void);
 static int sendevent(Client *c, Atom proto);
@@ -329,6 +332,8 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[UnmapNotify] = unmapnotify
 };
 static Atom wmatom[WMLast], netatom[NetLast];
+static Atom baropacityatom;
+static int lightbar;
 static int restart = 0;
 static int running = 1;
 static Cur *cursor[CurLast];
@@ -1914,14 +1919,16 @@ setup(void)
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetClientInfo] = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
+	baropacityatom = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
 	cursor[CurMove] = drw_cur_create(drw, XC_fleur);
 	/* init appearance */
+	lightbar = lightbarpalette();
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++) {
-		if (!(scheme[i] = drw_scm_create(drw, colors[i], 3))) {
+		if (!(scheme[i] = createbarscheme(i, lightbar))) {
 			while (i > 0)
 				drw_scm_free(drw, scheme[--i], 3);
 			free(scheme);
@@ -2272,6 +2279,7 @@ updatebars(void)
 				CopyFromParent, DefaultVisual(dpy, screen),
 				CWOverrideRedirect|CWBackPixmap|CWEventMask, &wa);
 		XDefineCursor(dpy, m->barwin, cursor[CurNormal]->cursor);
+		updatebaropacity(m);
 		XMapRaised(dpy, m->barwin);
 		XSetClassHint(dpy, m->barwin, &ch);
 	}
@@ -2717,13 +2725,15 @@ void
 xrdb(const Arg *arg)
 {
 	Clr **new_scheme;
-	int i;
+	Monitor *m;
+	int i, new_lightbar;
 
 	load_xresources();
 	updateborderwidth();
+	new_lightbar = lightbarpalette();
 	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));
 	for (i = 0; i < LENGTH(colors); i++) {
-		if (!(new_scheme[i] = drw_scm_create(drw, colors[i], 3))) {
+		if (!(new_scheme[i] = createbarscheme(i, new_lightbar))) {
 			while (i > 0)
 				drw_scm_free(drw, new_scheme[--i], 3);
 			free(new_scheme);
@@ -2735,9 +2745,47 @@ xrdb(const Arg *arg)
 		drw_scm_free(drw, scheme[i], 3);
 	free(scheme);
 	scheme = new_scheme;
+	lightbar = new_lightbar;
+	for (m = mons; m; m = m->next)
+		updatebaropacity(m);
 
 	focus(NULL);
 	arrange(NULL);
+}
+
+static int
+lightbarpalette(void)
+{
+	XColor bg;
+
+	/* Follow color0 on startup and SIGUSR2; no separate theme toggle. */
+	if (!XParseColor(dpy, DefaultColormap(dpy, DefaultScreen(dpy)), normbgcolor, &bg))
+		return 0;
+	return 299UL * bg.red + 587UL * bg.green + 114UL * bg.blue > 32767UL * 1000;
+}
+
+static Clr *
+createbarscheme(int index, int light)
+{
+	char *barcolors[3];
+
+	if (!light)
+		return drw_scm_create(drw, colors[index], 3);
+	barcolors[ColFg] = normfgcolor;
+	barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+	barcolors[ColBorder] = colors[index][ColBorder];
+	return drw_scm_create(drw, barcolors, 3);
+}
+
+static void
+updatebaropacity(Monitor *m)
+{
+	if (lightbar)
+		XChangeProperty(dpy, m->barwin, baropacityatom, XA_CARDINAL, 32,
+		                PropModeReplace, (const unsigned char *)&lightbaropacity, 1);
+	else
+		/* Restore the compositor's original handling, including its own rules. */
+		XDeleteProperty(dpy, m->barwin, baropacityatom);
 }
 
 static void

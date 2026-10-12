@@ -52,6 +52,11 @@ static char *colors[][3] = {
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
 };
 
+/* Light bars use the existing Xresources palette's foreground for contrast. */
+static char lightbarbg[] = "#f6e8ee";
+static char lightbarselbg[] = "#e8ccd8";
+static const unsigned long lightbaropacity = 0xeb851eb8UL; /* 92% */
+
 typedef struct {
 	const char *name;
 	const void *cmd;
