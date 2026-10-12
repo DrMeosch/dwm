@@ -187,39 +187,51 @@ dwm is customized by creating a custom config.h and (re)compiling the source
 code. This keeps it fast, secure and simple.
 .SH SIGNALS
 .TP
-.B SIGHUP - 1
-Restart the dwm process.
-.TP
 .B SIGTERM - 15
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors and border width from Xresources without restarting dwm or changing the selected tags.
-After updating Xresources, request the reload with
-.BR "pkill -USR2 -x dwm" .
-This has no effect if dwm is not running, and the command returns a nonzero status in that case.
-When the loaded background (dwm.color0) is light, every monitor's bar uses a
-pale-pink background, with a deeper pink shared by selected tags, titles, and
-the status area; text uses the loaded foreground (dwm.color4). The bar requests
-92% opacity through
+Reload colors and border width from Xresources without changing the selected tags.
+Merge all four values for the chosen theme before requesting the reload.
+dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
+and the selected border and width reset to their fallbacks, so missing theme
+keys cannot retain values from the previous theme. The status text is
+drawn through the same palette on every monitor. In the light palette, the
+status area uses the selected pale-pink background; normal bar areas use a
+lighter pink, and selected tags and titles use the selected background. In the
+dark palette, all bar backgrounds follow dwm.color0 and dwm.color4 supplies
+text only. The bar requests 92% opacity in the light palette through
 _NET_WM_WINDOW_OPACITY, which requires an existing X11 compositor honoring
-that property on override-redirect windows. Returning to a dark background
-restores the original palette and removes the opacity property, restoring
-the compositor's default handling. This also applies when bars are created
-at startup or after a monitor is added.
-When no Xresources database is available, the selected border returns to its orange fallback.
-Set the dedicated
-.B dwm.selbordercolor
-resource to
-.B #ffb86c
-for the dark-theme accent or
-.B #000000
-for the light theme before requesting a reload.
-The selected border falls back to
-.B #ffb86c
-when that resource is absent.
-.B dwm.color8
-does not control the selected border.
+that property on override-redirect windows. The dark palette removes that
+property and restores the compositor's default handling.
+.PP
+For the light palette:
+.nf
+printf '%s\en' \\
+  'dwm.color0: #f8f8f2' \\
+  'dwm.color4: #555b6e' \\
+  'dwm.borderpx: 2' \\
+  'dwm.selbordercolor: #b84f7b' | xrdb -merge
+pkill -USR2 -x dwm
+.fi
+.PP
+For the dark palette:
+.nf
+printf '%s\en' \\
+  'dwm.color0: #282a36' \\
+  'dwm.color4: #ff79c6' \\
+  'dwm.borderpx: 1' \\
+  'dwm.selbordercolor: #b84f7b' | xrdb -merge
+pkill -USR2 -x dwm
+.fi
+.PP
+The focused client border uses dwm.selbordercolor. Both palettes use the same
+muted pink accent. If dwm.selbordercolor is absent, the selected border
+uses the configured fallback #ffb86c. dwm.color8 does not control it.
+.PP
+The light palette also sets existing client borders to two pixels; the dark
+palette uses one pixel. If dwm.borderpx is missing or invalid, dwm uses the
+configured fallback, which is two pixels by default.
 .TP
 .B dwm.borderpx
 Sets the window border width in pixels. Use a positive decimal integer up to

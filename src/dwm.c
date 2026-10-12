@@ -2769,10 +2769,13 @@ createbarscheme(int index, int light)
 {
 	char *barcolors[3];
 
-	if (!light)
-		return drw_scm_create(drw, colors[index], 3);
-	barcolors[ColFg] = normfgcolor;
-	barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+	if (light) {
+		barcolors[ColFg] = normfgcolor;
+		barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+	} else {
+		barcolors[ColFg] = index == SchemeSel ? selfgcolor : normfgcolor;
+		barcolors[ColBg] = normbgcolor;
+	}
 	barcolors[ColBorder] = colors[index][ColBorder];
 	return drw_scm_create(drw, barcolors, 3);
 }
@@ -2851,6 +2854,9 @@ load_xresources(void)
 	XrmDatabase db;
 	ResourcePref *p;
 
+	/* Missing color resources must restore the compiled palette on every reload. */
+	strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
+	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
 	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	display = XOpenDisplay(NULL);
