@@ -16,7 +16,7 @@ jobs:
             build-essential pkg-config \
             libfontconfig1-dev libfreetype6-dev \
             libx11-dev libx11-xcb-dev libxft-dev libxinerama-dev \
-            libxcb1-dev libxcb-res0-dev xvfb x11-utils x11-xserver-utils
+            libxcb1-dev libxcb-res0-dev libxtst-dev xvfb x11-utils x11-xserver-utils
       - name: Run tests
         env:
           DWM_X11_CAPTURE_DIR: ${{ runner.temp }}/dwm-x11-captures

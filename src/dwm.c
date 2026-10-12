@@ -1670,6 +1670,8 @@ run(void)
 		}
 		if (!running)
 			break;
+		/* Send handler requests before poll can block indefinitely. */
+		XFlush(dpy);
 		if (poll(fds, LENGTH(fds), -1) < 0) {
 			if (errno == EINTR)
 				continue;

@@ -3,16 +3,27 @@ set -eu
 
 root=$1
 cc=${CC:-cc}
+missing_deps=
 
-if ! command -v Xvfb >/dev/null 2>&1 \
-|| ! command -v xdpyinfo >/dev/null 2>&1 \
-|| ! command -v xrdb >/dev/null 2>&1; then
+if ! command -v Xvfb >/dev/null 2>&1; then missing_deps="$missing_deps Xvfb"; fi
+if ! command -v xdpyinfo >/dev/null 2>&1; then missing_deps="$missing_deps xdpyinfo"; fi
+if ! command -v xrdb >/dev/null 2>&1; then missing_deps="$missing_deps xrdb"; fi
+if ! command -v pkg-config >/dev/null 2>&1; then
+	missing_deps="$missing_deps pkg-config"
+fi
+if [ -n "$missing_deps" ]; then
 	if [ -n "${DWM_X11_CAPTURE_DIR:-}" ]; then
-		printf '%s\n' 'X11 screenshot capture requires Xvfb, xdpyinfo, and xrdb'
+		printf 'X11 workflow cannot run; missing:%s\n' "$missing_deps"
 		exit 1
 	fi
-	printf '%s\n' 'X11 integration checks skipped: Xvfb, xdpyinfo, and xrdb are required'
+	printf 'X11 integration checks skipped; missing:%s\n' "$missing_deps"
 	exit 0
+fi
+
+input_available=1
+if ! pkg-config --exists xtst; then
+	input_available=0
+	printf '%s\n' 'X11 input regression check skipped; XTEST development files are unavailable'
 fi
 
 tmp=$(mktemp -d)
@@ -40,6 +51,12 @@ $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	$libs -lm -o "$tmp/dwm"
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/tests/x11.c" \
 	$libs -o "$tmp/x11"
+if [ "$input_available" -eq 1 ]; then
+	input_flags=$(pkg-config --cflags xtst)
+	input_libs=$(pkg-config --libs xtst)
+	$cc -std=c99 -pedantic -Wall -Wextra $flags $input_flags \
+		"$root/src/tests/input.c" $libs $input_libs -o "$tmp/input"
+fi
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/transient.c" \
 	$libs -o "$tmp/transient"
 if [ -n "${DWM_X11_CAPTURE_DIR:-}" ]; then
@@ -68,6 +85,9 @@ fi
 "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
+if [ "$input_available" -eq 1 ]; then
+	"$tmp/input"
+fi
 "$tmp/transient" >"$tmp/transient.log" 2>&1 &
 transient_pid=$!
 "$tmp/x11"

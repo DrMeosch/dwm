@@ -9,9 +9,15 @@ UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts.
 
 The state and geometry checks are headless and never execute configured desktop
-commands. If Xvfb, `xdpyinfo`, and `xrdb` are all available, `run.sh` also starts
-a private X server, the production `dwm` event loop, and the production
-`transient.c` executable. An Xlib client verifies resource-driven borders,
+commands. If Xvfb, `xdpyinfo`, `xrdb`, and `pkg-config` are available, `run.sh`
+also starts a private X server and the production `dwm` event loop. When the
+XTEST development files are available, an XTEST client checks that idle Mod+q
+delivers a WM_DELETE_WINDOW request without further input, and that a click on
+an unfocused client is replayed before subsequent typing; both deliveries must
+occur without an external wake. If the files are unavailable, this input
+regression check is reported as skipped. The production `transient.c`
+executable is also exercised. An Xlib client verifies
+resource-driven borders,
 rendered bar text, MapRequest, tiled and floating ConfigureRequest handling,
 ConfigureNotify delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
