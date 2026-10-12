@@ -1,6 +1,6 @@
 # dwm (custom build)
 
-A customized build of [dwm](https://dwm.suckless.org/) 6.5, derived from Luke Smith's build, with Xresources-driven theming and live dark/light reload.
+A customized build of [dwm](https://dwm.suckless.org/) 6.5, derived from Luke Smith's build, with Xresources-driven theming and live dark/light reload. Security fixes from versions 6.6-6.8 were backported by gpt-6 models.
 
 ## Features
 

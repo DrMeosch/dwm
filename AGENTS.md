@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Custom dwm 6.5 build (C, X11). See [README.md](README.md) for features and layout.
+Custom dwm 6.5 build (C, X11) with backported security fixes from 6.6_6.8.
+See [README.md](README.md) for features and layout.
 
 ## Commands
 
