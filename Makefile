@@ -37,11 +37,12 @@ test:
 		TEST_LIBS='${LDFLAGS}' sh src/tests/run.sh '${CURDIR}'
 
 dist: clean
-	mkdir -p dwm-${VERSION}
-	cp -R src/Makefile src/README.md src/config.mk src/config.h\
+	mkdir -p dwm-${VERSION}/src
+	cp Makefile dwm-${VERSION}
+	cp -R src/README.md src/config.mk src/config.h src/PKGBUILD\
 		src/dwm.1 src/drw.h src/util.h src/dwm.c src/drw.c src/util.c\
 		src/borderwidth.c src/borderwidth.h src/selborder.c src/selborder.h src/sigusr2.c src/sigusr2.h\
-		src/transient.c src/tests dwm-${VERSION}
+		src/shiftview.c src/vanitygaps.c src/transient.c src/tests dwm-${VERSION}/src
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}

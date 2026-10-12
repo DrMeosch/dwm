@@ -9,7 +9,7 @@
     "source=${localWorkspaceFolder},target=/app/projects,type=bind",
     "source=/shared,target=/shared,type=bind",
     "source=dwm-home,target=/home/node/.codex,type=volume",
-    "source=${localEnv:HOME}/.codex/config.toml,target=/etc/codex/config.toml,type=bind,readonly"
+    "source=dwm-home-claude,target=/home/node/.claude,type=volume",
     "source=${localEnv:HOME}/.codex/config.toml,target=/etc/codex/config.toml,type=bind,readonly",
     "source=${localEnv:HOME}/.claude/settings.json,target=/etc/claude-code/managed-settings.json,type=bind,readonly"
   ],
@@ -17,7 +17,7 @@
   "shutdownAction": "stopContainer",
   "remoteUser": "node",
   "features": {
-    "ghcr.io/ttyrho/devcontainer-features/gcc:1": {}
+    "ghcr.io/ttyrho/devcontainer-features/gcc:1": {},
     "ghcr.io/devcontainers/features/git:1.3.8": {},
     "ghcr.io/devcontainers/features/github-cli:1.1.3": {},
     "ghcr.io/devcontainers/features/common-utils:2.6.0": {},
@@ -27,10 +27,7 @@
     "ghcr.io/devcontainers-extra/features/uv:1.0.2": {},
     "ghcr.io/anthropics/devcontainer-features/claude-code:1.0.5": {}
   },
-  // "postCreateCommand": "cd /app/src && uv sync",
-  // "postCreateCommand": "npm ci",
-  "postCreateCommand": "sudo chown -R node:node /home/node/.codex; gh auth setup-git",
-  "postCreateCommand": "sudo chown -R node:node /home/node/.codex /home/node/.claude",
+  "postCreateCommand": "sudo chown -R node:node /home/node/.codex /home/node/.claude; gh auth setup-git",
   "remoteEnv": {
     "PATH": "/home/node/.venv/bin:${containerEnv:PATH}"
   },
