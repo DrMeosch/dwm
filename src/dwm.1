@@ -221,13 +221,12 @@ printf '%s\en' \\
   'dwm.color0: #282a36' \\
   'dwm.color4: #ff79c6' \\
   'dwm.borderpx: 1' \\
-  'dwm.selbordercolor: #444444' | xrdb -merge
+  'dwm.selbordercolor: #b84f7b' | xrdb -merge
 pkill -USR2 -x dwm
 .fi
 .PP
-The focused client border uses dwm.selbordercolor. The light palette uses a
-muted pink accent; the dark palette uses the same neutral color as the
-unfocused client border. If dwm.selbordercolor is absent, the selected border
+The focused client border uses dwm.selbordercolor. Both palettes use the same
+muted pink accent. If dwm.selbordercolor is absent, the selected border
 uses the configured fallback #ffb86c. dwm.color8 does not control it.
 .PP
 The light palette also sets existing client borders to two pixels; the dark
