@@ -918,7 +918,7 @@ drawbar(Monitor *m)
 
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon || 1) { /* status is only drawn on selected monitor */
-		drw_setscheme(drw, scheme[SchemeNorm]);
+		drw_setscheme(drw, scheme[lightbar ? SchemeSel : SchemeNorm]);
 		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
 		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
 	}
@@ -2769,10 +2769,13 @@ createbarscheme(int index, int light)
 {
 	char *barcolors[3];
 
-	if (!light)
-		return drw_scm_create(drw, colors[index], 3);
-	barcolors[ColFg] = normfgcolor;
-	barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+	if (light) {
+		barcolors[ColFg] = normfgcolor;
+		barcolors[ColBg] = index == SchemeSel ? lightbarselbg : lightbarbg;
+	} else {
+		barcolors[ColFg] = index == SchemeSel ? selfgcolor : normfgcolor;
+		barcolors[ColBg] = normbgcolor;
+	}
 	barcolors[ColBorder] = colors[index][ColBorder];
 	return drw_scm_create(drw, barcolors, 3);
 }
@@ -2851,6 +2854,9 @@ load_xresources(void)
 	XrmDatabase db;
 	ResourcePref *p;
 
+	/* Missing color resources must restore the compiled palette on every reload. */
+	strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
+	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
 	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	display = XOpenDisplay(NULL);

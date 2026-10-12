@@ -32,14 +32,19 @@ static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize
 // };
 
 // https://github.com/dracula/dwm/blob/main/config.h
-static char normbgcolor[]       = "#282a36";
-static char normbordercolor[]       = "#444444";
-#define SELBORDERCOLOR "#ffb86c"
+#define NORMBGCOLOR_DEFAULT      "#282a36"
+#define NORMBORDERCOLOR_DEFAULT "#444444"
+#define NORMFGCOLOR_DEFAULT     "#ff79c6"
+#define SELFGCOLOR_DEFAULT      "#ffb86c"
+#define SELBGCOLOR_DEFAULT      "#282a36"
+#define SELBORDERCOLOR          "#ffb86c"
+static char normbgcolor[]       = NORMBGCOLOR_DEFAULT;
+static char normbordercolor[]  = NORMBORDERCOLOR_DEFAULT;
 static char selbordercolor[]       = SELBORDERCOLOR;
 //static char selbordercolor[]        = "#770000";
-static char normfgcolor[]       = "#ff79c6";
-static char selfgcolor[]       = "#ffb86c";
-static char selbgcolor[]        = "#282a36";
+static char normfgcolor[]       = NORMFGCOLOR_DEFAULT;
+static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
+static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
 static const char col_gray1[]        = "#222222";
 static const char col_gray2[]        = "#444444";
 static const char col_gray3[]        = "#bbbbbb";
@@ -152,11 +157,8 @@ static const char *termcmd[]  = { TERMINAL, NULL };
  * Xresources preferences to load at startup and on reload
  */
 ResourcePref resources[] = {
-		{ "color0",		STRING,	&normbordercolor },
 		{ "color0",		STRING,	&normbgcolor },
 		{ "color4",		STRING,	&normfgcolor },
-		{ "color0",		STRING,	&selfgcolor },
-		{ "color4",		STRING,	&selbgcolor },
 		{ "snap",		INTEGER, &snap },
 		{ "showbar",		INTEGER, &showbar },
 		{ "topbar",		INTEGER, &topbar },
