@@ -8,7 +8,8 @@ geometry and gap branches, core monitor/client state helpers (including
 refusing scratchpad-only tag views and rejecting Xresources strings that exceed
 their buffer), tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
-build/configuration/manpage contracts, including the PKGBUILD source and
+build/configuration/manpage contracts (including the `selfontweight` knob and
+its selected-tag heavier font set), including the PKGBUILD source and
 dependencies and the LICENSE file shipped by `make dist`.
 
 The state and geometry checks are headless and never execute configured desktop

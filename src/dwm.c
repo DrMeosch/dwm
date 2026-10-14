@@ -204,6 +204,7 @@ static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
+static Fnt *createselfonts(void);
 static void drawbars(void);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
@@ -341,6 +342,7 @@ static Cur *cursor[CurLast];
 static Clr **scheme;
 static Display *dpy;
 static Drw *drw;
+static Fnt *selfonts;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
 
@@ -664,6 +666,7 @@ cleanup(void)
 		drw_scm_free(drw, scheme[i], 3);
 	free(scheme);
 	XDestroyWindow(dpy, wmcheckwin);
+	drw_fontset_free(selfonts);
 	drw_free(drw);
 	XSync(dpy, False);
 	XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
@@ -905,6 +908,28 @@ dirtomon(int dir)
 	return m;
 }
 
+/* Open the configured fonts again with selfontweight added, for the selected tag. */
+Fnt *
+createselfonts(void)
+{
+	Fnt *set, *normal = drw->fonts;
+	char *names[LENGTH(fonts)];
+	size_t i, len;
+
+	if (!selfontweight || !*selfontweight)
+		return NULL;
+	for (i = 0; i < LENGTH(fonts); i++) {
+		len = strlen(fonts[i]) + strlen(selfontweight) + sizeof(":weight=");
+		names[i] = ecalloc(1, len);
+		snprintf(names[i], len, "%s:weight=%s", fonts[i], selfontweight);
+	}
+	set = drw_fontset_create(drw, names, LENGTH(fonts));
+	drw->fonts = normal;
+	for (i = 0; i < LENGTH(fonts); i++)
+		free(names[i]);
+	return set;
+}
+
 void
 drawbar(Monitor *m)
 {
@@ -913,6 +938,7 @@ drawbar(Monitor *m)
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
 	Client *c;
+	Fnt *normfonts = drw->fonts;
 
 	if(!m->showbar)
 		return;
@@ -942,7 +968,14 @@ drawbar(Monitor *m)
 		else {
 			drw_setscheme(drw, scheme[m->tagset[m->seltags] & 1 << i ? SchemeInv : SchemeNorm]);
 		}
+		/* the selected tag uses the heavier font only if it fits the normal width */
+		if (selfonts && m == selmon && m->tagset[m->seltags] & 1 << i) {
+			drw_setfontset(drw, selfonts);
+			if (drw_fontset_getwidth(drw, tags[i]) > w - lrpad)
+				drw_setfontset(drw, normfonts);
+		}
 		drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
+		drw_setfontset(drw, normfonts);
 		x += w;
 	}
 	w = TEXTW(m->ltsymbol);
@@ -1901,6 +1934,7 @@ setup(void)
 	drw = drw_create(dpy, screen, root, sw, sh);
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
+	selfonts = createselfonts();
 	lrpad = drw->fonts->h;
 	bh = drw->fonts->h + 2;
 	updategeom();

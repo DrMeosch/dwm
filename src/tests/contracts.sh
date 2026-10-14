@@ -53,6 +53,11 @@ tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/config.mk"
 [ ! -e "$root/dwm-$version.tar.gz" ]
 [ -s "$root/LICENSE" ]
 
+# The selected tag is drawn with a heavier font set built from the configured fonts.
+grep -q '^static const char \*selfontweight' "$root/src/config.h"
+grep -q 'drw_setfontset(drw, selfonts)' "$root/src/dwm.c"
+grep -q ':weight=%s' "$root/src/dwm.c"
+
 # Compile the X helper without opening a display; execution is intentionally excluded.
 if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists x11; then
 	$cc -std=c99 -Wall -Wextra -Wno-unused-parameter \
