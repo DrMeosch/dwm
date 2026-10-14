@@ -376,6 +376,20 @@ test_xerror_filters(void)
 	CHECK(xerrordummy(NULL, &event) == 0, "xerrordummy returned an error");
 }
 
+static void
+test_selected_tag_fonts_disabled(void)
+{
+	const char *saved = selfontweight;
+
+	/* drw is NULL here, so touching it would crash instead of returning NULL */
+	drw = NULL;
+	selfontweight = NULL;
+	CHECK(createselfonts() == NULL, "createselfonts opened fonts for a NULL weight");
+	selfontweight = "";
+	CHECK(createselfonts() == NULL, "createselfonts opened fonts for an empty weight");
+	selfontweight = saved;
+}
+
 int
 main(void)
 {
@@ -391,6 +405,7 @@ main(void)
 	test_process_helpers();
 	test_terminal_lookup();
 	test_xerror_filters();
+	test_selected_tag_fonts_disabled();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("core state regression checks passed");

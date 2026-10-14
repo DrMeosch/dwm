@@ -199,12 +199,12 @@ static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static void copyvalidchars(char *text, char *rawtext);
 static Monitor *createmon(void);
+static Fnt *createselfonts(void);
 static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
-static Fnt *createselfonts(void);
 static void drawbars(void);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
@@ -857,6 +857,29 @@ createmon(void)
 	return m;
 }
 
+/* Open the configured fonts again with selfontweight added, for the selected tag. */
+Fnt *
+createselfonts(void)
+{
+	Fnt *set, *normal;
+	char *names[LENGTH(fonts)];
+	size_t i, len;
+
+	if (!selfontweight || !*selfontweight)
+		return NULL;
+	normal = drw->fonts;
+	for (i = 0; i < LENGTH(fonts); i++) {
+		len = strlen(fonts[i]) + strlen(selfontweight) + sizeof(":weight=");
+		names[i] = ecalloc(1, len);
+		snprintf(names[i], len, "%s:weight=%s", fonts[i], selfontweight);
+	}
+	set = drw_fontset_create(drw, names, LENGTH(fonts));
+	drw->fonts = normal;
+	for (i = 0; i < LENGTH(fonts); i++)
+		free(names[i]);
+	return set;
+}
+
 void
 destroynotify(XEvent *e)
 {
@@ -908,28 +931,6 @@ dirtomon(int dir)
 	return m;
 }
 
-/* Open the configured fonts again with selfontweight added, for the selected tag. */
-Fnt *
-createselfonts(void)
-{
-	Fnt *set, *normal = drw->fonts;
-	char *names[LENGTH(fonts)];
-	size_t i, len;
-
-	if (!selfontweight || !*selfontweight)
-		return NULL;
-	for (i = 0; i < LENGTH(fonts); i++) {
-		len = strlen(fonts[i]) + strlen(selfontweight) + sizeof(":weight=");
-		names[i] = ecalloc(1, len);
-		snprintf(names[i], len, "%s:weight=%s", fonts[i], selfontweight);
-	}
-	set = drw_fontset_create(drw, names, LENGTH(fonts));
-	drw->fonts = normal;
-	for (i = 0; i < LENGTH(fonts); i++)
-		free(names[i]);
-	return set;
-}
-
 void
 drawbar(Monitor *m)
 {
@@ -971,7 +972,7 @@ drawbar(Monitor *m)
 		/* the selected tag uses the heavier font only if it fits the normal width */
 		if (selfonts && m == selmon && m->tagset[m->seltags] & 1 << i) {
 			drw_setfontset(drw, selfonts);
-			if (drw_fontset_getwidth(drw, tags[i]) > w - lrpad)
+			if ((int)drw_fontset_getwidth(drw, tags[i]) > w - lrpad / 2)
 				drw_setfontset(drw, normfonts);
 		}
 		drw_text(drw, x, 0, w, bh, lrpad / 2, tags[i], urg & 1 << i);
