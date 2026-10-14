@@ -5,8 +5,9 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
-refusing scratchpad-only tag views and rejecting Xresources strings that exceed
-their buffer), tag shifting,
+refusing scratchpad-only tag views, rejecting Xresources strings that exceed
+their buffer, and keeping the selected-tag font set disabled for an empty or
+NULL `selfontweight`), tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
