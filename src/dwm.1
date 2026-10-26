@@ -36,6 +36,39 @@ prints version information to stderr, then exits.
 is read and displayed in the status text area. It can be set with the
 .BR xsetroot (1)
 command.
+.IP
+Text can be colored with status codes, each written as
+.BI ^ code ^ :
+.RS
+.TP
+.BI c #rrggbb
+foreground color
+.TP
+.BI b #rrggbb
+background color
+.TP
+.BI C n
+foreground from Xresources dwm.color<n> (n from 0 to 15)
+.TP
+.BI B n
+background from Xresources dwm.color<n>
+.TP
+.B d
+back to the status bar colors
+.TP
+.BI r x , y , w , h
+filled rectangle in the foreground color, x pixels from the current position;
+it does not move the position
+.TP
+.BI f n
+move the position n pixels to the right
+.RE
+.IP
+Numbers have one to four digits. dwm.color<n> falls back to a built\-in palette
+unless set to exactly #rrggbb. A lone ^, an incomplete or unknown code, or a
+value out of range is drawn as plain text. Codes take no space, and clicks on
+the status text still reach the correct block. For example:
+.B ^c#ff5555^CPU 12%^d^
 .TP
 .B Left click
 click on a tag label to display all windows with that tag, click on the layout
@@ -194,6 +227,7 @@ Cleanly terminate the dwm process.
 Reload colors and border width from Xresources without changing the selected tags.
 Merge all four values for the chosen theme before requesting the reload.
 dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
+the status palette dwm.color0 to dwm.color15 does the same,
 and the selected border and width reset to their fallbacks, so missing theme
 keys cannot retain values from the previous theme. The status text is
 drawn through the same palette on every monitor. In the light palette, the

@@ -20,6 +20,7 @@
  *
  * To understand everything else, start reading main().
  */
+#include <ctype.h>
 #include <errno.h>
 #include <poll.h>
 #include <locale.h>
@@ -198,6 +199,8 @@ static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static void copyvalidchars(char *text, char *rawtext);
+static int validcolor(const char *s);
+static size_t statuscode(const char *s, size_t n);
 static Monitor *createmon(void);
 static Fnt *createselfonts(void);
 static void destroynotify(XEvent *e);
@@ -206,6 +209,7 @@ static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
 static void drawbars(void);
+static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
@@ -260,6 +264,7 @@ static void sigchld(int unused);
 #ifndef __OpenBSD__
 static int getdwmblockspid();
 static void sigdwmblocks(const Arg *arg);
+static int statusblocksig(int x, int evx);
 #endif
 static void sighup(int unused);
 static void sigterm(int unused);
@@ -296,6 +301,7 @@ static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 static void xrdb(const Arg *arg);
 static void load_xresources(void);
+static void loadstatuspalette(XrmDatabase db);
 static void resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size);
 
 static pid_t getparentprocess(pid_t p);
@@ -307,8 +313,8 @@ static pid_t winpid(Window w);
 
 /* variables */
 static const char broken[] = "broken";
-static char stext[256];
-static char rawstext[256];
+static char stext[1024]; /* status text with status2d codes, signal bytes removed */
+static char rawstext[1024];
 static int dwmblockssig;
 pid_t dwmblockspid = 0;
 static int screen;
@@ -572,7 +578,8 @@ unswallow(Client *c)
 void
 buttonpress(XEvent *e)
 {
-	unsigned int i, x, click, occ = 0;
+	unsigned int i, click, occ = 0;
+	int x;
 	Arg arg = {0};
 	Client *c;
 	Monitor *m;
@@ -600,25 +607,9 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > (x = selmon->ww - (int)TEXTW(stext) + lrpad)) {
+		else if (ev->x >= (x = selmon->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2))) { /* 2px right padding, as in drawbar */
 			click = ClkStatusText;
-
-			char *text = rawstext;
-			int i = -1;
-			char ch;
-			dwmblockssig = 0;
-			while (text[++i]) {
-				if ((unsigned char)text[i] < ' ') {
-					ch = text[i];
-					text[i] = '\0';
-					x += TEXTW(text) - lrpad;
-					text[i] = ch;
-					text += i+1;
-					i = -1;
-					if (x >= ev->x) break;
-					dwmblockssig = ch;
-				}
-			}
+			dwmblockssig = statusblocksig(x, ev->x);
 		} else
 			click = ClkWinTitle;
 	} else if ((c = wintoclient(ev->window))) {
@@ -837,9 +828,9 @@ createmon(void)
 	m->gappiv = gappiv;
 	m->gappoh = gappoh;
 	m->gappov = gappov;
-	m->lt[0] = &layouts[0];
+	m->lt[0] = &layouts[defaultlayout];
 	m->lt[1] = &layouts[1 % LENGTH(layouts)];
-	strncpy(m->ltsymbol, layouts[0].symbol, sizeof m->ltsymbol);
+	strncpy(m->ltsymbol, layouts[defaultlayout].symbol, sizeof m->ltsymbol);
 	m->pertag = ecalloc(1, sizeof(Pertag));
 	m->pertag->curtag = m->pertag->prevtag = 1;
 
@@ -931,6 +922,174 @@ dirtomon(int dir)
 	return m;
 }
 
+/* "#rrggbb" at s; reads up to 7 bytes, stopping at the first mismatch or NUL */
+int
+validcolor(const char *s)
+{
+	int i;
+
+	if (s[0] != '#')
+		return 0;
+	for (i = 1; i < 7; i++)
+		if (!isxdigit((unsigned char)s[i]))
+			return 0;
+	return 1;
+}
+
+/*
+ * status2d: a status code is "^" <code> "^"; anything else, including a lone
+ * "^", is drawn as plain text.
+ *   ^c#rrggbb^ foreground     ^b#rrggbb^ background
+ *   ^C<0-15>^  foreground     ^B<0-15>^  background, from dwm.color<n>
+ *   ^d^        back to the status colors
+ *   ^r<x>,<y>,<w>,<h>^ rectangle in the foreground color, relative to the cursor
+ *   ^f<px>^    advance the cursor
+ * Numbers are 1 to 4 digits. Returns the length of the code at s, of which n
+ * bytes may be read, or 0 if there is none.
+ */
+size_t
+statuscode(const char *s, size_t n)
+{
+	size_t i = 2;
+	int field, fields, digits;
+
+	if (n < 3 || s[0] != '^')
+		return 0;
+	switch (s[1]) {
+	case 'c':
+	case 'b':
+		return n >= 10 && validcolor(s + 2) && s[9] == '^' ? 10 : 0;
+	case 'd':
+		return s[2] == '^' ? 3 : 0;
+	case 'C':
+	case 'B':
+	case 'f':
+	case 'r':
+		fields = s[1] == 'r' ? 4 : 1;
+		for (field = 0; field < fields; field++) {
+			if (field && (i >= n || s[i++] != ','))
+				return 0;
+			for (digits = 0; i < n && isdigit((unsigned char)s[i]); i++)
+				if (++digits > 4)
+					return 0;
+			if (!digits)
+				return 0;
+		}
+		if (i >= n || s[i] != '^')
+			return 0;
+		if ((s[1] == 'C' || s[1] == 'B') && (size_t)atoi(s + 2) >= LENGTH(statuspalette))
+			return 0;
+		return i + 1;
+	}
+	return 0;
+}
+
+/*
+ * Measure (draw == 0) or draw (draw == 1, starting at x) the first len bytes
+ * of status text, writing NULs into text temporarily. Returns the width in
+ * pixels; codes take none.
+ */
+int
+drawstatus(char *text, size_t len, int x, int draw)
+{
+	Clr cur[3], clr;
+	int owned[2] = { 0, 0 };
+	int x0 = x, w, i, v[4];
+	size_t start = 0, pos, code;
+	char saved, buf[COLORLEN];
+	const char *name, *p;
+
+	if (draw) {
+		memcpy(cur, scheme[SchemeStatus], sizeof cur);
+		drw_setscheme(drw, cur);
+	}
+	while (start < len) {
+		/* plain text runs up to the next valid code */
+		for (pos = start; pos < len && !(text[pos] == '^' && statuscode(text + pos, len - pos)); pos++)
+			;
+		if (pos > start) {
+			saved = text[pos];
+			text[pos] = '\0';
+			w = TEXTW(text + start) - lrpad;
+			if (draw && x + w > 0) /* X11 coordinates are 16-bit; skip runs pushed off the left edge */
+				drw_text(drw, x, 0, w, bh, 0, text + start, 0);
+			text[pos] = saved;
+			x += w;
+		}
+		if (pos >= len)
+			break;
+		code = statuscode(text + pos, len - pos);
+		start = pos + code;
+		p = text + pos + 2;
+		switch (text[pos + 1]) {
+		case 'f':
+			x += atoi(p);
+			break;
+		case 'r':
+			if (!draw)
+				break;
+			for (i = 0; i < 4; i++, p++)
+				v[i] = (int)strtol(p, (char **)&p, 10);
+			if (x + v[0] + v[2] > 0)
+				drw_rect(drw, x + v[0], v[1], v[2], v[3], 1, 0);
+			break;
+		case 'd':
+			if (!draw)
+				break;
+			for (i = 0; i < 2; i++)
+				if (owned[i]) {
+					drw_clr_free(drw, &cur[i]);
+					owned[i] = 0;
+				}
+			memcpy(cur, scheme[SchemeStatus], sizeof cur);
+			break;
+		default: /* c, b, C, B */
+			if (!draw)
+				break;
+			if (text[pos + 1] == 'c' || text[pos + 1] == 'b') {
+				memcpy(buf, p, 7);
+				buf[7] = '\0';
+				name = buf;
+			} else
+				name = statuspalette[atoi(p)];
+			i = text[pos + 1] == 'c' || text[pos + 1] == 'C' ? ColFg : ColBg;
+			if (drw_clr_create(drw, &clr, name)) {
+				if (owned[i])
+					drw_clr_free(drw, &cur[i]);
+				cur[i] = clr;
+				owned[i] = 1;
+			}
+		}
+	}
+	for (i = 0; i < 2; i++)
+		if (owned[i])
+			drw_clr_free(drw, &cur[i]);
+	if (draw)
+		drw_setscheme(drw, scheme[SchemeNorm]);
+	return x - x0;
+}
+
+/* signal byte of the status block under evx, for text starting at x */
+int
+statusblocksig(int x, int evx)
+{
+	char *text = rawstext;
+	int i = -1, sig = 0;
+	char ch;
+
+	while (text[++i]) {
+		if ((unsigned char)text[i] < ' ') {
+			ch = text[i];
+			x += drawstatus(text, i, 0, 0);
+			text += i+1;
+			i = -1;
+			if (x > evx) break;
+			sig = ch;
+		}
+	}
+	return sig;
+}
+
 void
 drawbar(Monitor *m)
 {
@@ -946,9 +1105,10 @@ drawbar(Monitor *m)
 
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon || 1) { /* status is only drawn on selected monitor */
+		tw = drawstatus(stext, strlen(stext), 0, 0) + 2; /* 2px right padding */
 		drw_setscheme(drw, scheme[SchemeStatus]);
-		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
-		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
+		drw_rect(drw, MAX(0, m->ww - tw), 0, MIN(tw, m->ww), bh, 1, 1); /* X11 coordinates are 16-bit */
+		drawstatus(stext, strlen(stext), m->ww - tw, 1);
 	}
 
 	for (c = m->clients; c; c = c->next) {
@@ -993,6 +1153,10 @@ drawbar(Monitor *m)
 			drw_setscheme(drw, scheme[SchemeNorm]);
 			drw_rect(drw, x, 0, w, bh, 1, 1);
 		}
+	} else if (w > 0) {
+		/* too narrow for the title: clear what an earlier title left behind */
+		drw_setscheme(drw, scheme[SchemeNorm]);
+		drw_rect(drw, x, 0, w, bh, 1, 1);
 	}
 	drw_map(drw, m->barwin, 0, 0, m->ww, bh);
 }
@@ -1125,11 +1289,16 @@ getatomprop(Client *c, Atom prop)
 int
 getdwmblockspid()
 {
-	char buf[16];
+	char buf[16] = "";
 	FILE *fp = popen("pidof -s dwmblocks", "r");
-	fgets(buf, sizeof(buf), fp);
-	pid_t pid = strtoul(buf, NULL, 10);
-	pclose(fp);
+	pid_t pid = 0;
+
+	if (fp) {
+		/* no output means dwmblocks is not running: never parse stale buf */
+		if (fgets(buf, sizeof(buf), fp))
+			pid = strtoul(buf, NULL, 10);
+		pclose(fp);
+	}
 	dwmblockspid = pid;
 	return pid != 0 ? 0 : -1;
 }
@@ -1703,22 +1872,19 @@ run(void)
 	while (running) {
 		if (sigusr2_dispatch(reloadcolors) < 0)
 			die("dwm: signal dispatch:");
-		while (XEventsQueued(dpy, QueuedAlready)) {
+		/* XPending also drains events Xlib left queued in XCB, which poll cannot see. */
+		while (XPending(dpy)) {
 			XNextEvent(dpy, &ev);
 			if (handler[ev.type])
 				handler[ev.type](&ev); /* call handler */
 		}
 		if (!running)
 			break;
-		/* Send handler requests before poll can block indefinitely. */
-		XFlush(dpy);
 		if (poll(fds, LENGTH(fds), -1) < 0) {
 			if (errno == EINTR)
 				continue;
 			die("dwm: poll:");
 		}
-		if (fds[0].revents & POLLIN)
-			XEventsQueued(dpy, QueuedAfterReading);
 		if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
 			die("dwm: X connection closed");
 	}
@@ -2887,6 +3053,24 @@ resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, s
 	}
 }
 
+/* status2d palette: dwm.color<n> replaces the default only if exactly #rrggbb */
+void
+loadstatuspalette(XrmDatabase db)
+{
+	char name[16];
+	size_t i;
+
+	for (i = 0; i < LENGTH(statuspalette); i++) {
+		strcpy(statuspalette[i], statuspalette_default[i]);
+		if (!db)
+			continue;
+		snprintf(name, sizeof name, "color%d", (int)i);
+		resource_load(db, name, STRING, statuspalette[i], sizeof statuspalette[i]);
+		if (!validcolor(statuspalette[i]) || statuspalette[i][7])
+			strcpy(statuspalette[i], statuspalette_default[i]);
+	}
+}
+
 void
 load_xresources(void)
 {
@@ -2900,6 +3084,7 @@ load_xresources(void)
 	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
 	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
+	loadstatuspalette(NULL);
 	display = XOpenDisplay(NULL);
 	if (display) {
 		resm = XResourceManagerString(display);
@@ -2909,6 +3094,7 @@ load_xresources(void)
 				resource_load(db, p->name, p->type, p->dst, p->size);
 			(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
 			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
+			loadstatuspalette(db);
 			XrmDestroyDatabase(db);
 		}
 		XCloseDisplay(display);

@@ -5,7 +5,8 @@ A customized build of [dwm](https://dwm.suckless.org/) 6.5, derived from Luke Sm
 ## Features
 
 - Luke's build patches: clickable status bar (statuscmd), scratchpad, bstack/fibonacci/deck/centered-master layouts, vanitygaps, sticky windows, hide-vacant-tags, stacker, shiftview, swallow, true fullscreen. See [`src/README.md`](src/README.md) and [`src/config.h`](src/config.h) for bindings.
-- Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`).
+- Colored status bar segments ([status2d](https://dwm.suckless.org/patches/status2d/), reimplemented with bounds-checked parsing): `^c#rrggbb^`/`^b#rrggbb^` truecolor codes and `^C<0-15>^`/`^B<0-15>^` codes that follow `dwm.color0`..`dwm.color15`. Clickable status regions (statuscmd) stay aligned. Grammar in [`src/dwm.1`](src/dwm.1).
+- Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
 - Live theme reload: `SIGUSR2` makes dwm re-read Xresources (`src/sigusr2.c`). `SIGUSR1` stays reserved for dwmblocks.
 - Configurable border width (1 or 2 px) and selected-border color (`src/borderwidth.c`, `src/selborder.c`).
 

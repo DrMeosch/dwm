@@ -60,6 +60,13 @@ static char *colors[][3] = {
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
 };
 
+/* status2d ^C<n>^ and ^B<n>^ colors; Xresources dwm.color<n> (pywal etc.) overrides each entry */
+static const char *statuspalette_default[16] = {
+	"#21222c", "#ff5555", "#50fa7b", "#f1fa8c", "#bd93f9", "#ff79c6", "#8be9fd", "#f8f8f2",
+	"#6272a4", "#ff6e6e", "#69ff94", "#ffffa5", "#d6acff", "#ff92df", "#a4ffff", "#ffffff",
+};
+static char statuspalette[16][COLORLEN];
+
 /* Light bars use the existing Xresources palette's foreground for contrast. */
 static char lightbarbg[] = "#f6e8ee";
 static const unsigned long lightbaropacity = 0xeb851eb8UL; /* 92% */
@@ -78,7 +85,6 @@ static Sp scratchpads[] = {
 
 /* tagging */
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-static const int taglayouts[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 static const Rule rules[] = {
 	/* xprop(1):
@@ -111,7 +117,7 @@ static const int refreshrate = 60;  /* refresh rate (per second) for client move
 #include "vanitygaps.c"
 static const Layout layouts[] = {
 	/* symbol     arrange function */
-	{ "[]=",	tile },	                /* Default: Master on right, slaves on left */
+	{ "[]=",	tile },	                /* Master on right, slaves on left */
 	{ "TTT",	bstack },               /* Master on top, slaves on bottom */
 
 	{ "[@]",	spiral },               /* Fibonacci spiral */
@@ -122,11 +128,14 @@ static const Layout layouts[] = {
 
 	{ "|M|",	centeredmaster },               /* Master in middle, slaves on sides */
 	{ ">M>",	centeredfloatingmaster },       /* Same but master floats */
-	{ "M>|",	righttile },                    /* Right-side master, two-thirds by default */
+	{ "M>|",	righttile },                    /* Default: Right-side master, two-thirds by default */
 
 	{ "><>",	NULL },	                /* no layout function means floating behavior */
 	{ NULL,		NULL },
 };
+
+/* index into layouts[] every tag starts on (righttile) */
+static const int defaultlayout = 8;
 
 static const char *brightness_up[]   = { "sb-brightnessctl", "set", "+5%", NULL };
 static const char *brightness_down[] = { "sb-brightnessctl", "set", "5%-", NULL };

@@ -5,9 +5,21 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
+<<<<<<< HEAD
 refusing scratchpad-only tag views, rejecting Xresources strings that exceed
 their buffer, and keeping the selected-tag font set disabled for an empty or
 NULL `selfontweight`), tag shifting,
+=======
+refusing scratchpad-only tag views and rejecting Xresources strings that exceed
+their buffer, and parsing, measuring and click mapping of status2d codes with
+every truncated, malformed or out-of-range form falling back to plain text,
+plus palette loading that accepts only exactly `#rrggbb`, and finding the
+dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
+and `buttonpress()` signalling the block under a status click, including a
+status wider than the bar and the exact first and last pixel of each block, all
+without X11, XTEST or `pidof`),
+tag shifting,
+>>>>>>> refs/remotes/origin/master
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
@@ -20,12 +32,28 @@ XTEST development files are available, an XTEST client checks that idle Mod+q
 delivers a WM_DELETE_WINDOW request without further input, and that a click on
 an unfocused client is replayed before subsequent typing; both deliveries must
 occur without an external wake. If the files are unavailable, this input
-regression check is reported as skipped. The production `transient.c`
+regression check is reported as skipped. With the same files and `pidof`, and
+no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
+while XTEST clicks the status of the bar: each click must reach the block under
+the pointer, pixel-exact against the drawn status, including when the status
+is wider than the bar; this is the pixel-level counterpart of the headless
+`buttonpress()` check above, which runs everywhere. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
-rendered bar text, MapRequest, tiled and floating ConfigureRequest handling,
-ConfigureNotify delivery, and transient-window placement. Autostart is disabled
+rendered bar text, a status that leaves only a narrow gap before it without
+stale title pixels, colored status segments set through the root window name
+(pixel colors, alignment against the right edge of the bar, that codes take
+no width, and that text and rectangles pushed off the left edge by ^f advances
+beyond 16-bit X11 coordinates are not drawn, and that the status background
+still covers the bar), a `dwm.color<n>` palette change
+followed by SIGUSR2 and a malformed palette value keeping its default,
+MapRequest, tiled and floating ConfigureRequest handling, ConfigureNotify
+delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
+
+The Xlib client waits for the production `transient.c` window to be managed
+before it creates its tiled window; this order is deliberate, so the tiled
+window is always the newest, selected client for the bar checks.
 
 The geometry harness supplies the monitor/client iteration and resize boundary
 used by the layout code. It verifies requested rectangles; it does not test X
@@ -58,5 +86,12 @@ to the running test dwm. It also verifies a hidden client's tag assignment and
 the selected tag view survive the reload. When capture is enabled, it writes
 `dark.png` and `light.png` to that directory. CI
 uploads both images as the `xresources-reload-screenshots` artifact and adds a
-direct download link to the workflow summary. SIGUSR1 stays reserved for
-dwmblocks; SIGUSR2 requests the Xresources reload.
+direct download link to the workflow summary.
+
+The `eventloop` check runs the production `run()` with a MapRequest handler
+that performs a raw XCB round trip (as `winpid()` does) while a second
+MapRequest arrives, and verifies the loop dispatches the event XCB queued
+instead of blocking in `poll`. It runs from `x11.sh`, so it needs the
+private X server.
+
+SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.

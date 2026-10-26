@@ -13,9 +13,11 @@ The manual is still incomplete; PRs welcome on that, lol.
 ## Patches and features
 
 - [Clickable statusbar](https://dwm.suckless.org/patches/statuscmd/) with my build of [dwmblocks](https://github.com/lukesmithxyz/dwmblocks).
+- [status2d](https://dwm.suckless.org/patches/status2d/): colored status text via `^c#rrggbb^`, `^b#rrggbb^`, `^C<0-15>^` (`dwm.color<n>`), `^d^`, `^r` and `^f`. It is not the upstream patch: the parser is bounds-checked, malformed codes show as plain text, and one walker measures and draws so the clickable statusbar regions stay correct. See `dwm.1`.
 - Reads [xresources](https://dwm.suckless.org/patches/xresources/) colors/variables (i.e. works with `pywal`, etc.).
 - scratchpad: Accessible with <kbd>mod+shift+enter</kbd>.
 - New layouts: bstack, fibonacci, deck, centered master and more. All bound to keys <kbd>super+(shift+)t/y/u/i</kbd>.
+  Every tag starts on the right-side master layout (righttile); see `defaultlayout` in `config.h`.
 - True fullscreen (<kbd>super+f</kbd>) and prevents focus shifting.
 - Windows can be made sticky (<kbd>super+s</kbd>).
 - [hide vacant tags](https://dwm.suckless.org/patches/hide_vacant_tags/) hides tags with no windows.
