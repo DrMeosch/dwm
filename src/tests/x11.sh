@@ -49,6 +49,14 @@ $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	"$root/src/borderwidth.c" "$root/src/selborder.c" \
 	"$root/src/sigusr2.c" "$root/src/util.c" \
 	$libs -lm -o "$tmp/dwm"
+$cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
+	-Wno-unused-parameter -Wno-sign-compare \
+	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
+	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
+	-DVERSION=\"6.5\" $flags "$root/src/tests/eventloop.c" "$root/src/drw.c" \
+	"$root/src/borderwidth.c" "$root/src/selborder.c" \
+	"$root/src/sigusr2.c" "$root/src/util.c" \
+	$libs -lm -o "$tmp/eventloop"
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/tests/x11.c" \
 	$libs -o "$tmp/x11"
 if [ "$input_available" -eq 1 ]; then
@@ -81,6 +89,8 @@ printf 'dwm.borderpx: 1\ndwm.selbordercolor: #ffb86c\n' | xrdb -merge
 if [ -n "${DWM_X11_CAPTURE_DIR:-}" ]; then
 	"$tmp/x11-capture" root '#282a36'
 fi
+
+"$tmp/eventloop"
 
 "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
@@ -148,5 +158,18 @@ wait_for_border '#000000' 1
 printf 'dwm.color8: 1\ndwm.selbordercolor: #000000\n' | xrdb -load
 kill -USR2 "$dwm_pid"
 wait_for_border '#000000' 2
+
+# status2d palette entries follow Xresources on reload; a malformed one keeps its default
+"$tmp/x11" bar-color '#50fa7b' 16
+"$tmp/x11" bar-color '#f1fa8c' 16
+printf 'dwm.color2: #3060ff\ndwm.color3: bogus\n' | xrdb -load
+kill -USR2 "$dwm_pid"
+"$tmp/x11" bar-color '#3060ff' 16
+"$tmp/x11" bar-color '#50fa7b' 0
+"$tmp/x11" bar-color '#f1fa8c' 16
+printf 'dwm.borderpx: 1\n' | xrdb -load
+kill -USR2 "$dwm_pid"
+"$tmp/x11" bar-color '#50fa7b' 16
+kill -0 "$dwm_pid"
 
 printf '%s\n' 'X11 integration checks passed'

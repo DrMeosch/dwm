@@ -72,6 +72,132 @@ test_copyvalidchars(void)
 	      "copyvalidchars damaged a non-ASCII byte sequence");
 }
 
+/* statuscode() must never read past the n bytes it is given */
+static size_t
+statuscode_exact(const char *text, size_t n)
+{
+	char *copy = malloc(n ? n : 1);
+	size_t len;
+
+	if (!copy)
+		return (size_t)-1;
+	memcpy(copy, text, n);
+	len = statuscode(copy, n);
+	free(copy);
+	return len;
+}
+
+static void
+test_status2d(void)
+{
+	static const struct { const char *text; size_t len; } codes[] = {
+		{ "^c#ff0000^", 10 }, { "^b#00FfaA^", 10 }, { "^C0^", 4 }, { "^B15^", 5 },
+		{ "^C007^", 6 }, { "^d^", 3 }, { "^f20^", 5 }, { "^f9999^", 7 },
+		{ "^r1,2,30,4^", 11 },
+		/* truncated, malformed and out-of-range codes are plain text */
+		{ "^c#ff00^", 0 }, { "^c#ff00zz^", 0 }, { "^c#ff0000", 0 }, { "^c#ff0000x", 0 },
+		{ "^c#ff00000^", 0 }, { "^c#zzzzzz^", 0 }, { "^c ff0000^", 0 },
+		{ "^C16^", 0 }, { "^B99^", 0 }, { "^C^", 0 }, { "^C-1^", 0 }, { "^C1", 0 },
+		{ "^f^", 0 }, { "^f-3^", 0 }, { "^f12345^", 0 }, { "^f1", 0 },
+		{ "^r1,2,3^", 0 }, { "^r1,2,3,^", 0 }, { "^r1,2,3,4", 0 }, { "^r,,,^", 0 },
+		{ "^r1;2;3;4^", 0 }, { "^r1,2,3,12345^", 0 },
+		{ "^x^", 0 }, { "^D^", 0 }, { "^^", 0 }, { "^", 0 }, { "^d", 0 }, { "^dx", 0 },
+		{ "c#ff0000^", 0 }, { "", 0 },
+	};
+	static const char palette_text[] = "^C2^^B3^";
+	size_t i, n;
+	char text[256];
+
+	for (i = 0; i < LENGTH(codes); i++) {
+		n = strlen(codes[i].text);
+		CHECK(statuscode_exact(codes[i].text, n) == codes[i].len,
+		      "statuscode(\"%s\") = %zu, want %zu", codes[i].text,
+		      statuscode_exact(codes[i].text, n), codes[i].len);
+		/* a code is recognized only with all of its bytes available */
+		if (codes[i].len)
+			for (n = 0; n < codes[i].len; n++)
+				CHECK(statuscode_exact(codes[i].text, n) == 0,
+				      "statuscode(\"%s\") accepted a code cut to %zu bytes",
+				      codes[i].text, n);
+	}
+	CHECK(statuscode(palette_text, strlen(palette_text)) == 4
+	      && statuscode(palette_text + 4, strlen(palette_text) - 4) == 4,
+	      "statuscode did not stop at the end of a code");
+
+	CHECK(validcolor("#09afAF") && validcolor("#000000^"),
+	      "validcolor rejected a #rrggbb color");
+	CHECK(!validcolor("") && !validcolor("#") && !validcolor("#12345")
+	      && !validcolor("#12345g") && !validcolor("123456#") && !validcolor("ff0000"),
+	      "validcolor accepted a malformed color");
+
+	/* Without fonts, plain text has no width, so only ^f contributes. */
+	{
+		static Drw stub;
+
+		drw = &stub;
+		lrpad = 0;
+		strcpy(text, "^c#112233^^f10^^r0,0,5,5^^d^^f7^^c#zzzzzz^");
+		CHECK(drawstatus(text, strlen(text), 0, 0) == 17,
+		      "drawstatus measured %d, want 17", drawstatus(text, strlen(text), 0, 0));
+		CHECK(drawstatus(text, 15, 0, 0) == 10 && strlen(text) > 15 && text[15] == '^',
+		      "drawstatus did not stop at the given length or restored the text");
+		CHECK(drawstatus(text, 14, 0, 0) == 0,
+		      "drawstatus honored a code cut by the length");
+		CHECK(drawstatus(text, 0, 0, 0) == 0, "drawstatus measured an empty range");
+		strcpy(text, "^f10^^f10^^f");
+		CHECK(drawstatus(text, strlen(text), 5, 0) == 20,
+		      "drawstatus did not measure relative to the start");
+
+		/* clicks map through the same walker; codes themselves take no space */
+		strcpy(rawstext, "\001^f50^\002^f30^\003^f20^");
+		CHECK(statusblocksig(100, 99) == 0 && statusblocksig(100, 100) == 0
+		      && statusblocksig(100, 101) == 1 && statusblocksig(100, 150) == 1
+		      && statusblocksig(100, 151) == 2 && statusblocksig(100, 180) == 2
+		      && statusblocksig(100, 181) == 3 && statusblocksig(100, 500) == 3,
+		      "statusblocksig mapped a click to the wrong block");
+		strcpy(rawstext, "no signal ^f50^");
+		CHECK(statusblocksig(0, 10) == 0, "statusblocksig invented a block");
+		rawstext[0] = '\0';
+		drw = NULL;
+	}
+
+	/* palette: only exactly #rrggbb replaces the default */
+	{
+		XrmDatabase db;
+
+		XrmInitialize();
+		db = XrmGetStringDatabase("dwm.color1: #123456\n"
+		                          "dwm.color2: #12345\n"
+		                          "dwm.color3: #1234567\n"
+		                          "dwm.color4: 123456\n"
+		                          "dwm.color5: #12345g\n"
+		                          "dwm.color9: #ABCDEF\n"
+		                          "dwm.color15: #000000\n"
+		                          "dwm.color16: #ffffff\n");
+		loadstatuspalette(NULL);
+		CHECK(!strcmp(statuspalette[1], statuspalette_default[1]),
+		      "loadstatuspalette did not set the defaults");
+		loadstatuspalette(db);
+		CHECK(!strcmp(statuspalette[1], "#123456") && !strcmp(statuspalette[9], "#ABCDEF")
+		      && !strcmp(statuspalette[15], "#000000"),
+		      "loadstatuspalette ignored a valid dwm.color<n>: %s %s %s",
+		      statuspalette[1], statuspalette[9], statuspalette[15]);
+		for (i = 2; i <= 5; i++)
+			CHECK(!strcmp(statuspalette[i], statuspalette_default[i]),
+			      "loadstatuspalette accepted a bad dwm.color%zu: %s", i, statuspalette[i]);
+		CHECK(!strcmp(statuspalette[0], statuspalette_default[0]),
+		      "loadstatuspalette changed an unset color");
+		XrmDestroyDatabase(db);
+		/* a reload without the resources restores the defaults */
+		db = XrmGetStringDatabase("dwm.color1: bogus\n");
+		loadstatuspalette(db);
+		CHECK(!strcmp(statuspalette[1], statuspalette_default[1])
+		      && !strcmp(statuspalette[9], statuspalette_default[9]),
+		      "loadstatuspalette kept a stale color across a reload");
+		XrmDestroyDatabase(db);
+	}
+}
+
 static void
 test_client_lists(void)
 {
@@ -388,6 +514,7 @@ main(void)
 {
 	test_createmon();
 	test_copyvalidchars();
+	test_status2d();
 	test_client_lists();
 	test_attach_and_detach();
 	test_geometry_helpers();

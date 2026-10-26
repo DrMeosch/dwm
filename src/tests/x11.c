@@ -140,30 +140,86 @@ find_bar(Display *dpy, Window root, XWindowAttributes *wa)
 	return bar;
 }
 
-static int
-check_bar_text(Display *dpy, Window root)
+/*
+ * Count the bar pixels at or right of from that are color, or, if color is
+ * NULL, that differ from the bar background. Reports the leftmost one in left.
+ */
+static unsigned int
+count_bar_pixels(Display *dpy, Window root, const char *color, int from, int *left)
 {
 	Window bar;
-	unsigned int ink = 0;
+	unsigned int count = 0;
 	XWindowAttributes wa;
 	XImage *image;
-	XColor background, exact;
+	XColor wanted, exact;
 	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
 	int x, y;
 
-	bar = find_bar(dpy, root, &wa);
-	if (bar == None || !XAllocNamedColor(dpy, cmap, "#282a36", &background, &exact))
+	if (left)
+		*left = -1;
+	if ((bar = find_bar(dpy, root, &wa)) == None
+	|| !XAllocNamedColor(dpy, cmap, color ? color : "#282a36", &wanted, &exact))
 		return 0;
 	image = XGetImage(dpy, bar, 0, 0, wa.width, wa.height, AllPlanes, ZPixmap);
 	if (!image)
 		return 0;
-	for (y = 0; y < wa.height; y++)
-		for (x = 0; x < wa.width; x++)
-			if (XGetPixel(image, x, y) != background.pixel)
-				ink++;
+	for (x = from; x < wa.width; x++)
+		for (y = 0; y < wa.height; y++)
+			if ((XGetPixel(image, x, y) == wanted.pixel) == (color != NULL)) {
+				if (left && *left < 0)
+					*left = x;
+				count++;
+			}
 	XDestroyImage(image);
-	XFreeColors(dpy, cmap, &background.pixel, 1, 0);
-	return ink > 10;
+	XFreeColors(dpy, cmap, &wanted.pixel, 1, 0);
+	return count;
+}
+
+/* The value of one channel of an XImage pixel, given its mask. */
+static unsigned long
+channel(unsigned long pixel, unsigned long mask)
+{
+	unsigned long low = mask & -mask;
+
+	return (pixel & mask) / low;
+}
+
+/*
+ * Count the bar pixels at or right of from that are clearly red: anti-aliased
+ * glyphs seldom reach their exact foreground color, but their strong pixels
+ * stay near it, and the default status colors never come close.
+ */
+static unsigned int
+count_bar_reddish(Display *dpy, Window root, int from)
+{
+	Window bar;
+	unsigned int count = 0;
+	XWindowAttributes wa;
+	XImage *image;
+	int x, y;
+
+	if ((bar = find_bar(dpy, root, &wa)) == None)
+		return 0;
+	image = XGetImage(dpy, bar, 0, 0, wa.width, wa.height, AllPlanes, ZPixmap);
+	if (!image)
+		return 0;
+	for (x = from; x < wa.width; x++)
+		for (y = 0; y < wa.height; y++) {
+			unsigned long p = XGetPixel(image, x, y);
+
+			if (channel(p, image->red_mask) >= 0x80
+			&& channel(p, image->green_mask) <= 0x60
+			&& channel(p, image->blue_mask) <= 0x60)
+				count++;
+		}
+	XDestroyImage(image);
+	return count;
+}
+
+static int
+check_bar_text(Display *dpy, Window root)
+{
+	return count_bar_pixels(dpy, root, NULL, 0, NULL) > 10;
 }
 
 static int
@@ -331,8 +387,119 @@ check_narrow_title_gap(Display *dpy, Window root, Window client)
 	XFlush(dpy);
 }
 
+
+static void
+set_status(Display *dpy, Window root, const char *text)
+{
+	XStoreName(dpy, root, text);
+	XFlush(dpy);
+}
+
+/* Wait until the bar, right of from, shows exactly want pixels of color. */
+static unsigned int
+wait_bar_color(Display *dpy, Window root, const char *color, int from,
+               unsigned int want, int *left)
+{
+	unsigned int count = 0;
+	int i;
+
+	for (i = 0; i < 80; i++) {
+		count = count_bar_pixels(dpy, root, color, from, left);
+		if (count == want)
+			break;
+		pause_millis(25);
+	}
+	return count;
+}
+
+/*
+ * Colored status segments set through the root window name. The walker that
+ * draws the status is the one that measures it, so it must end flush against
+ * the right edge of the bar however many codes it contains.
+ */
+static void
+check_status_colors(Display *dpy, Window root)
+{
+	int width = DisplayWidth(dpy, DefaultScreen(dpy));
+	int from = width - 400, left = -1, plain_left = -1;
+	unsigned int count;
+
+	/* a 4x4 rectangle, 50px of cursor advance, and 2px of padding; ^r does not advance */
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
+	count = wait_bar_color(dpy, root, "#ff5555", from, 16, &left);
+	CHECK(count == 16, "^c rectangle drew %u red pixels (expected 16)", count);
+	CHECK(left == width - 52, "^f status started at x=%d (expected %d)", left, width - 52);
+
+	/* ^C selects dwm.color<n>, whose defaults are the Dracula palette; ^d resets */
+	set_status(dpy, root, "^C2^^r0,0,4,4^^f6^^C5^^r0,0,4,4^^f6^^d^^r0,0,4,4^^f6^");
+	CHECK(wait_bar_color(dpy, root, "#50fa7b", from, 16, NULL) == 16,
+	      "^C2 rectangle was not drawn in the default palette color");
+	CHECK(count_bar_pixels(dpy, root, "#ff79c6", from, NULL) == 32,
+	      "^C5 and ^d rectangles were not drawn in the expected colors");
+
+	/* a background and foreground around real glyphs; ^d ends both */
+	set_status(dpy, root, "^b#112233^^c#ff2222^WWWW^d^ ^r0,0,4,4^^f6^");
+	CHECK(wait_bar_color(dpy, root, "#50fa7b", from, 0, NULL) == 0,
+	      "the previous status was not replaced");
+	CHECK(count_bar_pixels(dpy, root, "#112233", from, NULL) >= 100,
+	      "^b background was not drawn behind text");
+	CHECK(count_bar_reddish(dpy, root, from) >= 8,
+	      "^c foreground was not used for text");
+	CHECK(count_bar_pixels(dpy, root, "#ff79c6", from, NULL) == 16,
+	      "^r after ^d was not drawn in the status foreground");
+
+	/* codes take no width: the same text with and without them ends up in the same place */
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f6^WWWW");
+	wait_bar_color(dpy, root, "#112233", from, 0, NULL);
+	count_bar_pixels(dpy, root, "#ff5555", from, &plain_left);
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f6^^b#112233^^c#ffffff^WWWW^d^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 16, &left) == 16
+	      && left == plain_left && left >= 0,
+	      "status codes changed the status width: x=%d without, x=%d with", plain_left, left);
+
+	/* malformed codes are literal text: nothing is colored and the bar survives */
+	set_status(dpy, root, "^c#ff00^^r0,0,4^^C99^^f12345^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 0, NULL) == 0,
+	      "the previous status was not replaced");
+	CHECK(count_bar_pixels(dpy, root, NULL, from, NULL) > 50,
+	      "a malformed status code was not drawn as text");
+
+	/*
+	 * ^f advances add up to far more than the 16 bits an X11 coordinate can
+	 * hold, so the start of the status is far off the left edge and runs
+	 * drawn there would wrap back into the visible bar. They must not be
+	 * drawn: no pixel of the spoofed text or rectangle color may show up.
+	 */
+	set_status(dpy, root, "^c#12ab34^^r0,0,20,4^SPOOFED-TEXT"
+	           "^f9999^^f9999^^f9999^^f9999^^f9999^^f9999^^f6142^"
+	           "^d^^C2^^r0,0,4,4^^f6^");
+	CHECK(wait_bar_color(dpy, root, "#50fa7b", from, 16, NULL) == 16,
+	      "the status with 16-bit overflowing advances was not drawn");
+	CHECK(count_bar_pixels(dpy, root, "#12ab34", 0, &left) == 0,
+	      "status text or rectangle wrapped around to x=%d of the bar", left);
+
+	/*
+	 * The background of a status a little wider than 16 bits must still cover
+	 * the whole bar, or pixels from earlier frames are left in it.
+	 */
+	set_status(dpy, root, "^c#12ab34^^r0,0,20,4^^f600^");
+	CHECK(wait_bar_color(dpy, root, "#12ab34", 0, 80, NULL) == 80,
+	      "the mid-bar rectangle was not drawn");
+	set_status(dpy, root, "^f9999^^f9999^^f9999^^f9999^^f9999^^f9999^^f5600^"
+	           "^C2^^r0,0,4,4^^f6^");
+	CHECK(wait_bar_color(dpy, root, "#50fa7b", from, 16, NULL) == 16,
+	      "the status wider than 16 bits was not drawn");
+	CHECK(count_bar_pixels(dpy, root, "#12ab34", 0, &left) == 0,
+	      "the status background left stale pixels at x=%d of the bar", left);
+
+	/* left behind for the palette reload check in x11.sh */
+	set_status(dpy, root, "^C2^^r0,0,4,4^^f6^^C3^^r0,0,4,4^^f6^");
+	CHECK(wait_bar_color(dpy, root, "#50fa7b", from, 16, NULL) == 16,
+	      "the palette status was not drawn");
+}
+
 int
-main(void)
+main(int argc, char *argv[])
 {
 	Display *dpy;
 	Window root, tiled, floating, transient, target;
@@ -346,6 +513,17 @@ main(void)
 	if (!dpy)
 		return EXIT_FAILURE;
 	root = DefaultRootWindow(dpy);
+
+	/* x11 bar-color <#rrggbb> <pixels>: the status left by a previous run shows that color */
+	if (argc == 4 && !strcmp(argv[1], "bar-color")) {
+		unsigned int want = (unsigned int)atoi(argv[3]);
+		unsigned int count = wait_bar_color(dpy, root, argv[2],
+		                                    DisplayWidth(dpy, DefaultScreen(dpy)) - 400, want, NULL);
+
+		CHECK(count == want, "the bar shows %u pixels of %s (expected %u)", count, argv[2], want);
+		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
 
 	tiled = XCreateSimpleWindow(dpy, root, 40, 40, 400, 300, 0, 0, 0);
 	XStoreName(dpy, tiled, "integration-tiled");
@@ -373,6 +551,7 @@ main(void)
 	}
 	CHECK(wait_bar_text(dpy, root), "dwm did not render text into its bar");
 	check_narrow_title_gap(dpy, root, tiled);
+	check_status_colors(dpy, root);
 
 	floating = wait_named_window(dpy, root, "floating", 80);
 	CHECK(floating != None, "production transient.c did not create its parent window");

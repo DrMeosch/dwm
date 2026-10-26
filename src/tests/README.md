@@ -6,7 +6,9 @@ headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
 refusing scratchpad-only tag views and rejecting Xresources strings that exceed
-their buffer), tag shifting,
+their buffer, and parsing, measuring and click mapping of status2d codes with
+every truncated, malformed or out-of-range form falling back to plain text,
+plus palette loading that accepts only exactly `#rrggbb`), tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the PKGBUILD source and
 dependencies and the LICENSE file shipped by `make dist`.
@@ -22,8 +24,14 @@ regression check is reported as skipped. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
 rendered bar text, a status that leaves only a narrow gap before it without
-stale title pixels, MapRequest, tiled and floating ConfigureRequest handling,
-ConfigureNotify delivery, and transient-window placement. Autostart is disabled
+stale title pixels, colored status segments set through the root window name
+(pixel colors, alignment against the right edge of the bar, that codes take
+no width, and that text and rectangles pushed off the left edge by ^f advances
+beyond 16-bit X11 coordinates are not drawn, and that the status background
+still covers the bar), a `dwm.color<n>` palette change
+followed by SIGUSR2 and a malformed palette value keeping its default,
+MapRequest, tiled and floating ConfigureRequest handling, ConfigureNotify
+delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
 
 The geometry harness supplies the monitor/client iteration and resize boundary
@@ -57,5 +65,12 @@ to the running test dwm. It also verifies a hidden client's tag assignment and
 the selected tag view survive the reload. When capture is enabled, it writes
 `dark.png` and `light.png` to that directory. CI
 uploads both images as the `xresources-reload-screenshots` artifact and adds a
-direct download link to the workflow summary. SIGUSR1 stays reserved for
-dwmblocks; SIGUSR2 requests the Xresources reload.
+direct download link to the workflow summary.
+
+The `eventloop` check runs the production `run()` with a MapRequest handler
+that performs a raw XCB round trip (as `winpid()` does) while a second
+MapRequest arrives, and verifies the loop dispatches the event XCB queued
+instead of blocking in `poll`. It runs from `x11.sh`, so it needs the
+private X server.
+
+SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
