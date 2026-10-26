@@ -35,15 +35,22 @@ static void
 test_createmon(void)
 {
 	Monitor *m = createmon();
+	unsigned int i;
 
 	CHECK(m->tagset[0] == 1 && m->tagset[1] == 1,
 	      "new monitor does not start on tag 1");
 	CHECK(m->mfact == mfact && m->nmaster == nmaster,
 	      "new monitor did not inherit layout defaults");
-	CHECK(m->lt[0] == &layouts[0] && m->lt[1] == &layouts[1],
+	CHECK(m->lt[0] == &layouts[defaultlayout] && m->lt[1] == &layouts[1],
 	      "new monitor did not select the configured layouts");
-	CHECK(strcmp(m->ltsymbol, layouts[0].symbol) == 0,
+	CHECK(m->lt[0]->arrange == righttile,
+	      "new monitor does not start on righttile");
+	CHECK(strcmp(m->ltsymbol, layouts[defaultlayout].symbol) == 0,
 	      "new monitor has the wrong layout symbol");
+	for (i = 0; i <= LENGTH(tags); i++)
+		CHECK(m->pertag->ltidxs[i][0] == m->lt[0]
+		      && m->pertag->ltidxs[i][1] == m->lt[1],
+		      "per-tag slot %u did not inherit the default layouts", i);
 	CHECK(m->pertag->curtag == 1 && m->pertag->prevtag == 1,
 	      "new monitor has the wrong per-tag cursor");
 	CHECK(m->pertag->nmasters[0] == nmaster

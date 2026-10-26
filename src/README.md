@@ -16,6 +16,7 @@ The manual is still incomplete; PRs welcome on that, lol.
 - Reads [xresources](https://dwm.suckless.org/patches/xresources/) colors/variables (i.e. works with `pywal`, etc.).
 - scratchpad: Accessible with <kbd>mod+shift+enter</kbd>.
 - New layouts: bstack, fibonacci, deck, centered master and more. All bound to keys <kbd>super+(shift+)t/y/u/i</kbd>.
+  Every tag starts on the right-side master layout (righttile); see `defaultlayout` in `config.h`.
 - True fullscreen (<kbd>super+f</kbd>) and prevents focus shifting.
 - Windows can be made sticky (<kbd>super+s</kbd>).
 - [hide vacant tags](https://dwm.suckless.org/patches/hide_vacant_tags/) hides tags with no windows.

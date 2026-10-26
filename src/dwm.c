@@ -834,9 +834,9 @@ createmon(void)
 	m->gappiv = gappiv;
 	m->gappoh = gappoh;
 	m->gappov = gappov;
-	m->lt[0] = &layouts[0];
+	m->lt[0] = &layouts[defaultlayout];
 	m->lt[1] = &layouts[1 % LENGTH(layouts)];
-	strncpy(m->ltsymbol, layouts[0].symbol, sizeof m->ltsymbol);
+	strncpy(m->ltsymbol, layouts[defaultlayout].symbol, sizeof m->ltsymbol);
 	m->pertag = ecalloc(1, sizeof(Pertag));
 	m->pertag->curtag = m->pertag->prevtag = 1;
 
@@ -1669,22 +1669,19 @@ run(void)
 	while (running) {
 		if (sigusr2_dispatch(reloadcolors) < 0)
 			die("dwm: signal dispatch:");
-		while (XEventsQueued(dpy, QueuedAlready)) {
+		/* XPending also drains events Xlib left queued in XCB, which poll cannot see. */
+		while (XPending(dpy)) {
 			XNextEvent(dpy, &ev);
 			if (handler[ev.type])
 				handler[ev.type](&ev); /* call handler */
 		}
 		if (!running)
 			break;
-		/* Send handler requests before poll can block indefinitely. */
-		XFlush(dpy);
 		if (poll(fds, LENGTH(fds), -1) < 0) {
 			if (errno == EINTR)
 				continue;
 			die("dwm: poll:");
 		}
-		if (fds[0].revents & POLLIN)
-			XEventsQueued(dpy, QueuedAfterReading);
 		if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL))
 			die("dwm: X connection closed");
 	}

@@ -77,7 +77,6 @@ static Sp scratchpads[] = {
 
 /* tagging */
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9" };
-static const int taglayouts[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 static const Rule rules[] = {
 	/* xprop(1):
@@ -110,7 +109,7 @@ static const int refreshrate = 60;  /* refresh rate (per second) for client move
 #include "vanitygaps.c"
 static const Layout layouts[] = {
 	/* symbol     arrange function */
-	{ "[]=",	tile },	                /* Default: Master on right, slaves on left */
+	{ "[]=",	tile },	                /* Master on right, slaves on left */
 	{ "TTT",	bstack },               /* Master on top, slaves on bottom */
 
 	{ "[@]",	spiral },               /* Fibonacci spiral */
@@ -121,11 +120,14 @@ static const Layout layouts[] = {
 
 	{ "|M|",	centeredmaster },               /* Master in middle, slaves on sides */
 	{ ">M>",	centeredfloatingmaster },       /* Same but master floats */
-	{ "M>|",	righttile },                    /* Right-side master, two-thirds by default */
+	{ "M>|",	righttile },                    /* Default: Right-side master, two-thirds by default */
 
 	{ "><>",	NULL },	                /* no layout function means floating behavior */
 	{ NULL,		NULL },
 };
+
+/* index into layouts[] every tag starts on (righttile) */
+static const int defaultlayout = 8;
 
 static const char *brightness_up[]   = { "sb-brightnessctl", "set", "+5%", NULL };
 static const char *brightness_down[] = { "sb-brightnessctl", "set", "5%-", NULL };
