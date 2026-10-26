@@ -21,7 +21,8 @@ occur without an external wake. If the files are unavailable, this input
 regression check is reported as skipped. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
-rendered bar text, MapRequest, tiled and floating ConfigureRequest handling,
+rendered bar text, a status that leaves only a narrow gap before it without
+stale title pixels, MapRequest, tiled and floating ConfigureRequest handling,
 ConfigureNotify delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
 

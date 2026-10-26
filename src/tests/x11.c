@@ -1,4 +1,5 @@
 #include <X11/Xlib.h>
+#include <X11/Xft/Xft.h>
 #include <X11/Xutil.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -117,30 +118,40 @@ wait_sized_configure(Display *dpy, Window win, int width, int height)
 	return 0;
 }
 
-static int
-check_bar_text(Display *dpy, Window root)
+static Window
+find_bar(Display *dpy, Window root, XWindowAttributes *wa)
 {
 	Window parent, *children = NULL, bar = None;
-	unsigned int count, i, ink = 0;
-	XWindowAttributes wa;
-	XImage *image;
-	XColor background, exact;
-	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
-	int x, y;
+	unsigned int count, i;
 
 	if (!XQueryTree(dpy, root, &root, &parent, &children, &count))
-		return 0;
+		return None;
 	for (i = 0; i < count; i++) {
-		if (XGetWindowAttributes(dpy, children[i], &wa)
-		&& wa.override_redirect && wa.map_state == IsViewable
-		&& wa.x == 0 && wa.y == 0 && wa.width == DisplayWidth(dpy, DefaultScreen(dpy))
-		&& wa.height < 40) {
+		if (XGetWindowAttributes(dpy, children[i], wa)
+		&& wa->override_redirect && wa->map_state == IsViewable
+		&& wa->x == 0 && wa->y == 0 && wa->width == DisplayWidth(dpy, DefaultScreen(dpy))
+		&& wa->height < 40) {
 			bar = children[i];
 			break;
 		}
 	}
 	if (children)
 		XFree(children);
+	return bar;
+}
+
+static int
+check_bar_text(Display *dpy, Window root)
+{
+	Window bar;
+	unsigned int ink = 0;
+	XWindowAttributes wa;
+	XImage *image;
+	XColor background, exact;
+	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+	int x, y;
+
+	bar = find_bar(dpy, root, &wa);
 	if (bar == None || !XAllocNamedColor(dpy, cmap, "#282a36", &background, &exact))
 		return 0;
 	image = XGetImage(dpy, bar, 0, 0, wa.width, wa.height, AllPlanes, ZPixmap);
@@ -166,6 +177,158 @@ wait_bar_text(Display *dpy, Window root)
 		pause_millis(25);
 	}
 	return 0;
+}
+
+/* Longest horizontal run of non-background pixels; returns its start column. */
+static int
+longest_ink_run(XImage *image, unsigned long background, int *start)
+{
+	int x, y, run, best = 0;
+
+	*start = 0;
+	for (y = 0; y < image->height; y++) {
+		for (x = 0, run = 0; x <= image->width; x++) {
+			if (x < image->width && XGetPixel(image, x, y) != background) {
+				run++;
+				continue;
+			}
+			if (run > best) {
+				best = run;
+				*start = x - run;
+			}
+			run = 0;
+		}
+	}
+	return best;
+}
+
+/* Count non-background pixels in columns [from, to) of the top rows. */
+static int
+ink_in_columns(XImage *image, unsigned long background, int from, int to,
+               int rows)
+{
+	int x, y, ink = 0;
+
+	for (y = 0; y < rows; y++)
+		for (x = from; x < to; x++)
+			if (XGetPixel(image, x, y) != background)
+				ink++;
+	return ink;
+}
+
+static XImage *
+bar_image(Display *dpy, Window bar, const XWindowAttributes *wa)
+{
+	return XGetImage(dpy, bar, 0, 0, wa->width, wa->height, AllPlanes, ZPixmap);
+}
+
+/*
+ * The title is a long underscore line, so it shows as one wide run of ink that
+ * starts lrpad / 2 pixels after the layout symbol. For each status width that
+ * leaves a narrow-but-positive gap between the layout symbol and the status,
+ * go there directly from a short status that showed the full title. The title
+ * is not drawn in such a gap, and the strip where it was must be cleared
+ * rather than keep showing the start of the old title.
+ */
+static void
+check_narrow_title_gap(Display *dpy, Window root, Window client)
+{
+	Window bar;
+	XWindowAttributes wa;
+	XColor background, exact;
+	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+	XftFont *font;
+	XGlyphInfo extents;
+	XImage *image;
+	char title[128], status[256];
+	int k, i, h, bh, title_start = 0, run = 0, x, tw, gap, cell;
+	int narrow = 0, stale = 0, stale_k = 0, ink;
+
+	bar = find_bar(dpy, root, &wa);
+	font = XftFontOpenName(dpy, DefaultScreen(dpy), "monospace:size=10");
+	CHECK(bar != None && font != NULL
+	      && XAllocNamedColor(dpy, cmap, "#282a36", &background, &exact),
+	      "could not prepare the narrow title gap check");
+	if (bar == None || !font)
+		return;
+	h = font->ascent + font->descent; /* dwm: lrpad = fonts->h, bh = h + 2 */
+	bh = h + 2;
+
+	memset(title, '_', sizeof title - 1);
+	title[sizeof title - 1] = '\0';
+	XStoreName(dpy, client, title);
+	XStoreName(dpy, root, "W");
+	XFlush(dpy);
+	for (i = 0; i < 40; i++) {
+		image = bar_image(dpy, bar, &wa);
+		run = image ? longest_ink_run(image, background.pixel, &title_start) : 0;
+		if (image)
+			XDestroyImage(image);
+		if (run > 40)
+			break;
+		pause_millis(25);
+	}
+	CHECK(run > 40, "the selected client title was not drawn in the bar");
+	x = title_start - h / 2; /* end of the layout symbol */
+
+	for (k = 2; run > 40 && k < (int)sizeof status; k++) {
+		memset(status, 'W', k);
+		status[k] = '\0';
+		XftTextExtentsUtf8(dpy, font, (const FcChar8 *)status, k, &extents);
+		tw = extents.xOff + 2; /* dwm adds 2px right padding */
+		gap = wa.width - tw - x;
+		/* some title ink must fit in the gap; the title is hidden up to bh */
+		if (gap <= h / 2 || gap > bh - 2)
+			continue;
+		narrow++;
+		cell = extents.xOff / k;
+
+		XStoreName(dpy, root, "W");
+		XFlush(dpy);
+		for (i = 0; i < 40; i++) {
+			image = bar_image(dpy, bar, &wa);
+			ink = image ? ink_in_columns(image, background.pixel, x + h / 2,
+			                             wa.width - 10 - cell, wa.height) : 0;
+			if (image)
+				XDestroyImage(image);
+			if (ink > 100)
+				break;
+			pause_millis(25);
+		}
+		XStoreName(dpy, root, status);
+		XFlush(dpy);
+		/* wait for the first status cell, blank in the short status; the title's
+		 * underscores sit in the bottom rows, so only look at the top half */
+		for (i = 0, image = NULL; i < 40; i++) {
+			image = bar_image(dpy, bar, &wa);
+			ink = image ? ink_in_columns(image, background.pixel,
+			                             wa.width - tw, wa.width - tw + cell,
+			                             wa.height / 2) : 0;
+			if (ink || i == 39)
+				break;
+			if (image)
+				XDestroyImage(image);
+			pause_millis(25);
+		}
+		if (!image)
+			continue;
+		ink = ink_in_columns(image, background.pixel, x, wa.width - tw,
+		                     wa.height);
+		if (ink) {
+			stale = ink;
+			stale_k = k;
+		}
+		XDestroyImage(image);
+	}
+	CHECK(narrow > 0, "no status width left a narrow gap before the status");
+	CHECK(stale == 0,
+	      "a %d-character status left %d stale title pixels between the layout symbol and the status",
+	      stale_k, stale);
+
+	XStoreName(dpy, client, "integration-tiled");
+	XStoreName(dpy, root, "dwm-test");
+	XftFontClose(dpy, font);
+	XFlush(dpy);
 }
 
 int
@@ -209,6 +372,7 @@ main(void)
 		CHECK(0, "could not inspect the managed tiled window");
 	}
 	CHECK(wait_bar_text(dpy, root), "dwm did not render text into its bar");
+	check_narrow_title_gap(dpy, root, tiled);
 
 	floating = wait_named_window(dpy, root, "floating", 80);
 	CHECK(floating != None, "production transient.c did not create its parent window");
