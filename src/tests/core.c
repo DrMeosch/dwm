@@ -564,6 +564,60 @@ test_getdwmblockspid(void)
 	      "a running dwmblocks gave PID %d", (int)dwmblockspid);
 }
 
+/* click a 1200px bar showing the given status; block 0 in clicks means no signal */
+static void
+check_status_clicks(const char *status, const int (*clicks)[2], size_t n, const char *what)
+{
+	Monitor m = {0};
+	XEvent ev = {0};
+	sigset_t set;
+	siginfo_t info;
+	struct timespec none = { 0, 0 };
+	char pid[32];
+	size_t i;
+	int got;
+
+	sigemptyset(&set);
+	sigaddset(&set, SIGUSR1);
+	sigprocmask(SIG_BLOCK, &set, NULL);
+	snprintf(pid, sizeof pid, "%d\n", (int)getpid());
+	pidof_output = pid; /* "dwmblocks" is this process */
+	dwmblockspid = 0;
+	m.ww = 1200;
+	m.barwin = 1;
+	mons = selmon = &m;
+	/* drw is NULL, so TEXTW is 0: no tags are shown and the status is placed by its width alone */
+	strcpy(rawstext, status);
+	copyvalidchars(stext, rawstext);
+	for (i = 0; i < n; i++) {
+		ev.xbutton.window = m.barwin;
+		ev.xbutton.button = Button1;
+		ev.xbutton.x = clicks[i][0];
+		buttonpress(&ev);
+		got = sigtimedwait(&set, &info, &none) == SIGUSR1 ? info.si_value.sival_int : 0;
+		CHECK(got == (clicks[i][1] ? clicks[i][1] << 8 | 1 : 0),
+		      "a click at x=%d on a %s was sent as 0x%x, expected block %d",
+		      clicks[i][0], what, got, clicks[i][1]);
+	}
+	mons = selmon = NULL;
+	dwmblockspid = 0;
+}
+
+/* a click reaches dwmblocks with the block under the pointer; block 0 means no signal */
+static void
+test_buttonpress_status(void)
+{
+	/* wider than the bar: the status starts at -202 and ends at 1197 */
+	static const int wide[][2] = { { 700, 1 }, { 797, 1 }, { 798, 2 }, { 1180, 2 } };
+	/* 200px of status and 2px of padding: block 1 is [998,1097], block 2 is [1098,1197] */
+	static const int narrow[][2] = { { 997, 0 }, { 998, 1 }, { 1097, 1 }, { 1098, 2 }, { 1197, 2 } };
+
+	check_status_clicks("\001^f1000^\002^f400^", wide, LENGTH(wide),
+	                    "status wider than the bar");
+	check_status_clicks("\001^f100^\002^f100^", narrow, LENGTH(narrow),
+	                    "status narrower than the bar");
+}
+
 int
 main(void)
 {
@@ -581,6 +635,7 @@ main(void)
 	test_terminal_lookup();
 	test_xerror_filters();
 	test_getdwmblockspid();
+	test_buttonpress_status();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("core state regression checks passed");

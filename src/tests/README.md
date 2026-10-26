@@ -9,7 +9,10 @@ refusing scratchpad-only tag views and rejecting Xresources strings that exceed
 their buffer, and parsing, measuring and click mapping of status2d codes with
 every truncated, malformed or out-of-range form falling back to plain text,
 plus palette loading that accepts only exactly `#rrggbb`, and finding the
-dwmblocks PID without parsing anything when `pidof` fails or prints nothing),
+dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
+and `buttonpress()` signalling the block under a status click, including a
+status wider than the bar and the exact first and last pixel of each block, all
+without X11, XTEST or `pidof`),
 tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the PKGBUILD source and
@@ -26,7 +29,8 @@ regression check is reported as skipped. With the same files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
 the pointer, pixel-exact against the drawn status, including when the status
-is wider than the bar. The production `transient.c`
+is wider than the bar; this is the pixel-level counterpart of the headless
+`buttonpress()` check above, which runs everywhere. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
 rendered bar text, a status that leaves only a narrow gap before it without
