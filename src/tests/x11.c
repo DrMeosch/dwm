@@ -506,7 +506,7 @@ main(int argc, char *argv[])
 	XWindowAttributes attributes = {0};
 	XClassHint class_hint = { "integration", "Integration" };
 	XConfigureEvent configure_event;
-	int i, got_configure;
+	int i, got_configure, floating_managed = 0;
 
 	dpy = XOpenDisplay(NULL);
 	CHECK(dpy != NULL, "could not open the private X display");
@@ -524,6 +524,12 @@ main(int argc, char *argv[])
 		XCloseDisplay(dpy);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
+
+	/* transient.c maps its parent in the background; let dwm manage it first so
+	 * the tiled window below is the newest, selected client for the bar checks */
+	floating = wait_named_window(dpy, root, "floating", 80);
+	CHECK(floating != None, "production transient.c did not create its parent window");
+	floating_managed = floating != None && wait_viewable(dpy, floating, 40);
 
 	tiled = XCreateSimpleWindow(dpy, root, 40, 40, 400, 300, 0, 0, 0);
 	XStoreName(dpy, tiled, "integration-tiled");
@@ -553,10 +559,7 @@ main(int argc, char *argv[])
 	check_narrow_title_gap(dpy, root, tiled);
 	check_status_colors(dpy, root);
 
-	floating = wait_named_window(dpy, root, "floating", 80);
-	CHECK(floating != None, "production transient.c did not create its parent window");
 	if (floating != None) {
-		int floating_managed = wait_viewable(dpy, floating, 40);
 		CHECK(floating_managed, "production parent window was not managed");
 		if (floating_managed) {
 			XSelectInput(dpy, floating, StructureNotifyMask);

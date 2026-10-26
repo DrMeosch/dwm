@@ -34,6 +34,10 @@ MapRequest, tiled and floating ConfigureRequest handling, ConfigureNotify
 delivery, and transient-window placement. Autostart is disabled
 only in the `dwm` test build, so no configured desktop command is launched.
 
+The Xlib client waits for the production `transient.c` window to be managed
+before it creates its tiled window; this order is deliberate, so the tiled
+window is always the newest, selected client for the bar checks.
+
 The geometry harness supplies the monitor/client iteration and resize boundary
 used by the layout code. It verifies requested rectangles; it does not test X
 server placement, size hints, or full key event dispatch. The normal `make`
