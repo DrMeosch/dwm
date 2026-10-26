@@ -1,0 +1,5 @@
+self-hosted-runner:
+  # The private self-hosted runner registered on this repo carries this custom label
+  # alongside the standard self-hosted/Linux/ARM64 ones.
+  labels:
+    - homelab
