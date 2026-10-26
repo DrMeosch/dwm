@@ -8,7 +8,9 @@ geometry and gap branches, core monitor/client state helpers (including
 refusing scratchpad-only tag views and rejecting Xresources strings that exceed
 their buffer, and parsing, measuring and click mapping of status2d codes with
 every truncated, malformed or out-of-range form falling back to plain text,
-plus palette loading that accepts only exactly `#rrggbb`), tag shifting,
+plus palette loading that accepts only exactly `#rrggbb`, and finding the
+dwmblocks PID without parsing anything when `pidof` fails or prints nothing),
+tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the PKGBUILD source and
 dependencies and the LICENSE file shipped by `make dist`.
@@ -20,7 +22,11 @@ XTEST development files are available, an XTEST client checks that idle Mod+q
 delivers a WM_DELETE_WINDOW request without further input, and that a click on
 an unfocused client is replayed before subsequent typing; both deliveries must
 occur without an external wake. If the files are unavailable, this input
-regression check is reported as skipped. The production `transient.c`
+regression check is reported as skipped. With the same files and `pidof`, and
+no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
+while XTEST clicks the status of the bar: each click must reach the block under
+the pointer, pixel-exact against the drawn status, including when the status
+is wider than the bar. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
 rendered bar text, a status that leaves only a narrow gap before it without

@@ -576,7 +576,8 @@ unswallow(Client *c)
 void
 buttonpress(XEvent *e)
 {
-	unsigned int i, x, click, occ = 0;
+	unsigned int i, click, occ = 0;
+	int x;
 	Arg arg = {0};
 	Client *c;
 	Monitor *m;
@@ -604,7 +605,7 @@ buttonpress(XEvent *e)
 			arg.ui = 1 << i;
 		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
 			click = ClkLtSymbol;
-		else if (ev->x > (x = selmon->ww - drawstatus(stext, strlen(stext), 0, 0))) {
+		else if (ev->x >= (x = selmon->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2))) { /* 2px right padding, as in drawbar */
 			click = ClkStatusText;
 			dwmblockssig = statusblocksig(x, ev->x);
 		} else
@@ -1056,7 +1057,7 @@ statusblocksig(int x, int evx)
 			x += drawstatus(text, i, 0, 0);
 			text += i+1;
 			i = -1;
-			if (x >= evx) break;
+			if (x > evx) break;
 			sig = ch;
 		}
 	}
@@ -1254,11 +1255,16 @@ getatomprop(Client *c, Atom prop)
 int
 getdwmblockspid()
 {
-	char buf[16];
+	char buf[16] = "";
 	FILE *fp = popen("pidof -s dwmblocks", "r");
-	fgets(buf, sizeof(buf), fp);
-	pid_t pid = strtoul(buf, NULL, 10);
-	pclose(fp);
+	pid_t pid = 0;
+
+	if (fp) {
+		/* no output means dwmblocks is not running: never parse stale buf */
+		if (fgets(buf, sizeof(buf), fp))
+			pid = strtoul(buf, NULL, 10);
+		pclose(fp);
+	}
 	dwmblockspid = pid;
 	return pid != 0 ? 0 : -1;
 }

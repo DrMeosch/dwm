@@ -9,8 +9,28 @@
 #ifndef VERSION
 #define VERSION "test"
 #endif
+/* stand in for "pidof -s dwmblocks": a NULL popen, or a stream with set output */
+static const char *pidof_output;
+static FILE *
+pidof_popen(const char *command, const char *mode)
+{
+	FILE *fp;
+
+	(void)command; (void)mode;
+	if (!pidof_output)
+		return NULL;
+	if ((fp = tmpfile())) {
+		fputs(pidof_output, fp);
+		rewind(fp);
+	}
+	return fp;
+}
+#define popen pidof_popen
+#define pclose fclose
 #define main dwm_program_main
 #include "../dwm.c"
+#undef popen
+#undef pclose
 #undef main
 
 static int failures;
@@ -150,10 +170,10 @@ test_status2d(void)
 
 		/* clicks map through the same walker; codes themselves take no space */
 		strcpy(rawstext, "\001^f50^\002^f30^\003^f20^");
-		CHECK(statusblocksig(100, 99) == 0 && statusblocksig(100, 100) == 0
-		      && statusblocksig(100, 101) == 1 && statusblocksig(100, 150) == 1
-		      && statusblocksig(100, 151) == 2 && statusblocksig(100, 180) == 2
-		      && statusblocksig(100, 181) == 3 && statusblocksig(100, 500) == 3,
+		CHECK(statusblocksig(100, 99) == 0 && statusblocksig(100, 100) == 1
+		      && statusblocksig(100, 149) == 1 && statusblocksig(100, 150) == 2
+		      && statusblocksig(100, 179) == 2 && statusblocksig(100, 180) == 3
+		      && statusblocksig(100, 500) == 3,
 		      "statusblocksig mapped a click to the wrong block");
 		strcpy(rawstext, "no signal ^f50^");
 		CHECK(statusblocksig(0, 10) == 0, "statusblocksig invented a block");
@@ -509,6 +529,41 @@ test_xerror_filters(void)
 	CHECK(xerrordummy(NULL, &event) == 0, "xerrordummy returned an error");
 }
 
+/* leaves a plausible PID in the stack memory the next call is likely to reuse */
+static void
+poison_stack(void)
+{
+	volatile char junk[256];
+	size_t i;
+
+	for (i = 0; i + 6 <= sizeof junk - 1; i += 6)
+		memcpy((char *)junk + i, "31337\n", 6);
+	junk[sizeof junk - 1] = '\0';
+}
+
+static void
+test_getdwmblockspid(void)
+{
+	/* dwmblocks not running: pidof prints nothing, so no PID may be parsed */
+	pidof_output = "";
+	dwmblockspid = 1;
+	poison_stack();
+	CHECK(getdwmblockspid() == -1 && dwmblockspid == 0,
+	      "an empty pidof result gave PID %d", (int)dwmblockspid);
+
+	/* popen itself failing */
+	pidof_output = NULL;
+	dwmblockspid = 1;
+	poison_stack();
+	CHECK(getdwmblockspid() == -1 && dwmblockspid == 0,
+	      "a failed popen gave PID %d", (int)dwmblockspid);
+
+	/* dwmblocks running */
+	pidof_output = "4242\n";
+	CHECK(getdwmblockspid() == 0 && dwmblockspid == 4242,
+	      "a running dwmblocks gave PID %d", (int)dwmblockspid);
+}
+
 int
 main(void)
 {
@@ -525,6 +580,7 @@ main(void)
 	test_process_helpers();
 	test_terminal_lookup();
 	test_xerror_filters();
+	test_getdwmblockspid();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("core state regression checks passed");

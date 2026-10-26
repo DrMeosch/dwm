@@ -32,7 +32,9 @@ server_pid=
 dwm_pid=
 transient_pid=
 capture_pid=
+fake_pid=
 cleanup() {
+	if [ -n "$fake_pid" ]; then kill -TERM "$fake_pid" 2>/dev/null || true; fi
 	if [ -n "$capture_pid" ]; then kill -TERM "$capture_pid" 2>/dev/null || true; fi
 	if [ -n "$transient_pid" ]; then kill -TERM "$transient_pid" 2>/dev/null || true; fi
 	if [ -n "$dwm_pid" ]; then kill -TERM "$dwm_pid" 2>/dev/null || true; fi
@@ -64,6 +66,8 @@ if [ "$input_available" -eq 1 ]; then
 	input_libs=$(pkg-config --libs xtst)
 	$cc -std=c99 -pedantic -Wall -Wextra $flags $input_flags \
 		"$root/src/tests/input.c" $libs $input_libs -o "$tmp/input"
+	$cc -std=c99 -pedantic -Wall -Wextra $flags $input_flags \
+		"$root/src/tests/statusclick.c" $libs $input_libs -o "$tmp/statusclick"
 fi
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/transient.c" \
 	$libs -o "$tmp/transient"
@@ -97,6 +101,24 @@ dwm_pid=$!
 sleep 0.2
 if [ "$input_available" -eq 1 ]; then
 	"$tmp/input"
+	# dwm finds dwmblocks with pidof; never signal a real one
+	if ! command -v pidof >/dev/null 2>&1; then
+		printf '%s\n' 'status click regression checks skipped; pidof is unavailable'
+	elif pidof dwmblocks >/dev/null 2>&1; then
+		printf '%s\n' 'status click regression checks skipped; a real dwmblocks is running'
+	else
+		mkdir "$tmp/fake"
+		cp "$tmp/statusclick" "$tmp/fake/dwmblocks"
+		"$tmp/fake/dwmblocks" fake "$tmp/dwmblocks.log" &
+		fake_pid=$!
+		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+			if [ -s "$tmp/dwmblocks.log" ]; then break; fi
+			sleep 0.05
+		done
+		"$tmp/statusclick" "$tmp/dwmblocks.log"
+		kill -TERM "$fake_pid" 2>/dev/null || true
+		fake_pid=
+	fi
 fi
 "$tmp/transient" >"$tmp/transient.log" 2>&1 &
 transient_pid=$!
