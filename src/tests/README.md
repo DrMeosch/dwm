@@ -96,7 +96,9 @@ notification is ever shown). With every desktop step failing, each script must
 exit non-zero, name the three failed steps on stderr and send the same text as
 a critical notification, whether `notify-send` succeeds or fails, yet the
 selected border and the bar background must still switch to the light and dark
-theme. With every step succeeding, each script must exit zero, stay silent and
+theme. After each run `xrdb -query` must show `dmenu.color0` and `dmenu.color4` equal to
+`dwm.color0` and `dwm.color4`, so a dmenu started later gets the theme colors.
+With every step succeeding, each script must exit zero, stay silent and
 send the low-urgency "Switched to <theme> theme" notification.
 
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.

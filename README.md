@@ -16,7 +16,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 | --- | --- |
 | `src/` | dwm sources, `config.h`, `config.mk`, man page, `PKGBUILD` |
 | `src/tests/` | Regression checks (see [`src/tests/README.md`](src/tests/README.md)) |
-| `docs/dwm-dark.sh`, `docs/dwm-light.sh` | Switch GTK/xfconf theme, merge Xresources, then `pkill -USR2 -x dwm` |
+| `docs/dwm-dark.sh`, `docs/dwm-light.sh` | Switch GTK/xfconf theme, merge Xresources (`dwm.*` plus `dmenu.color0`/`dmenu.color4`), then `pkill -USR2 -x dwm` |
 | `Makefile` | Top-level build, test, install, and dist targets |
 | `treehouse.toml` | Worktree pool config |
 | `.github/workflows/ci.yml` | CI: `make test`, then `make` |
@@ -42,7 +42,7 @@ docs/dwm-dark.sh     # dark theme
 docs/dwm-light.sh    # light theme
 ```
 
-Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked.
+Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The merge also sets `dmenu.color0` and `dmenu.color4` to the theme's `dwm.color0` and `dwm.color4`; dmenu builds that read Xresources at launch (such as the LARBS one) pick the theme up the next time they start. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked.
 
 ## Testing
 
