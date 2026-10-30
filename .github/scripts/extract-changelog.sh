@@ -12,7 +12,8 @@ awk '
 		for (i = 1; i <= n; i++) {
 			if (in_sec && lines[i] ~ /^#+[ \t]/) break
 			if (in_sec && lines[i] !~ /^[ \t]*([-*][ \t]*)?(Added|Changed|Fixed|Removed|Security)[ \t]*:?[ \t]*$/ && lines[i] ~ /[^ \t]/) {
-				if (lines[i] !~ /^[ \t]*([-*][ \t]*)?[Nn]one[ \t.]*$/) print lines[i]
+				t = tolower(lines[i]); gsub(/[^a-z]/, "", t)
+				if (t != "none") print lines[i]
 			}
 			if (lines[i] ~ /^##[ \t]+[Cc]hangelog[ \t]*$/) in_sec = 1
 		}

@@ -17,18 +17,25 @@ extract() {
 [ "$(extract '## Changelog\nFixed: a bug\n')" = 'Fixed: a bug' ] || fail 'entry not extracted'
 [ "$(extract '## Changelog\r\n- Added: x\r\n- Fixed: y\r\n## Notes\nz')" = "$(printf -- '- Added: x\n- Fixed: y')" ] || fail 'multi-line section'
 [ -z "$(extract '## Changelog\nnone\n')" ] || fail 'none must be skipped'
+[ -z "$(extract '## Changelog\r\n- None.\r\n')" ] || fail 'None. must be skipped'
 [ -z "$(extract '## Changelog\n<!-- c -->\n- Added:\n')" ] || fail 'comment and bare prefix must be skipped'
 [ -z "$(extract '## Summary\nx\n')" ] || fail 'missing section must be skipped'
 
 mkdir "$tmp/bin"
+# Stateful stub: STUB_ISSUE is the number of an existing bot-authored issue (or empty);
+# issue list only returns it for --author 'github-actions[bot]'.
 cat >"$tmp/bin/gh" <<'STUB'
 #!/bin/sh
 echo "$*" >>"$STUB_LOG"
 case "$1 $2" in
 "api repos/o/r/pulls/7") cat "$STUB_PR" ;;
-"issue list") printf '%s' "$STUB_ISSUE" ;;
+"api --paginate") cat "$STUB_COMMENTS" 2>/dev/null || : ;;
+"issue list")
+	case "$*" in
+	*"--author github-actions[bot]"*) [ -z "$STUB_ISSUE" ] || echo "$STUB_ISSUE" ;;
+	esac ;;
 "issue create") echo https://github.com/o/r/issues/9 ;;
-"issue comment") printf '%s\n' "$*" >>"$STUB_LOG"; printf '%s' "$6" >"$STUB_BODY" ;;
+"issue comment") printf '%s\n' "$7" >>"$STUB_COMMENTS" ;;
 esac
 STUB
 chmod +x "$tmp/bin/gh"
@@ -38,26 +45,36 @@ run() {
 	: >"$tmp/log"
 	jq -n --arg b "$body" --argjson m "$merged" \
 		'{merged: $m, body: $b, html_url: "https://github.com/o/r/pull/7", merge_commit_sha: "abcdef0123456789", merged_at: "2026-01-02T03:04:05Z"}' >"$tmp/pr"
-	PATH="$tmp/bin:$PATH" STUB_LOG="$tmp/log" STUB_PR="$tmp/pr" STUB_BODY="$tmp/comment" STUB_ISSUE=$issue \
+	PATH="$tmp/bin:$PATH" STUB_LOG="$tmp/log" STUB_PR="$tmp/pr" STUB_COMMENTS="$tmp/comments" STUB_ISSUE=$issue \
 		GH_TOKEN=x REPO=o/r PR_NUMBER=7 sh "$scripts/post-changelog.sh" >/dev/null 2>&1
 }
 
+rm -f "$tmp/comments"
 run '## Changelog
-Fixed: a bug' true 5
+Fixed: a bug for @someone' true 5
 grep -q '^issue comment 5 ' "$tmp/log" || fail 'comment not posted to existing issue'
 grep -q 'issue create' "$tmp/log" && fail 'existing issue must not be recreated'
-grep -q 'abcdef0' "$tmp/log" && grep -q '2026-01-02' "$tmp/log" && grep -q 'pull/7' "$tmp/log" \
-	&& grep -q 'commit/abcdef0123456789' "$tmp/log" && grep -q 'Fixed: a bug' "$tmp/log" || fail 'comment lacks date, PR link, commit link or lines'
+grep -q 'abcdef0' "$tmp/comments" && grep -q '2026-01-02' "$tmp/comments" && grep -q 'pull/7' "$tmp/comments" \
+	&& grep -q 'commit/abcdef0123456789' "$tmp/comments" && grep -q 'Fixed: a bug' "$tmp/comments" \
+	&& grep -qF '<!-- changelog-feed pr=7 -->' "$tmp/comments" || fail 'comment lacks marker, date, PR link, commit link or lines'
+grep -q '@someone' "$tmp/comments" && fail '@mention must be defused'
 
+run '## Changelog
+Fixed: a bug for @someone' true 5
+[ "$(grep -c 'changelog-feed pr=7' "$tmp/comments")" = 1 ] || fail 're-run must not post a second comment'
+
+rm -f "$tmp/comments"
 run '## Changelog
 Fixed: a bug' true ''
 grep -q 'issue create' "$tmp/log" || fail 'missing issue must be created'
 grep -q 'pinIssue' "$tmp/log" || fail 'created issue must be pinned'
 grep -q '^issue comment 9 ' "$tmp/log" || fail 'comment not posted to the new issue'
 
-run '## Changelog
-none' true 5
-grep -q 'issue comment' "$tmp/log" && fail 'none must not be posted'
+for none in none '- None.' 'None'; do
+	run "## Changelog
+$none" true 5
+	grep -q 'issue comment' "$tmp/log" && fail "'$none' must not be posted"
+done
 run '## Changelog
 Fixed: a bug' false 5
 grep -q 'issue' "$tmp/log" && fail 'unmerged PR must not be posted'

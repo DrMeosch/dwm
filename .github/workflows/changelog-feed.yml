@@ -3,6 +3,7 @@ name: Changelog feed
 # pull_request_target runs with the base repository token. This workflow never
 # checks out or runs PR code and only reads the PR body through the API.
 on:
+  # zizmor: ignore[dangerous-triggers] reviewed: no PR code is checked out or run, the body is only read through the API
   pull_request_target:
     types: [closed]
 
@@ -11,11 +12,13 @@ permissions: {}
 concurrency:
   group: changelog-feed
   cancel-in-progress: false
+  queue: max
 
 jobs:
   post:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       issues: write
       pull-requests: read

@@ -19,8 +19,9 @@ sha=$(printf '%s' "$pr" | jq -r .merge_commit_sha)
 date=$(printf '%s' "$pr" | jq -r '.merged_at[:10]')
 commit="https://github.com/$REPO/commit/$sha"
 
-number=$(gh issue list --repo "$REPO" --state open --author app/github-actions --limit 100 \
-	--json number,title --jq "map(select(.title == \"$title\")) | first | .number // empty")
+number=$(gh issue list --repo "$REPO" --state open --author 'github-actions[bot]' --limit 100 \
+	--json number,title,author \
+	--jq "map(select(.title == \"$title\" and .author.login == \"app/github-actions\")) | first | .number // empty")
 if [ -z "$number" ]; then
 	issue=$(gh issue create --repo "$REPO" --title "$title" \
 		--body 'Running list of the Changelog lines of merged pull requests, one comment per PR.')
@@ -30,4 +31,12 @@ if [ -z "$number" ]; then
 		-f id="$id" >/dev/null || echo "Could not pin issue $number, pin it manually." >&2
 fi
 
-gh issue comment "$number" --repo "$REPO" --body "$(printf '**%s** - %s - [`%.7s`](%s)\n\n%s\n' "$date" "$url" "$sha" "$commit" "$lines")"
+marker="<!-- changelog-feed pr=$PR_NUMBER -->"
+if gh api --paginate "repos/$REPO/issues/$number/comments" --jq '.[].body' | grep -qF "$marker"; then
+	echo "PR $PR_NUMBER is already on issue $number, skipping."
+	exit 0
+fi
+
+# Defuse @mentions so the feed never pings anyone.
+lines=$(printf '%s\n' "$lines" | sed 's/@/@\xe2\x80\x8b/g')
+gh issue comment "$number" --repo "$REPO" --body "$(printf '%s\n**%s** - %s - [`%.7s`](%s)\n\n%s\n' "$marker" "$date" "$url" "$sha" "$commit" "$lines")"
