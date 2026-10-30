@@ -9,11 +9,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: changelog-feed
-  cancel-in-progress: false
-  queue: max
-
 jobs:
   post:
     if: github.event.pull_request.merged == true

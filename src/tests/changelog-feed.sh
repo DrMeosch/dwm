@@ -32,9 +32,10 @@ case "$1 $2" in
 "api --paginate") cat "$STUB_COMMENTS" 2>/dev/null || : ;;
 "issue list")
 	case "$*" in
-	*"--author github-actions[bot]"*) [ -z "$STUB_ISSUE" ] || echo "$STUB_ISSUE" ;;
+	*"--author github-actions[bot]"*)
+		if [ -f "$STUB_CREATED" ]; then printf '%s\n' $STUB_ISSUE_AFTER; else printf '%s\n' $STUB_ISSUE; fi ;;
 	esac ;;
-"issue create") echo https://github.com/o/r/issues/9 ;;
+"issue create") : >"$STUB_CREATED"; echo https://github.com/o/r/issues/9 ;;
 "issue comment") printf '%s\n' "$7" >>"$STUB_COMMENTS" ;;
 esac
 STUB
@@ -42,10 +43,10 @@ chmod +x "$tmp/bin/gh"
 
 run() {
 	body=$1 merged=$2 issue=$3
-	: >"$tmp/log"
+	: >"$tmp/log"; rm -f "$tmp/created"
 	jq -n --arg b "$body" --argjson m "$merged" \
 		'{merged: $m, body: $b, html_url: "https://github.com/o/r/pull/7", merge_commit_sha: "abcdef0123456789", merged_at: "2026-01-02T03:04:05Z"}' >"$tmp/pr"
-	PATH="$tmp/bin:$PATH" STUB_LOG="$tmp/log" STUB_PR="$tmp/pr" STUB_COMMENTS="$tmp/comments" STUB_ISSUE=$issue \
+	PATH="$tmp/bin:$PATH" STUB_LOG="$tmp/log" STUB_PR="$tmp/pr" STUB_COMMENTS="$tmp/comments" STUB_ISSUE=$issue STUB_ISSUE_AFTER=${4:-9} STUB_CREATED="$tmp/created" \
 		GH_TOKEN=x REPO=o/r PR_NUMBER=7 sh "$scripts/post-changelog.sh" >/dev/null 2>&1
 }
 
@@ -69,6 +70,15 @@ Fixed: a bug' true ''
 grep -q 'issue create' "$tmp/log" || fail 'missing issue must be created'
 grep -q 'pinIssue' "$tmp/log" || fail 'created issue must be pinned'
 grep -q '^issue comment 9 ' "$tmp/log" || fail 'comment not posted to the new issue'
+
+# A concurrent first run created issue 4 before ours (9): keep 4, close 9, pin 4.
+rm -f "$tmp/comments"
+run '## Changelog
+Fixed: a bug' true '' '4 9'
+grep -q '^issue close 9 ' "$tmp/log" || fail 'newer duplicate must be closed'
+grep -q '^issue close 4 ' "$tmp/log" && fail 'oldest issue must be kept'
+grep -q '^issue comment 4 ' "$tmp/log" || fail 'comment must go to the oldest issue'
+grep -q 'issues/4 ' "$tmp/log" || fail 'oldest issue must be pinned'
 
 for none in none '- None.' 'None'; do
 	run "## Changelog

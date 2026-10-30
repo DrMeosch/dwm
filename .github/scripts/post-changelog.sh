@@ -19,13 +19,23 @@ sha=$(printf '%s' "$pr" | jq -r .merge_commit_sha)
 date=$(printf '%s' "$pr" | jq -r '.merged_at[:10]')
 commit="https://github.com/$REPO/commit/$sha"
 
-number=$(gh issue list --repo "$REPO" --state open --author 'github-actions[bot]' --limit 100 \
-	--json number,title,author \
-	--jq "map(select(.title == \"$title\" and .author.login == \"app/github-actions\")) | first | .number // empty")
+# Open bot-authored "Changelog" issues, oldest first.
+list_issues() {
+	gh issue list --repo "$REPO" --state open --author 'github-actions[bot]' --limit 100 \
+		--json number,title,author \
+		--jq "map(select(.title == \"$title\" and .author.login == \"app/github-actions\")) | sort_by(.number) | .[].number"
+}
+
+number=$(list_issues | head -n 1)
 if [ -z "$number" ]; then
-	issue=$(gh issue create --repo "$REPO" --title "$title" \
-		--body 'Running list of the Changelog lines of merged pull requests, one comment per PR.')
-	number=${issue##*/}
+	gh issue create --repo "$REPO" --title "$title" \
+		--body 'Running list of the Changelog lines of merged pull requests, one comment per PR.' >/dev/null
+	# Runs are not serialized, so a concurrent first run may have created one too: keep the oldest.
+	issues=$(list_issues)
+	number=$(printf '%s\n' "$issues" | head -n 1)
+	for dup in $(printf '%s\n' "$issues" | tail -n +2); do
+		gh issue close "$dup" --repo "$REPO" --reason 'not planned' --comment "Duplicate of #$number."
+	done
 	id=$(gh api "repos/$REPO/issues/$number" --jq .node_id)
 	gh api graphql -f query='mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }' \
 		-f id="$id" >/dev/null || echo "Could not pin issue $number, pin it manually." >&2
