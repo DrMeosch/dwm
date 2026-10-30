@@ -221,6 +221,14 @@ run_theme() {
 		grep -q "^$step " "$tmp/stub.log" || theme_fail "dwm-$1.sh did not run $step"
 	done
 	[ -s "$tmp/notify.args" ] || theme_fail "dwm-$1.sh sent no notification"
+	# dmenu reads dmenu.color0/4 from Xresources at launch, so the merge must
+	# carry the same palette as dwm.color0/4
+	for n in 0 4; do
+		want=$(xrdb -query | sed -n "s/^dwm\\.color$n:[[:space:]]*//p")
+		got=$(xrdb -query | sed -n "s/^dmenu\\.color$n:[[:space:]]*//p")
+		[ -n "$want" ] && [ "$got" = "$want" ] ||
+			theme_fail "dwm-$1.sh left dmenu.color$n '$got' instead of dwm.color$n '$want'"
+	done
 }
 # every desktop step fails: stderr and the critical notification name all three
 failed_report="dwm-%s: xfconf-query failed (exit 3)

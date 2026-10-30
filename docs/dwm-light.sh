@@ -26,6 +26,8 @@ step atc atc light
 step xrdb xrdb -merge <<'XRESOURCES'
 dwm.color0: #f8f8f2
 dwm.color4: #555b6e
+dmenu.color0: #f8f8f2
+dmenu.color4: #555b6e
 dwm.borderpx: 2
 dwm.selbordercolor: #b84f7b
 XRESOURCES
