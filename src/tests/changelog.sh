@@ -25,4 +25,13 @@ expect 1 'comment only' '## Changelog\n<!-- one line\nper change -->\n'
 expect 1 'content only in other section' '## Changelog\n## Notes\ny\n'
 expect 1 'wrong heading' '# Changelog\nnone\n'
 
+expect 1 'bare prefix' '## Changelog\n- Added: \n'
+expect 1 'bare prefix, no colon' '## Changelog\nFixed\n'
+expect 0 'prefix with text' '## Changelog\n- Added: a thing\n'
+
+if sh "$check" "$root/.github/pull_request_template.md" 2>/dev/null; then
+	echo 'changelog check: untouched PR template must fail' >&2
+	exit 1
+fi
+
 echo 'changelog check: ok'

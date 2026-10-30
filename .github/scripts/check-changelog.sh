@@ -1,6 +1,6 @@
 #!/bin/sh
 # Succeeds when the PR body (file argument or stdin) has a non-empty
-# "## Changelog" section. HTML comments do not count as content.
+# "## Changelog" section. HTML comments and bare type prefixes ("- Added:") do not count as content.
 set -eu
 
 awk '
@@ -10,7 +10,7 @@ awk '
 		n = split(body, lines, "\n")
 		for (i = 1; i <= n; i++) {
 			if (in_sec && lines[i] ~ /^#+[ \t]/) break
-			if (in_sec && lines[i] ~ /[^ \t]/) found = 1
+			if (in_sec && lines[i] !~ /^[ \t]*([-*][ \t]*)?(Added|Changed|Fixed|Removed|Security)[ \t]*:?[ \t]*$/ && lines[i] ~ /[^ \t]/) found = 1
 			if (lines[i] ~ /^##[ \t]+[Cc]hangelog[ \t]*$/) in_sec = 1
 		}
 		exit !found
