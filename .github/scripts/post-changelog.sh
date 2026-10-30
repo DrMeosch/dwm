@@ -39,10 +39,13 @@ if [ -z "$number" ]; then
 	id=$(gh api "repos/$REPO/issues/$number" --jq .node_id)
 	gh api graphql -f query='mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }' \
 		-f id="$id" >/dev/null || echo "Could not pin issue $number, pin it manually." >&2
+	gh issue lock "$number" --repo "$REPO" || echo "Could not lock issue $number." >&2
 fi
 
 marker="<!-- changelog-feed pr=$PR_NUMBER -->"
-if gh api --paginate "repos/$REPO/issues/$number/comments" --jq '.[].body' | grep -qF "$marker"; then
+# Only the bot's own comments count, and only their first line, so nobody can forge a marker.
+if gh api --paginate "repos/$REPO/issues/$number/comments" \
+	--jq '.[] | select(.user.login == "github-actions[bot]") | .body | split("\n")[0]' | grep -qxF -- "$marker"; then
 	echo "PR $PR_NUMBER is already on issue $number, skipping."
 	exit 0
 fi

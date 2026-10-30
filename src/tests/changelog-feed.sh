@@ -29,14 +29,17 @@ cat >"$tmp/bin/gh" <<'STUB'
 echo "$*" >>"$STUB_LOG"
 case "$1 $2" in
 "api repos/o/r/pulls/7") cat "$STUB_PR" ;;
-"api --paginate") cat "$STUB_COMMENTS" 2>/dev/null || : ;;
+"api --paginate")
+	[ -s "$STUB_COMMENTS" ] || exit 0
+	while [ $# -gt 0 ] && [ "$1" != --jq ]; do shift; done
+	jq -s '[.[] | {user: {login: .user}, body: .body}]' "$STUB_COMMENTS" | jq -r "$2" ;;
 "issue list")
 	case "$*" in
 	*"--author github-actions[bot]"*)
 		if [ -f "$STUB_CREATED" ]; then printf '%s\n' $STUB_ISSUE_AFTER; else printf '%s\n' $STUB_ISSUE; fi ;;
 	esac ;;
 "issue create") : >"$STUB_CREATED"; echo https://github.com/o/r/issues/9 ;;
-"issue comment") printf '%s\n' "$7" >>"$STUB_COMMENTS" ;;
+"issue comment") jq -nc --arg b "$7" '{user: "github-actions[bot]", body: $b}' >>"$STUB_COMMENTS" ;;
 esac
 STUB
 chmod +x "$tmp/bin/gh"
@@ -64,9 +67,17 @@ run '## Changelog
 Fixed: a bug for @someone' true 5
 [ "$(grep -c 'changelog-feed pr=7' "$tmp/comments")" = 1 ] || fail 're-run must not post a second comment'
 
+# A stranger's comment, and a marker that is not on the bot comment's first line, must not suppress the PR.
+jq -nc '{user: "stranger", body: "<!-- changelog-feed pr=7 -->"}' >"$tmp/comments"
+jq -nc '{user: "github-actions[bot]", body: "x\n<!-- changelog-feed pr=7 -->"}' >>"$tmp/comments"
+run '## Changelog
+Fixed: a bug' true 5
+[ "$(grep -c '^{"user":"github-actions' "$tmp/comments")" = 2 ] || fail 'forged markers must not suppress the PR'
+
 rm -f "$tmp/comments"
 run '## Changelog
 Fixed: a bug' true ''
+grep -q '^issue lock 9 ' "$tmp/log" || fail 'created issue must be locked'
 grep -q 'issue create' "$tmp/log" || fail 'missing issue must be created'
 grep -q 'pinIssue' "$tmp/log" || fail 'created issue must be pinned'
 grep -q '^issue comment 9 ' "$tmp/log" || fail 'comment not posted to the new issue'
