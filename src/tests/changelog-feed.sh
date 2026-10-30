@@ -77,7 +77,7 @@ Fixed: a bug' true 5
 rm -f "$tmp/comments"
 run '## Changelog
 Fixed: a bug' true ''
-grep -q '^issue lock 9 ' "$tmp/log" || fail 'created issue must be locked'
+grep -q '^issue lock' "$tmp/log" && fail 'a locked issue would reject the bot comments'
 grep -q 'issue create' "$tmp/log" || fail 'missing issue must be created'
 grep -q 'pinIssue' "$tmp/log" || fail 'created issue must be pinned'
 grep -q '^issue comment 9 ' "$tmp/log" || fail 'comment not posted to the new issue'

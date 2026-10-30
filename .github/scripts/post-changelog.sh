@@ -39,7 +39,6 @@ if [ -z "$number" ]; then
 	id=$(gh api "repos/$REPO/issues/$number" --jq .node_id)
 	gh api graphql -f query='mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { number } } }' \
 		-f id="$id" >/dev/null || echo "Could not pin issue $number, pin it manually." >&2
-	gh issue lock "$number" --repo "$REPO" || echo "Could not lock issue $number." >&2
 fi
 
 marker="<!-- changelog-feed pr=$PR_NUMBER -->"
