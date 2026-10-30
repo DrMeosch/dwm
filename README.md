@@ -40,7 +40,7 @@ docs/dwm-dark.sh     # dark theme
 docs/dwm-light.sh    # light theme
 ```
 
-Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm.
+Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked.
 
 ## Testing
 

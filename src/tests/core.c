@@ -529,6 +529,20 @@ test_xerror_filters(void)
 	CHECK(xerrordummy(NULL, &event) == 0, "xerrordummy returned an error");
 }
 
+static void
+test_selected_tag_fonts_disabled(void)
+{
+	const char *saved = selfontweight;
+
+	/* drw is NULL here, so touching it would crash instead of returning NULL */
+	drw = NULL;
+	selfontweight = NULL;
+	CHECK(createselfonts() == NULL, "createselfonts opened fonts for a NULL weight");
+	selfontweight = "";
+	CHECK(createselfonts() == NULL, "createselfonts opened fonts for an empty weight");
+	selfontweight = saved;
+}
+
 /* leaves a plausible PID in the stack memory the next call is likely to reuse */
 static void
 poison_stack(void)
@@ -634,6 +648,7 @@ main(void)
 	test_process_helpers();
 	test_terminal_lookup();
 	test_xerror_filters();
+	test_selected_tag_fonts_disabled();
 	test_getdwmblockspid();
 	test_buttonpress_status();
 	if (failures)

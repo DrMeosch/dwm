@@ -5,13 +5,9 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
-<<<<<<< HEAD
 refusing scratchpad-only tag views, rejecting Xresources strings that exceed
-their buffer, and keeping the selected-tag font set disabled for an empty or
-NULL `selfontweight`), tag shifting,
-=======
-refusing scratchpad-only tag views and rejecting Xresources strings that exceed
-their buffer, and parsing, measuring and click mapping of status2d codes with
+their buffer, keeping the selected-tag font set disabled for an empty or NULL
+`selfontweight`, parsing, measuring and click mapping of status2d codes with
 every truncated, malformed or out-of-range form falling back to plain text,
 plus palette loading that accepts only exactly `#rrggbb`, and finding the
 dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
@@ -19,7 +15,6 @@ and `buttonpress()` signalling the block under a status click, including a
 status wider than the bar and the exact first and last pixel of each block, all
 without X11, XTEST or `pidof`),
 tag shifting,
->>>>>>> refs/remotes/origin/master
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
@@ -93,5 +88,15 @@ that performs a raw XCB round trip (as `winpid()` does) while a second
 MapRequest arrives, and verifies the loop dispatches the event XCB queued
 instead of blocking in `poll`. It runs from `x11.sh`, so it needs the
 private X server.
+
+`x11.sh` also executes `docs/dwm-light.sh` and `docs/dwm-dark.sh` with stub
+`xfconf-query`, `gsettings` and `atc`, a stub `pkill` that signals only the test
+dwm, and a stub `notify-send` that records its arguments (so no real
+notification is ever shown). With every desktop step failing, each script must
+exit non-zero, name the three failed steps on stderr and send the same text as
+a critical notification, whether `notify-send` succeeds or fails, yet the
+selected border and the bar background must still switch to the light and dark
+theme. With every step succeeding, each script must exit zero, stay silent and
+send the low-urgency "Switched to <theme> theme" notification.
 
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.

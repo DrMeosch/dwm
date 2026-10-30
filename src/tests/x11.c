@@ -514,6 +514,26 @@ main(int argc, char *argv[])
 		return EXIT_FAILURE;
 	root = DefaultRootWindow(dpy);
 
+	/* x11 bar-background <#rrggbb>: most of the bar shows that background */
+	if (argc == 3 && !strcmp(argv[1], "bar-background")) {
+		XWindowAttributes bar = {0};
+		unsigned int area, count = 0;
+		int i;
+
+		CHECK(find_bar(dpy, root, &bar) != None, "dwm has no bar");
+		area = (unsigned int)(bar.width * bar.height);
+		for (i = 0; i < 80; i++) {
+			count = count_bar_pixels(dpy, root, argv[2], 0, NULL);
+			if (count > area / 2)
+				break;
+			pause_millis(25);
+		}
+		CHECK(count > area / 2, "the bar background is not %s (%u of %u pixels)",
+		      argv[2], count, area);
+		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
 	/* x11 bar-color <#rrggbb> <pixels>: the status left by a previous run shows that color */
 	if (argc == 4 && !strcmp(argv[1], "bar-color")) {
 		unsigned int want = (unsigned int)atoi(argv[3]);

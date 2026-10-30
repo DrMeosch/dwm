@@ -192,6 +192,75 @@ kill -USR2 "$dwm_pid"
 printf 'dwm.borderpx: 1\n' | xrdb -load
 kill -USR2 "$dwm_pid"
 "$tmp/x11" bar-color '#50fa7b' 16
+# docs/dwm-{light,dark}.sh must still switch dwm when every desktop step fails,
+# and must report the result with notify-send. The stubs log their arguments;
+# pkill only ever signals the test dwm, never a real one, and notify-send never
+# reaches a real notification daemon.
+stubs=$tmp/stubs
+mkdir "$stubs"
+for tool in xfconf-query gsettings atc; do
+	printf '#!/bin/sh\necho "%s $*" >>"$STUB_LOG"\nexit "${STUB_EXIT:-3}"\n' "$tool" >"$stubs/$tool"
+	chmod +x "$stubs/$tool"
+done
+printf '#!/bin/sh\n[ "$*" = "-USR2 -x dwm" ] || exit 2\nexec kill -USR2 "$STUB_DWM_PID"\n' >"$stubs/pkill"
+printf '#!/bin/sh\nfor arg; do printf "%%s\\n" "$arg"; done >"$STUB_NOTIFY"\nexit "${STUB_NOTIFY_EXIT:-0}"\n' >"$stubs/notify-send"
+chmod +x "$stubs/pkill" "$stubs/notify-send"
+theme_fail() {
+	printf '%s\n' "$@" >&2
+	exit 1
+}
+# run_theme <light|dark> <desktop step exit> <notify-send exit>
+run_theme() {
+	: >"$tmp/stub.log"
+	rm -f "$tmp/notify.args"
+	rc=0
+	STUB_LOG=$tmp/stub.log STUB_NOTIFY=$tmp/notify.args STUB_DWM_PID=$dwm_pid \
+		STUB_EXIT=$2 STUB_NOTIFY_EXIT=$3 PATH=$stubs:$PATH \
+		bash "$root/docs/dwm-$1.sh" 2>"$tmp/theme.err" || rc=$?
+	for step in xfconf-query gsettings atc; do
+		grep -q "^$step " "$tmp/stub.log" || theme_fail "dwm-$1.sh did not run $step"
+	done
+	[ -s "$tmp/notify.args" ] || theme_fail "dwm-$1.sh sent no notification"
+}
+# every desktop step fails: stderr and the critical notification name all three
+failed_report="dwm-%s: xfconf-query failed (exit 3)
+dwm-%s: gsettings failed (exit 3)
+dwm-%s: atc failed (exit 3)"
+for notify_exit in 0 1; do
+	for theme in light dark; do
+		run_theme "$theme" 3 "$notify_exit"
+		[ "$rc" -ne 0 ] || theme_fail "dwm-$theme.sh exited 0 although its desktop steps failed"
+		expected=$(printf "$failed_report" "$theme" "$theme" "$theme")
+		[ "$(cat "$tmp/theme.err")" = "$expected" ] ||
+			theme_fail "dwm-$theme.sh stderr is not the three failed steps:" "$(cat "$tmp/theme.err")"
+		[ "$(cat "$tmp/notify.args")" = "-u
+critical
+dwm theme
+$expected" ] ||
+			theme_fail "dwm-$theme.sh did not send the critical notification:" "$(cat "$tmp/notify.args")"
+		# a notify-send that fails changes neither the status nor the reload
+		if [ "$theme" = light ]; then
+			wait_for_border '#b84f7b' 2
+			"$tmp/x11" bar-background '#f6e8ee'
+		else
+			wait_for_border '#b84f7b' 1
+			"$tmp/x11" bar-background '#282a36'
+		fi
+	done
+done
+# every step succeeds: quiet stderr, exit 0 and a low-urgency notification
+for theme in dark light; do
+	run_theme "$theme" 0 0
+	[ "$rc" -eq 0 ] || theme_fail "dwm-$theme.sh failed although every step succeeded"
+	[ ! -s "$tmp/theme.err" ] || theme_fail "dwm-$theme.sh wrote to stderr:" "$(cat "$tmp/theme.err")"
+	[ "$(cat "$tmp/notify.args")" = "-u
+low
+dwm theme
+Switched to $theme theme" ] ||
+		theme_fail "dwm-$theme.sh did not send the low-urgency notification:" "$(cat "$tmp/notify.args")"
+done
+wait_for_border '#b84f7b' 2
+"$tmp/x11" bar-background '#f6e8ee'
 kill -0 "$dwm_pid"
 
 printf '%s\n' 'X11 integration checks passed'
