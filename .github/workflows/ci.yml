@@ -6,11 +6,10 @@ on:
 
 jobs:
   test:
-    runs-on: [self-hosted, homelab]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
-        if: runner.environment != 'self-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \

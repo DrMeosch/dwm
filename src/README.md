@@ -1,4 +1,6 @@
-# Luke's build of dwm
+# DrMeosch's build of dwm
+
+Based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm) of [dwm](https://dwm.suckless.org/). The patch set below comes from that build unless noted.
 
 ## FAQ
 
@@ -6,13 +8,10 @@
 
 This is suckless, mmmbud, the source code is the documentation! Check out [config.h](config.h).
 
-Okay, okay, actually I keep a readme in `larbs.mom` for my whole system, including the binds here.
-Press <kbd>super+F1</kbd> to view it in dwm (zathura is required for that binding).
-The manual is still incomplete; PRs welcome on that, lol.
 
 ## Patches and features
 
-- [Clickable statusbar](https://dwm.suckless.org/patches/statuscmd/) with my build of [dwmblocks](https://github.com/lukesmithxyz/dwmblocks).
+- [Clickable statusbar](https://dwm.suckless.org/patches/statuscmd/) with [Luke Smith's build of dwmblocks](https://github.com/lukesmithxyz/dwmblocks).
 - [status2d](https://dwm.suckless.org/patches/status2d/): colored status text via `^c#rrggbb^`, `^b#rrggbb^`, `^C<0-15>^` (`dwm.color<n>`), `^d^`, `^r` and `^f`. It is not the upstream patch: the parser is bounds-checked, malformed codes show as plain text, and one walker measures and draws so the clickable statusbar regions stay correct. See `dwm.1`.
 - Reads [xresources](https://dwm.suckless.org/patches/xresources/) colors/variables (i.e. works with `pywal`, etc.).
 - scratchpad: Accessible with <kbd>mod+shift+enter</kbd>.
@@ -30,9 +29,13 @@ The manual is still incomplete; PRs welcome on that, lol.
 ## Installation for newbs
 
 ```bash
-git clone https://github.com/LukeSmithxyz/dwm.git
+git clone https://github.com/DrMeosch/dwm.git
 cd dwm
 sudo make install
 ```
 
 There is also a `PKGBUILD` usable on distributions with pacman. Run `makepkg -si` instead of `sudo make install`.
+
+## License and credits
+
+MIT/X Consortium license, see `../LICENSE`. Built on [Luke Smith's dwm build](https://github.com/LukeSmithxyz/dwm) and [suckless dwm](https://dwm.suckless.org/), with the patches linked above.

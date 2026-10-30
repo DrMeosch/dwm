@@ -1,6 +1,6 @@
-# dwm (custom build)
+# dwm (DrMeosch's build)
 
-A customized build of [dwm](https://dwm.suckless.org/) 6.5, derived from Luke Smith's build, with Xresources-driven theming and live dark/light reload. Security fixes from versions 6.6-6.8 were backported by gpt-6 models.
+DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm), with Xresources-driven theming and live dark/light reload. Security fixes from versions 6.6-6.8 are backported.
 
 ## Features
 
@@ -33,6 +33,8 @@ make test            # regression checks
 
 On Arch, `src/PKGBUILD` can be used with `makepkg -si`.
 
+Source: <https://github.com/DrMeosch/dwm>.
+
 ## Theme switching
 
 ```sh
@@ -45,3 +47,11 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 ## Testing
 
 `make test` runs headless state and geometry checks, plus an Xvfb-based integration run when Xvfb, `xdpyinfo`, and `xrdb` are present. Set `DWM_X11_CAPTURE_DIR=/tmp/dwm-captures` to save dark/light reload screenshots.
+
+## License and credits
+
+Released under the MIT/X Consortium license; see [`LICENSE`](LICENSE) for the full list of copyright holders.
+
+- This is a fork of [Luke Smith's build of dwm](https://github.com/LukeSmithxyz/dwm), which supplies the patch set and key bindings described in [`src/README.md`](src/README.md).
+- [dwm](https://dwm.suckless.org/) is by the [suckless](https://suckless.org/) project.
+- Patches used: [statuscmd](https://dwm.suckless.org/patches/statuscmd/), [status2d](https://dwm.suckless.org/patches/status2d/) (reimplemented), [xresources](https://dwm.suckless.org/patches/xresources/), [hide_vacant_tags](https://dwm.suckless.org/patches/hide_vacant_tags/), [stacker](https://dwm.suckless.org/patches/stacker/), [shiftview](https://dwm.suckless.org/patches/nextprev/), [vanitygaps](https://dwm.suckless.org/patches/vanitygaps/), [swallow](https://dwm.suckless.org/patches/swallow/), plus scratchpad, sticky, the bstack/fibonacci/deck/centered-master layouts and true fullscreen.
