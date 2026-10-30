@@ -50,7 +50,7 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 
 ## Contributing
 
-Every pull request needs a `## Changelog` section in its description (the template provides it) with one or two user-facing lines starting with Added, Changed, Fixed, Removed or Security, or `none` for internal-only changes. The `PR changelog` workflow fails without it; PRs from renovate, dependabot and github-actions are exempt. There is no `CHANGELOG.md` to edit.
+Every pull request needs a `## Changelog` section in its description (the template provides it) with one or two user-facing lines starting with Added, Changed, Fixed, Removed or Security, or `none` for internal-only changes. The `PR changelog` workflow fails without it; PRs from renovate, dependabot and github-actions are exempt. There is no `CHANGELOG.md` to edit. After a PR is merged, the `Changelog feed` workflow appends its Changelog lines (with the PR and merge-commit links) as a comment on the pinned "Changelog" issue; `none` is skipped.
 
 ## License and credits
 
