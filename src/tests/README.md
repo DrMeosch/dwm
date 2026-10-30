@@ -100,3 +100,7 @@ theme. With every step succeeding, each script must exit zero, stay silent and
 send the low-urgency "Switched to <theme> theme" notification.
 
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
+
+`changelog.sh` feeds sample PR bodies to `.github/scripts/check-changelog.sh`, the
+script behind the `PR changelog` workflow: a non-empty `## Changelog` section
+(including `none`) passes; a missing, empty or comment-only one fails.
