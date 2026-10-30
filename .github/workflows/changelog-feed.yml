@@ -1,0 +1,36 @@
+name: Changelog feed
+
+# pull_request_target runs with the base repository token. This workflow never
+# checks out or runs PR code and only reads the PR body through the API.
+on:
+  # zizmor: ignore[dangerous-triggers] reviewed: no PR code is checked out or run, the body is only read through the API
+  pull_request_target:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  post:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Fetch the scripts from the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.event.repository.default_branch }}
+        run: |
+          mkdir scripts
+          for f in extract-changelog.sh post-changelog.sh; do
+            gh api -H 'Accept: application/vnd.github.raw' "repos/$REPO/contents/.github/scripts/$f?ref=$REF" > "scripts/$f"
+          done
+      - name: Append to the Changelog issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: sh scripts/post-changelog.sh

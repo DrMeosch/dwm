@@ -16,6 +16,7 @@ compile_and_run() {
 }
 
 sh "$root/src/tests/changelog.sh" "$root"
+sh "$root/src/tests/changelog-feed.sh" "$root"
 compile_and_run righttile "$root/src/tests/righttile.c"
 compile_and_run layouts "$root/src/tests/layouts.c"
 compile_and_run shiftview "$root/src/tests/shiftview.c"

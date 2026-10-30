@@ -104,3 +104,9 @@ SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
 `changelog.sh` feeds sample PR bodies to `.github/scripts/check-changelog.sh`, the
 script behind the `PR changelog` workflow: a non-empty `## Changelog` section
 (including `none`) passes; a missing, empty or comment-only one fails.
+
+`changelog-feed.sh` runs `.github/scripts/extract-changelog.sh` and
+`post-changelog.sh` (the `Changelog feed` workflow) against sample PR bodies and
+a stub `gh`: merged PRs with changelog lines are commented on the open
+"Changelog" issue (created and pinned when missing) with the date, PR link and
+merge-commit link; `none`, empty sections and unmerged PRs post nothing.
