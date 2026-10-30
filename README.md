@@ -48,6 +48,10 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 
 `make test` runs headless state and geometry checks, plus an Xvfb-based integration run when Xvfb, `xdpyinfo`, and `xrdb` are present. Set `DWM_X11_CAPTURE_DIR=/tmp/dwm-captures` to save dark/light reload screenshots.
 
+## Contributing
+
+Every pull request needs a `## Changelog` section in its description (the template provides it) with one or two user-facing lines starting with Added, Changed, Fixed, Removed or Security, or `none` for internal-only changes. The `PR changelog` workflow fails without it; PRs from renovate, dependabot and github-actions are exempt. There is no `CHANGELOG.md` to edit.
+
 ## License and credits
 
 Released under the MIT/X Consortium license; see [`LICENSE`](LICENSE) for the full list of copyright holders.
