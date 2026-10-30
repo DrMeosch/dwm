@@ -17,8 +17,8 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 | `src/` | dwm sources, `config.h`, `config.mk`, man page, `PKGBUILD` |
 | `src/tests/` | Regression checks (see [`src/tests/README.md`](src/tests/README.md)) |
 | `docs/dwm-dark.sh`, `docs/dwm-light.sh` | Switch GTK/xfconf theme, merge Xresources, then `pkill -USR2 -x dwm` |
-| `Makefile` | Top-level build, test, install, and devcontainer targets |
-| `.devcontainer/`, `treehouse.toml` | Development container and worktree pool config |
+| `Makefile` | Top-level build, test, install, and dist targets |
+| `treehouse.toml` | Worktree pool config |
 | `.github/workflows/ci.yml` | CI: `make test`, then `make` |
 
 ## Build and install
