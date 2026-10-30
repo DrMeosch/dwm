@@ -8,7 +8,6 @@ Based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm) of [dwm](http
 
 This is suckless, mmmbud, the source code is the documentation! Check out [config.h](config.h).
 
-
 ## Patches and features
 
 - [Clickable statusbar](https://dwm.suckless.org/patches/statuscmd/) with [Luke Smith's build of dwmblocks](https://github.com/lukesmithxyz/dwmblocks).
