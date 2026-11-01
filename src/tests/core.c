@@ -632,9 +632,34 @@ test_buttonpress_status(void)
 	                    "status narrower than the bar");
 }
 
+/* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
+static void
+test_sysmon_expiry(void)
+{
+	int t;
+
+	sysmoncpu = -1;
+	sysmonexpire = 0;
+	CHECK(sysmontimeout() == -1, "dwm sets a poll timeout without a value to expire");
+	sysmoncpu = 40;
+	sysmonexpire = nowms() + 5000;
+	t = sysmontimeout();
+	CHECK(t > 4000 && t <= 5000, "poll timeout %d does not match the time left", t);
+	checksysmon();
+	CHECK(sysmoncpu == 40 && sysmonexpire, "a fresh value was dropped");
+	sysmonexpire = nowms() - 1;
+	CHECK(sysmontimeout() == 0, "an overdue value does not wake poll at once");
+	checksysmon();
+	CHECK(sysmoncpu == -1 && sysmonexpire == 0 && sysmontimeout() == -1,
+	      "a stale value was not dropped and the timer disarmed");
+	checksysmon();
+	CHECK(sysmoncpu == -1, "checksysmon revived a dropped value");
+}
+
 int
 main(void)
 {
+	test_sysmon_expiry();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();

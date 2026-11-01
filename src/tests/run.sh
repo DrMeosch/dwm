@@ -32,9 +32,13 @@ $cc $test_cflags "$root/src/tests/selborder.c" "$root/src/selborder.c" \
 "$tmp/selborder"
 
 $cc $test_cflags "$root/src/tests/core.c" "$root/src/drw.c" "$root/src/sigusr2.c" \
-	"$root/src/borderwidth.c" "$root/src/selborder.c" "$root/src/util.c" \
+	"$root/src/borderwidth.c" "$root/src/selborder.c" "$root/src/sysmon.c" "$root/src/util.c" \
 	$test_libs -lm -o "$tmp/core"
 "$tmp/core"
+
+$cc $test_cflags "$root/src/tests/sysmon.c" "$root/src/sysmon.c" \
+	-o "$tmp/sysmon"
+"$tmp/sysmon"
 
 $cc $test_cflags "$root/src/tests/drawing.c" "$root/src/util.c" \
 	$test_libs -lm -o "$tmp/drawing"

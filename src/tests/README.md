@@ -101,6 +101,29 @@ theme. After each run `xrdb -query` must show `dmenu.color0` and
 gets the theme colors. With every step succeeding, each script must exit zero,
 stay silent and send the low-urgency "Switched to <theme> theme" notification.
 
+The `sysmon` check covers the contract between dwm and the `dwmsysmon`
+sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,
+overflowing and otherwise malformed lines are no reading), the usage between two
+readings (counters that stand still, go backwards or exceed the elapsed time are
+no value), and the property payload (only a short `cpu=<0-100>` string is a
+value; oversized, empty, non-numeric, out-of-range and NUL-containing payloads
+are not). `core.c` also checks that a held value expires on time and that dwm
+sets no poll timeout without one.
+
+`sysmon-x11.c` runs from `x11.sh` against the running test dwm and recognises
+the system monitor section by the bar pixels it produces. It enables the
+section through Xresources and SIGUSR2, and uses itself as a stand-in sampler to
+check that values show up and differ, that garbage (wrong content, wrong type or
+format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
+stale by itself and stays while it is refreshed, and after each of these that
+dwm still redraws a status change. It then starts the real `dwmsysmon` on a
+fixture instead of `/proc/stat` and checks the published value and the bar for a
+changing load, a stopped (hung) sampler, a malformed and a missing stat file
+(`-`, then recovery), a hidden section (no value, no flag left behind, and no
+wake-ups of the sampler) and a clean exit on SIGTERM. With XTEST available it
+also toggles the section with Super+Shift+b. The test dwm is left with the
+section hidden.
+
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
 
 `changelog.sh` feeds sample PR bodies to `.github/scripts/check-changelog.sh`, the
