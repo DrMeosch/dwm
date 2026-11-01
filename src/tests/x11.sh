@@ -27,7 +27,7 @@ if ! pkg-config --exists xtst; then
 fi
 
 tmp=$(mktemp -d)
-display=:91
+display=
 server_pid=
 dwm_pid=
 transient_pid=
@@ -81,14 +81,25 @@ fi
 $cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE \
 	"$root/src/tests/x11-capture.c" $libs -o "$tmp/x11-capture"
 
-Xvfb "$display" -screen 0 1200x800x24 -nolisten tcp -noreset >"$tmp/xvfb.log" 2>&1 &
+# Let Xvfb pick a free display and report it on fd 3, so a stale or concurrent
+# server is never mistaken for this one.
+Xvfb -displayfd 3 -screen 0 1200x800x24 -nolisten tcp -noreset \
+	>"$tmp/xvfb.log" 2>&1 3>"$tmp/display" &
 server_pid=$!
-export DISPLAY=$display
-for i in 1 2 3 4 5 6 7 8 9 10; do
-	if xdpyinfo >/dev/null 2>&1; then break; fi
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+	if [ -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
 	sleep 0.1
 done
+if [ ! -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then
+	cat "$tmp/xvfb.log" >&2
+	printf '%s\n' 'X11 test server did not start'
+	exit 1
+fi
+read -r number <"$tmp/display"
+display=:$number
+export DISPLAY=$display
 xdpyinfo >/dev/null 2>&1
+kill -0 "$server_pid"
 printf 'dwm.borderpx: 1\ndwm.selbordercolor: #ffb86c\n' | xrdb -merge
 if [ -n "${DWM_X11_CAPTURE_DIR:-}" ]; then
 	"$tmp/x11-capture" root '#282a36'
