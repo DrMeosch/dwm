@@ -108,7 +108,10 @@ readings (counters that stand still, go backwards or exceed the elapsed time are
 no value), and the property payload (only a short `cpu=<0-100>` string is a
 value; oversized, empty, non-numeric, out-of-range and NUL-containing payloads
 are not). `core.c` also checks that a held value expires on time and that dwm
-sets no poll timeout without one.
+sets no poll timeout without one, and that a click on the section or the gap up
+to the status is neither a title, layout symbol nor status click, while a click
+on the title left of it, on the status, or with the section off or left out for
+lack of room keeps its usual meaning.
 
 `sysmon-x11.c` runs from `x11.sh` against the running test dwm and recognises
 the system monitor section by the bar pixels it produces. It enables the

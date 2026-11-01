@@ -632,6 +632,57 @@ test_buttonpress_status(void)
 	                    "status narrower than the bar");
 }
 
+/* a click on the section or the gap up to the status is no title, tag, layout or status click */
+static void
+test_buttonpress_sysmon(void)
+{
+	/* 100px text padding: the layout symbol ends at 100, the section is [550,650), the status [1098,1200) */
+	static const struct { int x, click; } at[] = {
+		{ 99, ClkLtSymbol }, { 100, ClkWinTitle }, { 549, ClkWinTitle },
+		{ 550, ClkLast }, { 649, ClkLast }, { 650, ClkLast }, { 1097, ClkLast },
+		{ 1098, ClkStatusText }, { 1197, ClkStatusText },
+	};
+	static const int blocks[][2] = { { 549, 0 }, { 550, 0 }, { 1097, 0 }, { 1098, 1 }, { 1197, 1 } };
+	Monitor m = {0};
+	Arg arg = {0};
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
+	size_t i;
+	int got;
+
+	lrpad = 100;
+	bh = 20;
+	m.ww = 1200;
+	m.barwin = 1;
+	mons = selmon = &m;
+	strcpy(rawstext, "\001^f100^");
+	copyvalidchars(stext, rawstext);
+
+	showsysmon = 1;
+	for (i = 0; i < LENGTH(at); i++) {
+		got = barclick(&m, at[i].x, &arg);
+		CHECK(got == at[i].click, "a click at x=%d with the section shown was %d, expected %d",
+		      at[i].x, got, at[i].click);
+	}
+	check_status_clicks("\001^f100^", blocks, LENGTH(blocks), "status beside the section");
+	lrpad = 100;
+	bh = 20;
+	mons = selmon = &m;
+
+	showsysmon = 0;
+	CHECK(barclick(&m, 600, &arg) == ClkWinTitle, "a click at x=600 with the section off was not a title click");
+
+	/* a status reaching into the centre leaves the section out, so its pixels belong to the title */
+	showsysmon = 1;
+	strcpy(rawstext, "\001^f600^");
+	copyvalidchars(stext, rawstext);
+	CHECK(barclick(&m, 500, &arg) == ClkWinTitle, "a click at x=500 with the section left out was not a title click");
+
+	showsysmon = saved_show;
+	lrpad = saved_lrpad;
+	bh = saved_bh;
+	mons = selmon = NULL;
+}
+
 /* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
 static void
 test_sysmon_expiry(void)
@@ -676,6 +727,7 @@ main(void)
 	test_selected_tag_fonts_disabled();
 	test_getdwmblockspid();
 	test_buttonpress_status();
+	test_buttonpress_sysmon();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("core state regression checks passed");

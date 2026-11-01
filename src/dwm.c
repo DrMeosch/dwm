@@ -192,6 +192,7 @@ static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
+static int barclick(Monitor *m, int px, Arg *arg);
 static void buttonpress(XEvent *e);
 static void checkotherwm(void);
 static void cleanup(void);
@@ -210,6 +211,7 @@ static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
+static int sysmonbox(Monitor *m, int left, int right, int *mx);
 static void drawbars(void);
 static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
@@ -586,11 +588,43 @@ unswallow(Client *c)
 	arrange(c->mon);
 }
 
+int
+barclick(Monitor *m, int px, Arg *arg)
+{
+	unsigned int i, occ = 0;
+	int x = 0, left, right, mx;
+	Client *c;
+
+	for (c = m->clients; c; c = c->next)
+		occ |= c->tags == 255 ? 0 : c->tags;
+	i = 0;
+	do {
+		/* do not reserve space for vacant tags */
+		if (!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
+			continue;
+		x += TEXTW(tags[i]);
+	} while (px >= x && ++i < LENGTH(tags));
+	if (i < LENGTH(tags)) {
+		arg->ui = 1 << i;
+		return ClkTagBar;
+	}
+	left = x + TEXTW(m->ltsymbol);
+	if (px < left)
+		return ClkLtSymbol;
+	right = m->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2); /* 2px right padding, as in drawbar */
+	if (px >= right) {
+		dwmblockssig = statusblocksig(right, px);
+		return ClkStatusText;
+	}
+	if (sysmonbox(m, left, right, &mx) && px >= mx)
+		return ClkLast; /* the section and the gap up to the status have no action */
+	return ClkWinTitle;
+}
+
 void
 buttonpress(XEvent *e)
 {
-	unsigned int i, click, occ = 0;
-	int x;
+	unsigned int i, click;
 	Arg arg = {0};
 	Client *c;
 	Monitor *m;
@@ -603,27 +637,9 @@ buttonpress(XEvent *e)
 		selmon = m;
 		focus(NULL);
 	}
-	if (ev->window == selmon->barwin) {
-		i = x = 0;
-		for (c = m->clients; c; c = c->next)
-			occ |= c->tags == 255 ? 0 : c->tags;
-		do {
-			/* do not reserve space for vacant tags */
-			if (!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
-				continue;
-			x += TEXTW(tags[i]);
-		} while (ev->x >= x && ++i < LENGTH(tags));
-		if (i < LENGTH(tags)) {
-			click = ClkTagBar;
-			arg.ui = 1 << i;
-		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
-			click = ClkLtSymbol;
-		else if (ev->x >= (x = selmon->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2))) { /* 2px right padding, as in drawbar */
-			click = ClkStatusText;
-			dwmblockssig = statusblocksig(x, ev->x);
-		} else
-			click = ClkWinTitle;
-	} else if ((c = wintoclient(ev->window))) {
+	if (ev->window == selmon->barwin)
+		click = barclick(m, ev->x, &arg);
+	else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
@@ -1101,6 +1117,22 @@ statusblocksig(int x, int evx)
 	return sig;
 }
 
+/*
+ * Where the section sits between the layout symbol ending at left and the
+ * status starting at right: centred in the bar at a fixed width. Returns 0
+ * when it is off or would crowd the title or reach the status.
+ */
+int
+sysmonbox(Monitor *m, int left, int right, int *mx)
+{
+	int mw = TEXTW("CPU 100%");
+
+	*mx = (m->ww - mw) / 2;
+	if (!showsysmon || *mx - left <= bh || *mx + mw > right)
+		return 0;
+	return mw;
+}
+
 void
 drawbar(Monitor *m)
 {
@@ -1156,22 +1188,15 @@ drawbar(Monitor *m)
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
 	end = m->ww - tw; /* the title and the section share [x, end) */
-	if (showsysmon) {
-		/* fixed width, so the section does not move as the value changes */
-		mw = TEXTW("CPU 100%");
-		mx = (m->ww - mw) / 2; /* centred in the bar, whatever the left and right parts take */
-		if (mx - x <= bh || mx + mw > end)
-			mw = 0; /* it would crowd the title or reach the status: leave it out */
-		else {
-			if (sysmoncpu < 0)
-				snprintf(mtext, sizeof mtext, "CPU   -");
-			else
-				snprintf(mtext, sizeof mtext, "CPU %3d%%", sysmoncpu);
-			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
-			drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
-			end = mx;
-		}
+	if ((mw = sysmonbox(m, x, end, &mx))) {
+		if (sysmoncpu < 0)
+			snprintf(mtext, sizeof mtext, "CPU   -");
+		else
+			snprintf(mtext, sizeof mtext, "CPU %3d%%", sysmoncpu);
+		drw_setscheme(drw, scheme[SchemeNorm]);
+		drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
+		drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
+		end = mx;
 	}
 
 	if ((w = end - x) > bh) {
