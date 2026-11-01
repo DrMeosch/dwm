@@ -62,7 +62,8 @@ $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/tests/x11.c" \
 	$libs -o "$tmp/x11"
 $cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700L \
-	$flags "$root/src/dwmsysmon.c" "$root/src/sysmon.c" -lX11 -o "$tmp/dwmsysmon"
+	-DSYSMON_STAT_PATH=\"$tmp/sysmon/stat\" $flags "$root/src/dwmsysmon.c" \
+	"$root/src/sysmon.c" -lX11 -o "$tmp/dwmsysmon"
 sysmon_flags=
 sysmon_libs=
 if [ "$input_available" -eq 1 ]; then

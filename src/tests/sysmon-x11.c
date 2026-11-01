@@ -6,6 +6,8 @@
  * recognised by the bar pixels it produces.
  *
  * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory>
+ *
+ * dwmsysmon must be built with SYSMON_STAT_PATH set to <scratch directory>/stat.
  */
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -24,7 +26,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#define STALE_MS 1500 /* dwm.sysmonstale used by the test */
+#define STALE_MS 1500 /* dwm.sysmonstale used with the stand-in sampler */
+#define SAMPLER_STALE_MS 4500 /* dwm.sysmonstale used with dwmsysmon, which samples every 2000 ms */
 
 static Display *dpy;
 static Window root;
@@ -285,7 +288,7 @@ static void
 start_sampler(const char *path)
 {
 	if ((sampler_pid = fork()) == 0) {
-		execl(path, path, "-i", "500", "-s", fixture_path, (char *)NULL);
+		execl(path, path, (char *)NULL);
 		_exit(127);
 	}
 	CHECK(sampler_pid > 0, "cannot start dwmsysmon");
@@ -412,6 +415,7 @@ main(int argc, char *argv[])
 	CHECK(wait_hash(h_dash, 2000), "the value did not go away");
 
 	/* the real sampler: values from a stat file, then hang, bad data and no data */
+	set_resources("dwm.sysmonstale: 4500\n");
 	start_sampler(argv[2]);
 	fixture_busy = 20;
 	CHECK(wait_hash(h20, 6000), "dwmsysmon's 20%% was not shown by dwm");
@@ -422,7 +426,7 @@ main(int argc, char *argv[])
 	CHECK(wait_hash(h20, 6000), "dwmsysmon's change back to 20%% was not shown by dwm");
 
 	kill(sampler_pid, SIGSTOP); /* a hung sampler */
-	CHECK(wait_hash(h_dash, STALE_MS + 3000), "a hung sampler's value did not go stale");
+	CHECK(wait_hash(h_dash, SAMPLER_STALE_MS + 3000), "a hung sampler's value did not go stale");
 	responsive("a hung sampler");
 	kill(sampler_pid, SIGCONT);
 	CHECK(wait_hash(h20, 6000), "the value did not return after the sampler resumed");

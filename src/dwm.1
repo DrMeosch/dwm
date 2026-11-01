@@ -243,19 +243,13 @@ the property is malformed (anything but a short string with
 .B cpu=
 and an integer from 0 to 100), or no new value arrived for
 .B dwm.sysmonstale
-milliseconds (default 10000, which must stay above the sampler interval). A
+milliseconds (default 10000, which must stay above the 2000 ms sampling interval). A
 missing, crashed or stuck sampler never blocks or crashes dwm, and dwm has no timer
 while there is no value to expire. The section is dropped when the title would be
 left without room.
 .PP
 .B dwmsysmon
-[\fB\-i\fR \fIms\fR]
-sets the sampling interval in milliseconds (500 to 5000, default 2000);
-.B \-s
-.I file
-reads the CPU counters from that file instead of
-.IR /proc/stat .
-While dwm hides the
+takes no options and samples every 2000 ms. While dwm hides the
 section (property
 .BR _DWM_SYSMON_ENABLED ,
 set by dwm) the sampler sleeps without a timer and removes its value. It

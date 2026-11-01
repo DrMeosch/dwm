@@ -19,9 +19,10 @@
 
 #include "sysmon.h"
 
-#define INTERVAL_MIN 500
-#define INTERVAL_MAX 5000
-#define INTERVAL_DEFAULT 2000
+#ifndef SYSMON_STAT_PATH
+#define SYSMON_STAT_PATH "/proc/stat"
+#endif
+#define INTERVAL 2000 /* ms between samples */
 #define FIRST_TICK 500 /* ms until the first value after sampling starts */
 
 static int sigfd[2];
@@ -106,7 +107,7 @@ publish(int cpu)
 static void
 usage(void)
 {
-	fputs("usage: dwmsysmon [-i interval_ms] [-s stat_file]\n", stderr);
+	fputs("usage: dwmsysmon\n", stderr);
 	exit(2);
 }
 
@@ -115,28 +116,14 @@ main(int argc, char *argv[])
 {
 	struct sigaction sa;
 	struct pollfd fds[2];
-	const char *statpath = "/proc/stat";
 	SysmonCpu prev, cur;
 	XEvent ev;
 	long long next = 0, t;
-	long interval = INTERVAL_DEFAULT;
-	int i, on, have = 0, timeout;
-	char *end;
+	int on, have = 0, timeout;
 
-	for (i = 1; i < argc; i++) {
-		if (!strcmp(argv[i], "-i") && i + 1 < argc) {
-			interval = strtol(argv[++i], &end, 10);
-			if (*end || end == argv[i])
-				usage();
-			if (interval < INTERVAL_MIN)
-				interval = INTERVAL_MIN;
-			if (interval > INTERVAL_MAX)
-				interval = INTERVAL_MAX;
-		} else if (!strcmp(argv[i], "-s") && i + 1 < argc)
-			statpath = argv[++i];
-		else
-			usage();
-	}
+	(void)argv;
+	if (argc != 1)
+		usage();
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fputs("dwmsysmon: cannot open display\n", stderr);
 		return 1;
@@ -164,7 +151,7 @@ main(int argc, char *argv[])
 
 	on = enabled();
 	if (on) {
-		have = readcpu(statpath, &prev) == 0;
+		have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
 		next = nowms() + FIRST_TICK;
 	}
 	for (;;) {
@@ -176,7 +163,7 @@ main(int argc, char *argv[])
 			on = !on;
 			have = 0;
 			if (on) {
-				have = readcpu(statpath, &prev) == 0;
+				have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
 				next = nowms() + FIRST_TICK;
 			} else
 				publish(-1);
@@ -184,7 +171,7 @@ main(int argc, char *argv[])
 		timeout = -1;
 		if (on) {
 			if ((t = nowms()) >= next) {
-				if (readcpu(statpath, &cur) == 0) {
+				if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
 					publish(have ? sysmon_cpu_percent(&prev, &cur) : -1);
 					prev = cur;
 					have = 1;
@@ -192,7 +179,7 @@ main(int argc, char *argv[])
 					publish(-1);
 					have = 0;
 				}
-				next = t + interval;
+				next = t + INTERVAL;
 			}
 			timeout = (int)(next - nowms());
 			if (timeout < 0)
