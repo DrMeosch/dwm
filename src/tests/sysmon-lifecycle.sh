@@ -76,7 +76,8 @@ pid_of() {
 	cat "$tmp/$1.pid"
 }
 alive() {
-	[ -r "/proc/$(pid_of "$1")/stat" ] && ! grep -q ') Z' "/proc/$(pid_of "$1")/stat"
+	stat=$(cat "/proc/$(pid_of "$1")/stat" 2>/dev/null) || return 1
+	case $stat in *') Z'*) return 1 ;; esac
 }
 wait_gone() {
 	for i in $(seq 1 100); do

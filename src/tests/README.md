@@ -123,11 +123,11 @@ format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
 stale by itself and stays while it is refreshed, and after each of these that
 dwm still redraws a status change. It also checks that the section is centred
 in the bar with a short and with a long status text, and is left out, without
-overlapping anything, when a very long status text reaches the centre. It then starts the real `dwmsysmon`, built
-with `SYSMON_STAT_PATH` pointing at a fixture instead of `/proc/stat` and
-sampling at its fixed 2000 ms interval (with `dwm.sysmonstale` raised to 4500),
-and checks the published value and the bar for a
-changing load, a stopped (hung) sampler, a malformed and a missing stat file
+overlapping anything, when a very long status text reaches the centre. It then
+starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
+instead of `/proc/stat` and sampling at its fixed 2000 ms interval (with
+`dwm.sysmonstale` raised to 4500), and checks the published value and the bar
+for a changing load, a stopped (hung) sampler, a malformed and a missing stat file
 (`-`, then recovery), a hidden section (no value, no flag left behind, and no
 wake-ups of the sampler) and a clean exit on SIGTERM. With XTEST available it
 also toggles the section with Super+Shift+b. The test dwm is left with the
