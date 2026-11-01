@@ -299,4 +299,7 @@ wait_for_border '#b84f7b' 2
 "$tmp/x11" bar-background '#f6e8ee'
 kill -0 "$dwm_pid"
 
+# one sampler per display, and none left behind when dwm goes away
+sh "$root/src/tests/sysmon-lifecycle.sh" "$root" "$tmp/dwm"
+
 printf '%s\n' 'X11 integration checks passed'

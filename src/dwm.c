@@ -1959,7 +1959,7 @@ reloadcolors(void)
 
 void
 runAutostart(void) {
-	int status = system("killall -q dwmblocks dwmsysmon; dwmblocks & dwmsysmon &");
+	int status = system("killall -q dwmblocks; dwmblocks & dwmsysmon &");
 
 	(void)status;
 }
@@ -2769,15 +2769,16 @@ updatesysmon(void)
 void
 applysysmon(void)
 {
-	unsigned long on;
+	unsigned long on[2];
 
 	showsysmon = showsysmon != 0;
 	if (showsysmon == sysmonpublished)
 		return;
 	sysmonpublished = showsysmon;
-	on = showsysmon;
+	on[0] = showsysmon;
+	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
-		PropModeReplace, (unsigned char *)&on, 1);
+		PropModeReplace, (unsigned char *)on, 2);
 	sysmoncpu = -1;
 	sysmonexpire = 0;
 }

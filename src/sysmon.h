@@ -4,13 +4,15 @@
  * Contract between dwm and the dwmsysmon sampler, which are separate processes.
  * The sampler publishes the latest CPU usage as a short ASCII string ("cpu=42")
  * in the SYSMON_ATOM property of the root window. dwm publishes whether the
- * section is shown as a CARDINAL (0 or 1) in SYSMON_ENABLED_ATOM so an idle
- * sampler can stop waking up.
+ * section is shown as a CARDINAL (0 or 1), followed by a window that exists as
+ * long as dwm does, in SYSMON_ENABLED_ATOM so an idle sampler can stop waking
+ * up and a sampler can tell when dwm is gone.
  */
 #include <stddef.h>
 
 #define SYSMON_ATOM "_DWM_SYSMON"
 #define SYSMON_ENABLED_ATOM "_DWM_SYSMON_ENABLED"
+#define SYSMON_OWNER_ATOM "_DWM_SYSMON_OWNER" /* selection: the sampler of a display */
 #define SYSMON_MAXLEN 32 /* bytes dwm reads; multiple of 4 */
 
 /* Cumulative CPU time counters in clock ticks; idle includes iowait. */

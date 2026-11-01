@@ -4,6 +4,13 @@
  * latest value in the root window property read by dwm (see sysmon.h). It only
  * ever writes one short property, never blocks dwm, and exits with the X
  * connection. While dwm shows no system monitor it sleeps without a timer.
+ *
+ * Each X display has at most one sampler: a new one takes the
+ * SYSMON_OWNER_ATOM selection and the previous one, which may be stuck in
+ * sensor I/O, retires itself whenever it next looks at its events. Nothing is
+ * ever signalled, so samplers of other displays are left alone. The sampler also
+ * watches the window dwm names in SYSMON_ENABLED_ATOM and exits when it is
+ * destroyed, which the X server does when dwm exits or dies.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -27,8 +34,9 @@
 
 static int sigfd[2];
 static Display *dpy;
-static Window root;
-static Atom sysmonatom, enabledatom;
+static Window root, ownwin, dwmwin;
+static Atom sysmonatom, enabledatom, ownatom;
+static int badwindow;
 
 static void
 onsignal(int sig)
@@ -72,7 +80,34 @@ readcpu(const char *path, SysmonCpu *cpu)
 	return sysmon_cpu_parse(buf, cpu);
 }
 
-/* dwm clears the flag while the section is hidden; no flag means it is wanted. */
+static int
+ignoreerror(Display *d, XErrorEvent *e)
+{
+	(void)d;
+	(void)e;
+	badwindow = 1;
+	return 0;
+}
+
+/* Ask for the destruction of dwm's window; 0 if it is already gone. */
+static int
+watch(Window w)
+{
+	int (*old)(Display *, XErrorEvent *);
+
+	badwindow = 0;
+	old = XSetErrorHandler(ignoreerror);
+	XSelectInput(dpy, w, StructureNotifyMask);
+	XSync(dpy, False);
+	XSetErrorHandler(old);
+	return !badwindow;
+}
+
+/*
+ * dwm publishes whether the section is shown and a window that lives as long
+ * as dwm does. No flag means it is wanted; -1 means the dwm that published it
+ * is gone.
+ */
 static int
 enabled(void)
 {
@@ -80,12 +115,21 @@ enabled(void)
 	int format, on = 1;
 	unsigned long n, after;
 	unsigned char *data = NULL;
+	Window w = None;
 
-	if (XGetWindowProperty(dpy, root, enabledatom, 0, 1, False, XA_CARDINAL,
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 2, False, XA_CARDINAL,
 	    &type, &format, &n, &after, &data) == Success && data) {
-		if (type == XA_CARDINAL && format == 32 && n == 1)
-			on = *(unsigned long *)data != 0;
+		if (type == XA_CARDINAL && format == 32 && n >= 1) {
+			on = ((unsigned long *)data)[0] != 0;
+			if (n >= 2)
+				w = ((unsigned long *)data)[1];
+		}
 		XFree(data);
+	}
+	if (w != dwmwin) {
+		dwmwin = w;
+		if (w && !watch(w))
+			return -1;
 	}
 	return on;
 }
@@ -119,7 +163,7 @@ main(int argc, char *argv[])
 	SysmonCpu prev, cur;
 	XEvent ev;
 	long long next = 0, t;
-	int on, have = 0, timeout;
+	int on, now, have = 0, timeout, stop = 0;
 
 	(void)argv;
 	if (argc != 1)
@@ -131,7 +175,10 @@ main(int argc, char *argv[])
 	root = DefaultRootWindow(dpy);
 	sysmonatom = XInternAtom(dpy, SYSMON_ATOM, False);
 	enabledatom = XInternAtom(dpy, SYSMON_ENABLED_ATOM, False);
+	ownatom = XInternAtom(dpy, SYSMON_OWNER_ATOM, False);
 	XSelectInput(dpy, root, PropertyChangeMask);
+	ownwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+	XSetSelectionOwner(dpy, ownatom, ownwin, CurrentTime); /* retires this display's previous sampler */
 
 	if (pipe(sigfd) < 0 || fcntl(sigfd[1], F_SETFL, O_NONBLOCK) < 0) {
 		perror("dwmsysmon: pipe");
@@ -149,25 +196,36 @@ main(int argc, char *argv[])
 	fds[1].fd = sigfd[0];
 	fds[0].events = fds[1].events = POLLIN;
 
-	on = enabled();
-	if (on) {
+	if ((on = enabled()) < 0) /* a dwm that is gone left its property behind */
+		stop = 1;
+	else if (on) {
 		have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
 		next = nowms() + FIRST_TICK;
 	}
-	for (;;) {
-		while (XPending(dpy)) {
+	while (!stop) {
+		while (!stop && XPending(dpy)) {
 			XNextEvent(dpy, &ev);
-			if (ev.type != PropertyNotify || ev.xproperty.window != root
-			|| ev.xproperty.atom != enabledatom || enabled() == on)
-				continue;
-			on = !on;
-			have = 0;
-			if (on) {
-				have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-				next = nowms() + FIRST_TICK;
-			} else
-				publish(-1);
+			if (ev.type == SelectionClear && ev.xselectionclear.selection == ownatom)
+				stop = 1; /* a newer sampler took over this display */
+			else if (ev.type == DestroyNotify && ev.xdestroywindow.window == dwmwin)
+				stop = 1; /* dwm exited or died */
+			else if (ev.type == PropertyNotify && ev.xproperty.window == root
+			&& ev.xproperty.atom == enabledatom) {
+				if ((now = enabled()) < 0)
+					stop = 1;
+				else if (now != on) {
+					on = now;
+					have = 0;
+					if (on) {
+						have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
+						next = nowms() + FIRST_TICK;
+					} else
+						publish(-1);
+				}
+			}
 		}
+		if (stop)
+			break;
 		timeout = -1;
 		if (on) {
 			if ((t = nowms()) >= next) {
@@ -190,7 +248,9 @@ main(int argc, char *argv[])
 		if (fds[1].revents || (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)))
 			break;
 	}
-	XDeleteProperty(dpy, root, sysmonatom);
+	/* the value is only ours to remove while no newer sampler has taken over */
+	if (XGetSelectionOwner(dpy, ownatom) == ownwin)
+		XDeleteProperty(dpy, root, sysmonatom);
 	XCloseDisplay(dpy);
 	return 0;
 }

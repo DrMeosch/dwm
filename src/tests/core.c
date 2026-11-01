@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -25,10 +26,20 @@ pidof_popen(const char *command, const char *mode)
 	}
 	return fp;
 }
+/* runAutostart() hands its command to system(); keep it instead of running it */
+static char autostart_command[256];
+static int
+autostart_system(const char *command)
+{
+	snprintf(autostart_command, sizeof autostart_command, "%s", command);
+	return 0;
+}
 #define popen pidof_popen
 #define pclose fclose
+#define system autostart_system
 #define main dwm_program_main
 #include "../dwm.c"
+#undef system
 #undef popen
 #undef pclose
 #undef main
@@ -728,6 +739,66 @@ test_sysmon_box(void)
 	mons = selmon = NULL;
 }
 
+/*
+ * The commands dwm runs at startup start the sampler without stopping any other
+ * process of that name: a sampler of another X session must keep running.
+ * They run here against stub programs only, with nothing else on PATH.
+ */
+static void
+test_autostart_command(void)
+{
+	char dir[] = "/tmp/dwm-autostart-XXXXXX", path[512], log[512], line[256];
+	const char *saved_path = getenv("PATH");
+	const char *tools[] = { "killall", "dwmblocks", "dwmsysmon" };
+	int started = 0, killed_sampler = 0, i;
+	FILE *fp;
+
+	if (!mkdtemp(dir)) {
+		CHECK(0, "cannot create a scratch directory");
+		return;
+	}
+	snprintf(log, sizeof log, "%s/log", dir);
+	for (i = 0; i < 3; i++) {
+		snprintf(path, sizeof path, "%s/%s", dir, tools[i]);
+		if ((fp = fopen(path, "w"))) {
+			fprintf(fp, "#!/bin/sh\necho \"%s $*\" >>\"%s\"\n", tools[i], log);
+			fclose(fp);
+			chmod(path, 0755);
+		}
+	}
+	autostart_command[0] = '\0';
+	runAutostart();
+	CHECK(autostart_command[0], "dwm ran no startup command");
+	setenv("PATH", dir, 1);
+	if (autostart_command[0] && system(autostart_command) != 0)
+		CHECK(0, "the startup command failed");
+	for (i = 0; i < 100 && !started; i++) { /* the programs are started in the background */
+		if ((fp = fopen(log, "r"))) {
+			while (fgets(line, sizeof line, fp))
+				if (!strncmp(line, "dwmsysmon", 9))
+					started = 1;
+			fclose(fp);
+		}
+		if (!started)
+			usleep(20000);
+	}
+	setenv("PATH", saved_path ? saved_path : "/usr/bin:/bin", 1);
+	CHECK(started, "the startup command did not start the sampler");
+	if ((fp = fopen(log, "r"))) {
+		while (fgets(line, sizeof line, fp))
+			if (!strncmp(line, "killall", 7) && strstr(line, "dwmsysmon"))
+				killed_sampler = 1;
+		fclose(fp);
+	}
+	CHECK(!killed_sampler, "the startup command stops samplers by name, which includes those of other X sessions");
+	for (i = 0; i < 3; i++) {
+		snprintf(path, sizeof path, "%s/%s", dir, tools[i]);
+		unlink(path);
+	}
+	unlink(log);
+	rmdir(dir);
+}
+
 /* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
 static void
 test_sysmon_expiry(void)
@@ -757,6 +828,7 @@ main(void)
 {
 	test_sysmon_expiry();
 	test_sysmon_box();
+	test_autostart_command();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();

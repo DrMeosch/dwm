@@ -133,6 +133,18 @@ wake-ups of the sampler) and a clean exit on SIGTERM. With XTEST available it
 also toggles the section with Super+Shift+b. The test dwm is left with the
 section hidden.
 
+`core.c` also runs the command dwm hands to `system()` at startup against stub
+`killall`, `dwmblocks` and `dwmsysmon` programs, with nothing else on `PATH`, and
+checks that it starts the sampler without stopping samplers by name.
+`sysmon-lifecycle.sh` runs from `x11.sh` with two private X servers standing in
+for two X sessions of one user, each with the test dwm and a real `dwmsysmon`
+reading an advancing fixture. A replacement sampler on one display must retire
+that display's sampler only, and restarting dwm there must leave the other
+session's sampler and value untouched. When dwm exits normally with the X server
+still running, with the section shown or hidden, or is killed outright, its
+sampler must exit and remove its value, and a sampler started after dwm is gone
+must not linger.
+
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
 
 `changelog.sh` feeds sample PR bodies to `.github/scripts/check-changelog.sh`, the

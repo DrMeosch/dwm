@@ -258,6 +258,14 @@ section (property
 set by dwm) the sampler sleeps without a timer and removes its value. It
 removes it when it exits on SIGTERM, SIGINT or SIGHUP as well, and it exits when
 the X connection closes.
+.PP
+Each X display has one sampler. A newly started
+.B dwmsysmon
+takes over that display and the previous one, even if it is stuck reading a
+sensor, retires itself as soon as it looks at its events; no process is ever
+signalled by name, so samplers of other X sessions of the same user keep
+running. The sampler also exits when dwm exits or dies while the X server
+keeps running, and removes its value then.
 .SH CUSTOMIZATION
 dwm is customized by creating a custom config.h and (re)compiling the source
 code. This keeps it fast, secure and simple.
