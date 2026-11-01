@@ -32,10 +32,11 @@ fail() {
 	exit 1
 }
 
-# A sampler that reads a stat file this script keeps advancing at 50% busy.
+# A sampler that reads a stat file this script keeps advancing at 50% busy,
+# and an empty sysfs tree instead of the host's sensors.
 $cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700L \
-	-DSYSMON_STAT_PATH=\"$tmp/stat\" $(pkg-config --cflags x11) \
-	"$root/src/dwmsysmon.c" "$root/src/sysmon.c" $(pkg-config --libs x11) \
+	-DSYSMON_STAT_PATH=\"$tmp/stat\" -DSYSMON_SYS_PATH=\"$tmp/sys\" $(pkg-config --cflags x11) \
+	"$root/src/dwmsysmon.c" "$root/src/sensors.c" "$root/src/sysmon.c" $(pkg-config --libs x11) \
 	-o "$tmp/dwmsysmon"
 (
 	n=0
@@ -87,7 +88,7 @@ wait_gone() {
 	return 1
 }
 value() { # the sampler's value on a display, empty when there is none
-	DISPLAY=$1 xprop -root _DWM_SYSMON 2>/dev/null | sed -n 's/.*"\(cpu=[0-9]*\)".*/\1/p'
+	DISPLAY=$1 xprop -root _DWM_SYSMON 2>/dev/null | sed -n 's/.*"\(cpu=[0-9]*\)[ "].*/\1/p'
 }
 wait_value() {
 	for i in $(seq 1 100); do

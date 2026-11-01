@@ -36,7 +36,7 @@ $cc $test_cflags "$root/src/tests/core.c" "$root/src/drw.c" "$root/src/sigusr2.c
 	$test_libs -lm -o "$tmp/core"
 "$tmp/core"
 
-$cc $test_cflags "$root/src/tests/sysmon.c" "$root/src/sysmon.c" \
+$cc $test_cflags "$root/src/tests/sysmon.c" "$root/src/sensors.c" "$root/src/sysmon.c" \
 	-o "$tmp/sysmon"
 "$tmp/sysmon"
 

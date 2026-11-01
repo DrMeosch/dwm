@@ -212,6 +212,7 @@ static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
 static int sysmonbox(Monitor *m, int left, int right, int *mx);
+static void sysmontext(char *buf, size_t size, int widest);
 static void drawbars(void);
 static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
@@ -351,8 +352,8 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 static Atom wmatom[WMLast], netatom[NetLast];
 static Atom baropacityatom;
 static Atom sysmonatom, sysmonenabledatom;
-static int sysmoncpu = -1;       /* CPU percent last published by dwmsysmon, -1 when unknown */
-static long long sysmonexpire;   /* monotonic ms at which sysmoncpu goes stale, 0 when none */
+static SysmonValues sysmonval = { -1, -1, 0, {0} }; /* last published by dwmsysmon; -1 or no fans when unknown */
+static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
 static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
 static int lightbar;
 static int restart = 0;
@@ -1118,14 +1119,44 @@ statusblocksig(int x, int evx)
 }
 
 /*
+ * The section's text: the CPU usage ("-" when unknown), then the temperature
+ * and every fan when the sampler has them. With widest set, the widest text of
+ * the same fields, so the section keeps its width while the values change.
+ */
+void
+sysmontext(char *buf, size_t size, int widest)
+{
+	int i, fan;
+
+	if (sysmonval.cpu < 0 && !widest)
+		snprintf(buf, size, "CPU   - "); /* as wide as a value, so the fields after it stay put */
+	else
+		snprintf(buf, size, "CPU %3d%%", widest ? 100 : sysmonval.cpu);
+	if (sysmonval.temp >= 0)
+		snprintf(buf + strlen(buf), size - strlen(buf), " %3d°C", widest ? 100 : sysmonval.temp);
+	/* last in the section, so the fans need no padding to keep the other fields put */
+	for (i = 0; i < sysmonval.nfan; i++) {
+		fan = sysmonval.fan[i];
+		snprintf(buf + strlen(buf), size - strlen(buf), "%s%d", i ? "/" : "  ",
+		         widest ? (fan > 9999 ? 99999 : 9999) : fan);
+	}
+	if (sysmonval.nfan)
+		snprintf(buf + strlen(buf), size - strlen(buf), "rpm");
+}
+
+/*
  * Where the section sits between the layout symbol ending at left and the
- * status starting at right: centred in the bar at a fixed width. Returns 0
- * when it is off or would crowd the title or reach the status.
+ * status starting at right: centred in the bar, as wide as its widest text.
+ * Returns 0 when it is off or would crowd the title or reach the status.
  */
 int
 sysmonbox(Monitor *m, int left, int right, int *mx)
 {
-	int mw = TEXTW("CPU 100%");
+	char widest[64];
+	int mw;
+
+	sysmontext(widest, sizeof widest, 1);
+	mw = TEXTW(widest);
 
 	*mx = (m->ww - mw) / 2;
 	if (!showsysmon || *mx - left <= bh || *mx + mw > right)
@@ -1137,7 +1168,7 @@ void
 drawbar(Monitor *m)
 {
 	int x, w, tw = 0, mw = 0, mx, end;
-	char mtext[24];
+	char mtext[64];
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
@@ -1189,10 +1220,7 @@ drawbar(Monitor *m)
 
 	end = m->ww - tw; /* the title and the section share [x, end) */
 	if ((mw = sysmonbox(m, x, end, &mx))) {
-		if (sysmoncpu < 0)
-			snprintf(mtext, sizeof mtext, "CPU   -");
-		else
-			snprintf(mtext, sizeof mtext, "CPU %3d%%", sysmoncpu);
+		sysmontext(mtext, sizeof mtext, 0);
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
 		drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
@@ -2740,27 +2768,30 @@ nowms(void)
 }
 
 /*
- * Take over the value dwmsysmon last published. The sampler is a separate
+ * Take over the values dwmsysmon last published. The sampler is a separate
  * process, so the property may be missing, stale or anything at all: whatever
- * is not exactly a short, well-formed string counts as "no value".
+ * is not exactly a short, well-formed string counts as "no value", and so does
+ * a field that is not well-formed.
  */
 void
 updatesysmon(void)
 {
 	Atom type;
-	int format, cpu = -1;
+	int format, have = -1;
 	unsigned long n, after;
 	unsigned char *data = NULL;
+	SysmonValues v;
 
+	sysmon_clear(&v);
 	if (XGetWindowProperty(dpy, root, sysmonatom, 0, SYSMON_MAXLEN / 4, False,
 	    XA_STRING, &type, &format, &n, &after, &data) == Success && data) {
 		if (type == XA_STRING && format == 8 && !after)
-			cpu = sysmon_decode((char *)data, n);
+			have = sysmon_decode((char *)data, n, &v);
 		XFree(data);
 	}
-	sysmonexpire = cpu < 0 ? 0 : nowms() + MAX(sysmonstale, 500);
-	if (cpu != sysmoncpu) {
-		sysmoncpu = cpu;
+	sysmonexpire = have < 0 ? 0 : nowms() + MAX(sysmonstale, 500);
+	if (memcmp(&v, &sysmonval, sizeof v)) {
+		sysmonval = v;
 		drawbars();
 	}
 }
@@ -2779,7 +2810,7 @@ applysysmon(void)
 	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)on, 2);
-	sysmoncpu = -1;
+	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;
 }
 
@@ -2789,7 +2820,7 @@ checksysmon(void)
 {
 	if (sysmonexpire && nowms() >= sysmonexpire) {
 		sysmonexpire = 0;
-		sysmoncpu = -1;
+		sysmon_clear(&sysmonval);
 		drawbars();
 	}
 }
