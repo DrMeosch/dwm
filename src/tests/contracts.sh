@@ -50,7 +50,7 @@ cp -R "$root"/src/. "$tmp/dist/src/"
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/LICENSE"
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/config.mk"
 # the sampler and its shared module must ship with dwm, and install must install the sampler
-for f in sysmon.c sysmon.h dwmsysmon.c; do
+for f in sysmon.c sysmon.h sensors.c sensors.h dwmsysmon.c; do
 	tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/$f"
 done
 (cd "$tmp/dist" && make -n install DESTDIR="$tmp/inst" | grep -q 'install -Dm755 \./dwm \./dwmsysmon ')

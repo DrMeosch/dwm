@@ -750,7 +750,7 @@ test_autostart_command(void)
 	char dir[] = "/tmp/dwm-autostart-XXXXXX", path[512], log[512], line[256];
 	const char *saved_path = getenv("PATH");
 	const char *tools[] = { "killall", "dwmblocks", "dwmsysmon" };
-	int started = 0, killed_sampler = 0, i;
+	int started = 0, blocks = 0, killed_sampler = 0, i;
 	FILE *fp;
 
 	if (!mkdtemp(dir)) {
@@ -772,14 +772,18 @@ test_autostart_command(void)
 	setenv("PATH", dir, 1);
 	if (autostart_command[0] && system(autostart_command) != 0)
 		CHECK(0, "the startup command failed");
-	for (i = 0; i < 100 && !started; i++) { /* the programs are started in the background */
+	/* the programs are started in the background; keep their stubs until both ran */
+	for (i = 0; i < 100 && !(started && blocks); i++) {
 		if ((fp = fopen(log, "r"))) {
-			while (fgets(line, sizeof line, fp))
+			while (fgets(line, sizeof line, fp)) {
 				if (!strncmp(line, "dwmsysmon", 9))
 					started = 1;
+				if (!strncmp(line, "dwmblocks", 9))
+					blocks = 1;
+			}
 			fclose(fp);
 		}
-		if (!started)
+		if (!(started && blocks))
 			usleep(20000);
 	}
 	setenv("PATH", saved_path ? saved_path : "/usr/bin:/bin", 1);
@@ -805,28 +809,74 @@ test_sysmon_expiry(void)
 {
 	int t;
 
-	sysmoncpu = -1;
+	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;
 	CHECK(sysmontimeout() == -1, "dwm sets a poll timeout without a value to expire");
-	sysmoncpu = 40;
+	sysmonval.cpu = 40;
+	sysmonval.temp = 55;
+	sysmonval.nfan = 2;
+	sysmonval.fan[0] = 2400;
+	sysmonval.fan[1] = 2350;
 	sysmonexpire = nowms() + 5000;
 	t = sysmontimeout();
 	CHECK(t > 4000 && t <= 5000, "poll timeout %d does not match the time left", t);
 	checksysmon();
-	CHECK(sysmoncpu == 40 && sysmonexpire, "a fresh value was dropped");
+	CHECK(sysmonval.cpu == 40 && sysmonval.temp == 55 && sysmonval.nfan == 2 && sysmonexpire,
+	      "a fresh value was dropped");
 	sysmonexpire = nowms() - 1;
 	CHECK(sysmontimeout() == 0, "an overdue value does not wake poll at once");
 	checksysmon();
-	CHECK(sysmoncpu == -1 && sysmonexpire == 0 && sysmontimeout() == -1,
-	      "a stale value was not dropped and the timer disarmed");
+	CHECK(sysmonval.cpu == -1 && sysmonval.temp == -1 && sysmonval.nfan == 0 && sysmonexpire == 0
+	      && sysmontimeout() == -1, "a stale value was not dropped and the timer disarmed");
 	checksysmon();
-	CHECK(sysmoncpu == -1, "checksysmon revived a dropped value");
+	CHECK(sysmonval.cpu == -1, "checksysmon revived a dropped value");
+}
+
+/* The section shows the fields the sampler has, at a width that does not follow the values. */
+static void
+test_sysmon_text(void)
+{
+	static const struct { int cpu, temp, nfan, fan[SYSMON_FANS]; const char *text, *widest; } cases[] = {
+		{ -1, -1, 0, { 0 }, "CPU   - ", "CPU 100%" },
+		{ 7, -1, 0, { 0 }, "CPU   7%", "CPU 100%" },
+		{ 100, -1, 0, { 0 }, "CPU 100%", "CPU 100%" },
+		{ 42, 55, 0, { 0 }, "CPU  42%  55°C", "CPU 100% 100°C" },
+		{ -1, 55, 0, { 0 }, "CPU   -   55°C", "CPU 100% 100°C" },
+		{ 42, 150, 0, { 0 }, "CPU  42% 150°C", "CPU 100% 100°C" },
+		{ 42, 55, 1, { 2400 }, "CPU  42%  55°C  2400rpm", "CPU 100% 100°C  9999rpm" },
+		{ 42, 55, 2, { 2400, 0 }, "CPU  42%  55°C  2400/0rpm", "CPU 100% 100°C  9999/9999rpm" },
+		{ 42, -1, 2, { 2400, 2350 }, "CPU  42%  2400/2350rpm", "CPU 100%  9999/9999rpm" },
+		{ 42, 55, 2, { 12000, 800 }, "CPU  42%  55°C  12000/800rpm", "CPU 100% 100°C  99999/9999rpm" },
+		{ 100, 150, 4, { 30000, 30000, 30000, 30000 }, "CPU 100% 150°C  30000/30000/30000/30000rpm",
+		  "CPU 100% 100°C  99999/99999/99999/99999rpm" },
+	};
+	char text[64], widest[64];
+	size_t i;
+
+	for (i = 0; i < LENGTH(cases); i++) {
+		sysmonval.cpu = cases[i].cpu;
+		sysmonval.temp = cases[i].temp;
+		sysmonval.nfan = cases[i].nfan;
+		memcpy(sysmonval.fan, cases[i].fan, sizeof sysmonval.fan);
+		sysmontext(text, sizeof text, 0);
+		sysmontext(widest, sizeof widest, 1);
+		CHECK(!strcmp(text, cases[i].text), "the section reads \"%s\", expected \"%s\"", text, cases[i].text);
+		CHECK(!strcmp(widest, cases[i].widest), "the section is as wide as \"%s\", expected \"%s\"",
+		      widest, cases[i].widest);
+		CHECK(strlen(text) <= strlen(widest), "\"%s\" is longer than its width \"%s\"", text, widest);
+	}
+	/* a small buffer is never overrun */
+	memset(text, 'z', sizeof text);
+	sysmontext(text, 8, 1);
+	CHECK(text[7] == '\0' && text[8] == 'z', "the section text overran its buffer");
+	sysmon_clear(&sysmonval);
 }
 
 int
 main(void)
 {
 	test_sysmon_expiry();
+	test_sysmon_text();
 	test_sysmon_box();
 	test_autostart_command();
 	test_createmon();

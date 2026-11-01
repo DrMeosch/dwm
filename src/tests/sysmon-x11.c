@@ -1,13 +1,15 @@
 /*
  * End-to-end checks of the system monitor section against the running test dwm:
  * a stand-in sampler (this program) and the real dwmsysmon publish through the
- * root window property, and the bar must show the value, or "-" when the data
- * is missing, malformed or stale, while dwm stays responsive. The section is
- * recognised by the bar pixels it produces.
+ * root window property, and the bar must show the values, "-" when the CPU
+ * usage is missing, malformed or stale, and no temperature or fans when they
+ * are, while dwm stays responsive. The section is recognised by the bar pixels
+ * it produces.
  *
  * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory>
  *
- * dwmsysmon must be built with SYSMON_STAT_PATH set to <scratch directory>/stat.
+ * dwmsysmon must be built with SYSMON_STAT_PATH set to <scratch directory>/stat
+ * and SYSMON_SYS_PATH set to <scratch directory>/sys.
  */
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -17,11 +19,13 @@
 #include <X11/extensions/XTest.h>
 #endif
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -37,6 +41,7 @@ static int failures;
 static int fixture_busy = 20; /* percent busy in the stat file the stand-in kernel writes */
 static unsigned long long fixture_total, fixture_idle;
 static char fixture_path[512];
+static char sys_path[512]; /* the fake sysfs tree dwmsysmon reads its sensors from */
 static int fixture_frozen; /* leave the stat file alone, e.g. while it is deliberately broken */
 
 #define CHECK(condition, ...) do { \
@@ -75,6 +80,33 @@ tick_fixture(void)
 	fputs(line, fp);
 	fclose(fp);
 	rename(tmp, fixture_path);
+}
+
+/* Write an attribute of the fake sysfs tree, replaced atomically; NULL removes it. */
+static void
+put_sys(const char *rel, const char *text)
+{
+	char path[1024], tmp[1100], *p;
+	FILE *fp;
+
+	snprintf(path, sizeof path, "%s/%s", sys_path, rel);
+	for (p = path; (p = strchr(p + 1, '/'));) {
+		*p = '\0';
+		mkdir(path, 0755);
+		*p = '/';
+	}
+	if (!text) {
+		unlink(path);
+		return;
+	}
+	snprintf(tmp, sizeof tmp, "%s.new", path);
+	if (!(fp = fopen(tmp, "w"))) {
+		CHECK(0, "cannot write %s", tmp);
+		return;
+	}
+	fputs(text, fp);
+	fclose(fp);
+	rename(tmp, path);
 }
 
 static void
@@ -343,7 +375,7 @@ reference(const char *payload)
 int
 main(int argc, char *argv[])
 {
-	unsigned long h_off, h_dash, h20, h80, h42;
+	unsigned long h_off, h_dash, h20, h80, h42, h_two, h_one, h_nofan, h_temp47;
 	char big[4096], medium[64], huge[200];
 	XImage *off_plain, *off_medium, *off_huge, *on_img;
 	long before, after, n;
@@ -361,6 +393,7 @@ main(int argc, char *argv[])
 		return 2;
 	dwm_pid = (pid_t)atol(argv[1]);
 	snprintf(fixture_path, sizeof fixture_path, "%s/stat", argv[3]);
+	snprintf(sys_path, sizeof sys_path, "%s/sys", argv[3]);
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fputs("sysmon-x11: cannot open display\n", stderr);
 		return 1;
@@ -416,6 +449,38 @@ main(int argc, char *argv[])
 	CHECK(reference("cpu=42 gpu=9 something=else") == h42, "unknown fields in the payload changed the value");
 
 	/*
+	 * The temperature and every fan are shown when they are there, and a
+	 * malformed one is shown as missing without affecting the others.
+	 */
+	{
+		unsigned long full = reference("cpu=42 temp=55 fan=2400,2350");
+		unsigned long nofan = reference("cpu=42 temp=55");
+		unsigned long notemp = reference("cpu=42 fan=2400,2350");
+		unsigned long onefan = reference("cpu=42 temp=55 fan=2400");
+		unsigned long nocpu = reference("temp=55 fan=2400,2350");
+
+		CHECK(full && nofan && notemp && onefan && nocpu && full != h42 && full != nofan && full != notemp
+		      && full != onefan && nofan != h42 && notemp != h42 && onefan != nofan && nocpu != full
+		      && nocpu != h_dash, "the temperature and fans do not look distinct on the bar");
+		CHECK(reference("cpu=42 temp=55 fan=2400,2351") != full, "a change of the second fan did not show");
+		CHECK(reference("cpu=42 temp=999 fan=2400,2350") == notemp, "a malformed temperature was not missing");
+		CHECK(reference("cpu=42 temp=abc fan=2400,2350") == notemp, "a non-numeric temperature was not missing");
+		CHECK(reference("cpu=42 temp=55 fan=2400,,1") == nofan, "a malformed fan list was not missing");
+		CHECK(reference("cpu=42 temp=55 fan=99999") == nofan, "an implausible fan was not missing");
+		CHECK(reference("cpu=42 temp=55 fan=1,2,3,4,5") == nofan, "too many fans were not missing");
+		CHECK(reference("cpu=42 temp=55 temp=56 fan=2400,2350") == notemp, "a repeated temperature was not missing");
+		CHECK(reference("cpu=4x2 temp=55 fan=2400,2350") == nocpu, "a malformed CPU usage hid the sensors");
+		CHECK(reference("cpu=42 temp=55 fan=2400,2350 gpu=7") == full, "an unknown field changed the sensors");
+		responsive("sensor fields");
+	}
+	h_two = reference("cpu=20 temp=48 fan=2100,2050");
+	h_one = reference("cpu=20 temp=48 fan=2100");
+	h_nofan = reference("cpu=20 temp=48");
+	h_temp47 = reference("cpu=20 temp=47");
+	CHECK(h_two && h_one && h_nofan && h_temp47 && h_two != h_one && h_one != h_nofan && h_nofan != h20
+	      && h_temp47 != h_nofan, "the sampler's sensor values do not look distinct on the bar");
+
+	/*
 	 * The section sits at the centre of the bar, whatever the status text takes
 	 * on the right, and is left out rather than overlapping it when that
 	 * does not fit. "cpu=100" fills the whole box, so its ink spans it.
@@ -450,6 +515,48 @@ main(int argc, char *argv[])
 	CHECK(n == 0, "the section overlapped a status text too long to leave it room (%ld pixels differ)", n);
 	if (on_img)
 		XDestroyImage(on_img);
+	/* the same with the temperature and two fans: a wider section, still centred and still left out */
+	{
+		static const char *payloads[] = {
+			"cpu=100 temp=100 fan=9999", "cpu=100 temp=100 fan=9999,9999",
+			"cpu=100 temp=100 fan=9999,9999,9999,9999",
+		};
+		int lastwidth = 0;
+
+		for (i = 0; i < (int)(sizeof payloads / sizeof *payloads); i++) {
+			publish(payloads[i]);
+			set_status("sysmon-base");
+			pump(300);
+			steady_hash();
+			on_img = bar_copy();
+			n = on_img && off_plain ? diff_extent(on_img, off_plain, &left, &right) : 0;
+			CHECK(n > 0 && (left + right) / 2 >= width / 2 - 8 && (left + right) / 2 <= width / 2 + 8,
+			      "\"%s\" is not centred: columns %d-%d of %d", payloads[i], left, right, width);
+			CHECK(n > 0 && right - left > lastwidth, "\"%s\" is not wider than the section with fewer fields (%d, %d)",
+			      payloads[i], right - left, lastwidth);
+			lastwidth = right - left;
+			if (on_img)
+				XDestroyImage(on_img);
+			set_status(medium);
+			pump(300);
+			steady_hash();
+			on_img = bar_copy();
+			n = on_img && off_medium ? diff_extent(on_img, off_medium, &left, &right) : 0;
+			CHECK(n > 0 && (left + right) / 2 >= width / 2 - 8 && (left + right) / 2 <= width / 2 + 8,
+			      "\"%s\" moved with a long status text: columns %d-%d", payloads[i], left, right);
+			if (on_img)
+				XDestroyImage(on_img);
+			set_status(huge);
+			pump(300);
+			steady_hash();
+			on_img = bar_copy();
+			n = on_img && off_huge ? diff_extent(on_img, off_huge, &left, &right) : -1;
+			CHECK(n == 0, "\"%s\" overlapped a status text too long to leave it room (%ld pixels differ)",
+			      payloads[i], n);
+			if (on_img)
+				XDestroyImage(on_img);
+		}
+	}
 	set_status("sysmon-base");
 	XDestroyImage(off_plain);
 	XDestroyImage(off_medium);
@@ -515,7 +622,8 @@ main(int argc, char *argv[])
 	start_sampler(argv[2]);
 	fixture_busy = 20;
 	CHECK(wait_hash(h20, 6000), "dwmsysmon's 20%% was not shown by dwm");
-	CHECK(wait_value("cpu=20", 3000), "dwmsysmon did not publish cpu=20");
+	/* no sysfs sensors at all: only the CPU usage is published */
+	CHECK(wait_value("cpu=20", 3000), "dwmsysmon did not publish exactly cpu=20 without sensors");
 	fixture_busy = 80;
 	CHECK(wait_hash(h80, 6000), "dwmsysmon's 80%% was not shown by dwm");
 	fixture_busy = 20;
@@ -587,6 +695,77 @@ main(int argc, char *argv[])
 		}
 	}
 #endif
+
+	/*
+	 * Sensors from a fake sysfs tree: a Dell-like laptop whose two fans show up
+	 * on a fast and a slow chip. Hiding and showing the section makes the
+	 * sampler look for sources at once. Fans that go away are no longer shown,
+	 * and so is a malformed temperature.
+	 */
+	put_sys("devices/hwmon1/name", "coretemp\n");
+	put_sys("devices/hwmon1/temp1_input", "48000\n");
+	put_sys("devices/hwmon1/temp1_label", "Package id 0\n");
+	put_sys("devices/hwmon2/name", "dell_ddv\n");
+	put_sys("devices/hwmon2/fan1_input", "2100\n");
+	put_sys("devices/hwmon2/fan2_input", "2050\n");
+	put_sys("devices/hwmon3/name", "dell_smm\n");
+	put_sys("devices/hwmon3/fan1_input", "9000\n");
+	put_sys("devices/hwmon3/fan2_input", "9001\n");
+	{
+		static const char *chips[] = { "hwmon1", "hwmon2", "hwmon3" };
+		char link[1024], target[64];
+
+		put_sys("class/hwmon/.keep", "");
+		for (i = 0; i < 3; i++) {
+			snprintf(link, sizeof link, "%s/class/hwmon/%s", sys_path, chips[i]);
+			snprintf(target, sizeof target, "../../devices/%s", chips[i]);
+			CHECK(symlink(target, link) == 0, "cannot link %s", link);
+		}
+	}
+	set_resources("dwm.showsysmon: 0\n");
+	CHECK(wait_hash(h_off, 3000), "the section did not hide before the sensors appeared");
+	set_resources("dwm.showsysmon: 1\n");
+	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", 8000), "dwmsysmon did not publish the temperature and both fans");
+	CHECK(wait_hash(h_two, 3000), "dwm did not show the temperature and both fans");
+	put_sys("devices/hwmon2/fan2_input", NULL);
+	CHECK(wait_value("cpu=20 temp=48 fan=2100", 10000), "a fan that went away was still published");
+	CHECK(wait_hash(h_one, 3000), "dwm did not show the one fan left");
+	put_sys("devices/hwmon2/fan1_input", NULL);
+	CHECK(wait_value("cpu=20 temp=48", 10000), "fans that went away were still published");
+	CHECK(wait_hash(h_nofan, 3000), "dwm did not show the temperature without fans");
+	put_sys("devices/hwmon1/temp1_input", "48 degrees\n");
+	CHECK(wait_value("cpu=20", 10000), "a malformed temperature was published");
+	CHECK(wait_hash(h20, 3000), "dwm showed a malformed temperature");
+	responsive("sensors going away");
+
+	/*
+	 * A sensor read that hangs, as slow firmware calls do, holds up only the
+	 * sampler: dwm stays responsive and lets the value go stale, and the
+	 * value returns when the read completes.
+	 */
+	{
+		char fifo[1024];
+		int fd = -1;
+
+		snprintf(fifo, sizeof fifo, "%s/devices/hwmon1/temp1_input", sys_path);
+		unlink(fifo);
+		CHECK(mkfifo(fifo, 0644) == 0, "cannot make a fifo");
+		CHECK(wait_hash(h_dash, 12000 + SAMPLER_STALE_MS), "the value of a sampler stuck in a sensor read did not go stale");
+		responsive("a sensor read that hangs");
+		CHECK(kill(sampler_pid, 0) == 0, "the sampler died in a slow sensor read");
+		for (i = 0; i < 400 && fd < 0; i++) { /* the sampler is the reader the fifo waits for */
+			if ((fd = open(fifo, O_WRONLY | O_NONBLOCK)) < 0)
+				pump(25);
+		}
+		CHECK(fd >= 0, "the sampler never opened the slow sensor");
+		if (fd >= 0) {
+			CHECK(write(fd, "47000\n", 6) == 6, "cannot answer the slow sensor read");
+			close(fd);
+		}
+		CHECK(wait_value("cpu=20 temp=47", 6000), "the value did not return after the slow sensor read");
+		CHECK(wait_hash(h_temp47, 3000), "dwm did not show the value after the slow sensor read");
+		put_sys("devices/hwmon1/temp1_input", "47000\n"); /* a plain file again, before the next read */
+	}
 
 	/* terminating the sampler removes its value; dwm shows "-" and keeps working */
 	kill(sampler_pid, SIGTERM);

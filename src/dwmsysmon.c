@@ -1,9 +1,11 @@
 /* See LICENSE file for copyright and license details. */
 /*
- * dwmsysmon: samples system load outside the window manager and publishes the
- * latest value in the root window property read by dwm (see sysmon.h). It only
- * ever writes one short property, never blocks dwm, and exits with the X
- * connection. While dwm shows no system monitor it sleeps without a timer.
+ * dwmsysmon: samples system load, the CPU temperature and the fans outside the
+ * window manager and publishes the latest values in the root window property
+ * read by dwm (see sysmon.h). It only ever writes one short property, never
+ * blocks dwm, and exits with the X connection. While dwm shows no system
+ * monitor it sleeps without a timer. Sensors are read less often than the CPU,
+ * and even less often when they are slow to answer (see sensors.h).
  *
  * Each X display has at most one sampler: a new one takes the
  * SYSMON_OWNER_ATOM selection and the previous one, which may be stuck in
@@ -24,10 +26,13 @@
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
 
-#include "sysmon.h"
+#include "sensors.h"
 
 #ifndef SYSMON_STAT_PATH
 #define SYSMON_STAT_PATH "/proc/stat"
+#endif
+#ifndef SYSMON_SYS_PATH
+#define SYSMON_SYS_PATH "/sys"
 #endif
 #define INTERVAL 2000 /* ms between samples */
 #define FIRST_TICK 500 /* ms until the first value after sampling starts */
@@ -135,12 +140,12 @@ enabled(void)
 }
 
 static void
-publish(int cpu)
+publish(const SysmonValues *v)
 {
-	char buf[16];
+	char buf[SYSMON_MAXLEN];
 	int n;
 
-	if ((n = sysmon_encode(buf, sizeof buf, cpu)) < 0)
+	if ((n = sysmon_encode(buf, sizeof buf, v)) <= 0)
 		XDeleteProperty(dpy, root, sysmonatom);
 	else
 		XChangeProperty(dpy, root, sysmonatom, XA_STRING, 8, PropModeReplace,
@@ -161,8 +166,10 @@ main(int argc, char *argv[])
 	struct sigaction sa;
 	struct pollfd fds[2];
 	SysmonCpu prev, cur;
+	SysmonValues val;
+	Sensors sensors;
 	XEvent ev;
-	long long next = 0, t;
+	long long next = 0, sensornext = 0, t;
 	int on, now, have = 0, timeout, stop = 0;
 
 	(void)argv;
@@ -196,11 +203,13 @@ main(int argc, char *argv[])
 	fds[1].fd = sigfd[0];
 	fds[0].events = fds[1].events = POLLIN;
 
+	sysmon_clear(&val);
+	sensors_init(&sensors);
 	if ((on = enabled()) < 0) /* a dwm that is gone left its property behind */
 		stop = 1;
 	else if (on) {
 		have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-		next = nowms() + FIRST_TICK;
+		next = sensornext = nowms() + FIRST_TICK;
 	}
 	while (!stop) {
 		while (!stop && XPending(dpy)) {
@@ -216,11 +225,13 @@ main(int argc, char *argv[])
 				else if (now != on) {
 					on = now;
 					have = 0;
+					sysmon_clear(&val);
+					sensors_init(&sensors); /* look again: modules may have come and gone */
 					if (on) {
 						have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-						next = nowms() + FIRST_TICK;
+						next = sensornext = nowms() + FIRST_TICK;
 					} else
-						publish(-1);
+						publish(&val);
 				}
 			}
 		}
@@ -230,13 +241,18 @@ main(int argc, char *argv[])
 		if (on) {
 			if ((t = nowms()) >= next) {
 				if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
-					publish(have ? sysmon_cpu_percent(&prev, &cur) : -1);
+					val.cpu = have ? sysmon_cpu_percent(&prev, &cur) : -1;
 					prev = cur;
 					have = 1;
 				} else {
-					publish(-1);
+					val.cpu = -1;
 					have = 0;
 				}
+				if (t >= sensornext) {
+					sensors_sample(&sensors, SYSMON_SYS_PATH, t, &val);
+					sensornext = t + sensors_delay(nowms() - t);
+				}
+				publish(&val);
 				next = t + INTERVAL;
 			}
 			timeout = (int)(next - nowms());

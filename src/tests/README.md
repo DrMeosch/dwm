@@ -105,9 +105,25 @@ The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,
 overflowing and otherwise malformed lines are no reading), the usage between two
 readings (counters that stand still, go backwards or exceed the elapsed time are
-no value), and the property payload (only a short `cpu=<0-100>` string is a
-value; oversized, empty, non-numeric, out-of-range and NUL-containing payloads
-are not). `core.c` also checks that the section is centred and left out, never
+no value), and the property payload (`cpu=<0-100>`, `temp=<0-150>` and
+`fan=<rpm>[,<rpm>...]` with up to four fans of 0-30000 in at most 64 bytes;
+oversized, empty and NUL-containing payloads are no value, and a malformed,
+out-of-range or repeated field is missing while the others stay; every
+combination of values survives encoding and decoding, and the decoder dwm had
+before temperatures and fans still reads the CPU usage of a new sampler). It
+also builds fake sysfs trees in a scratch directory for the sampler's sensor
+sources: none at all, a Dell-like laptop (sparse `coretemp` inputs, the same two
+fans on the fast `dell_ddv` and the slow `dell_smm` chip, a `dell_smm` label
+that cannot be read, `nvme`, wifi, battery and `amdgpu` chips that must not be
+used), two fans, one and none, labels that pick the package or die sensor
+(`Package id`, `Tdie` over `Tctl`), the chip priority (`coretemp`, `k10temp`,
+`zenpower`, `cpu_thermal`) and the `x86_pkg_temp` thermal zone fallback, two CPU
+packages, unreadable and malformed or implausible readings (missing, and the
+read reports the failure), more chips and fans than are used, attributes and
+roots too long for the buffers, when sources are looked for again, and the
+slower cadence for slow reads. `core.c` also checks the section's text with and
+without each field, that its width follows the fields present but not their
+values, and that it is centred and left out, never
 overlapping the layout symbol or the status, on wide and narrow bars and at the
 exact boundaries, that a held value expires on time and that dwm sets no poll
 timeout without one, and that a click on the section or the gap up to the status
@@ -118,27 +134,35 @@ keeps its usual meaning.
 `sysmon-x11.c` runs from `x11.sh` against the running test dwm and recognises
 the system monitor section by the bar pixels it produces. It enables the
 section through Xresources and SIGUSR2, and uses itself as a stand-in sampler to
-check that values show up and differ, that garbage (wrong content, wrong type or
+check that values show up and differ, that the temperature and every fan show
+up and change the bar, that a malformed temperature or fan list is left out
+without hiding the other fields, that garbage (wrong content, wrong type or
 format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
 stale by itself and stays while it is refreshed, and after each of these that
 dwm still redraws a status change. It also checks that the section is centred
 in the bar with a short and with a long status text, and is left out, without
-overlapping anything, when a very long status text reaches the centre. It then
+overlapping anything, when a very long status text reaches the centre, with
+the CPU usage alone and with the temperature and one, two or four fans. It then
 starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
-instead of `/proc/stat` and sampling at its fixed 2000 ms interval (with
+instead of `/proc/stat` and `SYSMON_SYS_PATH` at a fake sysfs tree instead of
+`/sys`, and sampling at its fixed 2000 ms interval (with
 `dwm.sysmonstale` raised to 4500), and checks the published value and the bar
 for a changing load, a stopped (hung) sampler, a malformed and a missing stat file
 (`-`, then recovery), a hidden section (no value, no flag left behind, and no
-wake-ups of the sampler) and a clean exit on SIGTERM. With XTEST available it
-also toggles the section with Super+Shift+b. The test dwm is left with the
-section hidden.
+wake-ups of the sampler), sensors appearing in the fake tree (the temperature
+and both fans of a Dell-like laptop, then one fan, none, and a malformed
+temperature, each published and drawn), a sensor read that hangs (a FIFO as the
+temperature input: dwm stays responsive and lets the value go stale, and the
+value returns once the read completes) and a clean exit on SIGTERM. With XTEST
+available it also toggles the section with Super+Shift+b. The test dwm is left
+with the section hidden.
 
 `core.c` also runs the command dwm hands to `system()` at startup against stub
 `killall`, `dwmblocks` and `dwmsysmon` programs, with nothing else on `PATH`, and
 checks that it starts the sampler without stopping samplers by name.
 `sysmon-lifecycle.sh` runs from `x11.sh` with two private X servers standing in
 for two X sessions of one user, each with the test dwm and a real `dwmsysmon`
-reading an advancing fixture. A replacement sampler on one display must retire
+reading an advancing fixture and an empty sysfs tree. A replacement sampler on one display must retire
 that display's sampler only, and restarting dwm there must leave the other
 session's sampler and value untouched. When dwm exits normally with the X server
 still running, with the section shown or hidden, or is killed outright, its
