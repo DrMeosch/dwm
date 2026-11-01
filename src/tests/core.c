@@ -683,6 +683,51 @@ test_buttonpress_sysmon(void)
 	mons = selmon = NULL;
 }
 
+/* the section is centred and never overlaps the layout symbol on its left or the status on its right */
+static void
+test_sysmon_box(void)
+{
+	Monitor m = {0};
+	Arg arg = {0};
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
+	int mx = -1;
+
+	lrpad = 100; /* drw is NULL, so the section is 100px wide */
+	bh = 20;
+	showsysmon = 1;
+	m.barwin = 1;
+	mons = selmon = &m;
+	strcpy(rawstext, "");
+	copyvalidchars(stext, rawstext);
+
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 1198, &mx) == 100 && mx == 550, "a wide bar did not centre the section (x=%d)", mx);
+	/* the layout symbol ends at 100: the title keeps more than a bar height only from a 342px bar */
+	m.ww = 340;
+	CHECK(sysmonbox(&m, 100, 338, &mx) == 0, "the section left only a bar height of title");
+	m.ww = 342;
+	CHECK(sysmonbox(&m, 100, 340, &mx) == 100 && mx == 121, "the section was left out although the title keeps more than a bar height");
+	/* a narrow bar: the centred section would sit on the layout symbol, with room to spare on the right */
+	m.ww = 240;
+	CHECK(sysmonbox(&m, 100, 238, &mx) == 0, "the section was drawn over the layout symbol of a narrow bar");
+	CHECK(barclick(&m, 100, &arg) == ClkWinTitle && barclick(&m, 150, &arg) == ClkWinTitle,
+	      "clicks right of the layout symbol of a narrow bar were not title clicks");
+	m.ww = 130;
+	CHECK(sysmonbox(&m, 100, 128, &mx) == 0, "the section was drawn on a bar barely wider than the layout symbol");
+	/* a status reaching into the centre */
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 600, &mx) == 0, "the section was drawn over the status");
+	CHECK(sysmonbox(&m, 100, 650, &mx) == 100, "the section was left out although it ends where the status begins");
+	CHECK(sysmonbox(&m, 100, 649, &mx) == 0, "the section was drawn over the first pixel of the status");
+	showsysmon = 0;
+	CHECK(sysmonbox(&m, 100, 1198, &mx) == 0, "a hidden section took room");
+
+	showsysmon = saved_show;
+	lrpad = saved_lrpad;
+	bh = saved_bh;
+	mons = selmon = NULL;
+}
+
 /* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
 static void
 test_sysmon_expiry(void)
@@ -711,6 +756,7 @@ int
 main(void)
 {
 	test_sysmon_expiry();
+	test_sysmon_box();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();
