@@ -271,7 +271,10 @@ or
 .B cpu_thermal
 hwmon chip, in that order (the package or die sensor, and the hottest package
 when there are several), else of the
-.B x86_pkg_temp
+.BR x86_pkg_temp ,
+.B cpu-thermal
+or
+.B cpu_thermal
 thermal zone. The fans are every
 .B fan*_input
 of the hwmon chips other than GPUs, up to four; a chip that is slow to read
