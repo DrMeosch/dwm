@@ -116,7 +116,9 @@ section through Xresources and SIGUSR2, and uses itself as a stand-in sampler to
 check that values show up and differ, that garbage (wrong content, wrong type or
 format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
 stale by itself and stays while it is refreshed, and after each of these that
-dwm still redraws a status change. It then starts the real `dwmsysmon`, built
+dwm still redraws a status change. It also checks that the section is centred
+in the bar with a short and with a long status text, and is left out, without
+overlapping anything, when a very long status text reaches the centre. It then starts the real `dwmsysmon`, built
 with `SYSMON_STAT_PATH` pointing at a fixture instead of `/proc/stat` and
 sampling at its fixed 2000 ms interval (with `dwm.sysmonstale` raised to 4500),
 and checks the published value and the bar for a

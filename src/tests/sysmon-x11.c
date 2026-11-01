@@ -123,6 +123,37 @@ bar_hash(void)
 	return h;
 }
 
+static XImage *
+bar_copy(void)
+{
+	Window bar = find_bar();
+	XWindowAttributes wa;
+
+	if (bar == None || !XGetWindowAttributes(dpy, bar, &wa))
+		return NULL;
+	return XGetImage(dpy, bar, 0, 0, wa.width, wa.height, AllPlanes, ZPixmap);
+}
+
+/* How many pixels differ between two bar images, and the leftmost and rightmost column that does. */
+static long
+diff_extent(XImage *a, XImage *b, int *left, int *right)
+{
+	long n = 0;
+	int x, y;
+
+	*left = a->width;
+	*right = -1;
+	for (x = 0; x < a->width && x < b->width; x++)
+		for (y = 0; y < a->height && y < b->height; y++)
+			if (XGetPixel(a, x, y) != XGetPixel(b, x, y)) {
+				n++;
+				if (x < *left)
+					*left = x;
+				*right = x;
+			}
+	return n;
+}
+
 /* Wait until the bar shows exactly what hash describes. */
 static int
 wait_hash(unsigned long hash, long millis)
@@ -313,8 +344,10 @@ int
 main(int argc, char *argv[])
 {
 	unsigned long h_off, h_dash, h20, h80, h42;
-	char big[4096];
-	long before, after;
+	char big[4096], medium[64], huge[200];
+	XImage *off_plain, *off_medium, *off_huge, *on_img;
+	long before, after, n;
+	int left, right, width;
 	unsigned long wrongtype[1] = { 42 };
 	unsigned short wide[8] = { 'c', 'p', 'u', '=', '4', '2' };
 	int i, status, quiet;
@@ -333,6 +366,7 @@ main(int argc, char *argv[])
 		return 1;
 	}
 	root = DefaultRootWindow(dpy);
+	width = DisplayWidth(dpy, DefaultScreen(dpy));
 	sysmonatom = XInternAtom(dpy, "_DWM_SYSMON", False);
 	enabledatom = XInternAtom(dpy, "_DWM_SYSMON_ENABLED", False);
 	fixture_total = 1000;
@@ -348,6 +382,21 @@ main(int argc, char *argv[])
 	pump(300);
 	CHECK(bar_hash() == h_off, "a value published while the section is hidden changed the bar");
 	remove_value();
+
+	/* the bar without the section, with a short, a medium and a very long status text */
+	memset(medium, 'm', 40);
+	medium[40] = '\0';
+	memset(huge, 'h', 120);
+	huge[120] = '\0';
+	off_plain = bar_copy();
+	set_status(medium);
+	steady_hash();
+	off_medium = bar_copy();
+	set_status(huge);
+	steady_hash();
+	off_huge = bar_copy();
+	set_status("sysmon-base");
+	CHECK(off_plain && off_medium && off_huge && steady_hash() == h_off, "cannot capture the bar");
 
 	/* shown by the resource: the empty section is "-" and takes room from the title */
 	/* a long stale limit: a payload dwm wrongly accepted must not vanish by itself and pass as "-" */
@@ -365,6 +414,48 @@ main(int argc, char *argv[])
 	CHECK(h20 && h80 && h42 && h20 != h80 && h20 != h42 && h80 != h42 && h20 != h_dash && h42 != h_dash,
 	      "published values do not look distinct on the bar");
 	CHECK(reference("cpu=42 gpu=9 something=else") == h42, "unknown fields in the payload changed the value");
+
+	/*
+	 * The section sits at the centre of the bar, whatever the status text takes
+	 * on the right, and is left out rather than overlapping it when that
+	 * does not fit. "cpu=100" fills the whole box, so its ink spans it.
+	 */
+	publish("cpu=100");
+	set_status("sysmon-base");
+	pump(300);
+	steady_hash();
+	on_img = bar_copy();
+	n = on_img && off_plain ? diff_extent(on_img, off_plain, &left, &right) : 0;
+	CHECK(n > 0, "the section left no pixels in the bar");
+	CHECK(n > 0 && left > width / 2 - 250 && right < width / 2 + 250,
+	      "the section is not near the middle of the bar: columns %d-%d of %d", left, right, width);
+	CHECK(n > 0 && (left + right) / 2 >= width / 2 - 8 && (left + right) / 2 <= width / 2 + 8,
+	      "the section is not centred: columns %d-%d of %d", left, right, width);
+	if (on_img)
+		XDestroyImage(on_img);
+	set_status(medium);
+	pump(300);
+	steady_hash();
+	on_img = bar_copy();
+	n = on_img && off_medium ? diff_extent(on_img, off_medium, &left, &right) : 0;
+	CHECK(n > 0 && (left + right) / 2 >= width / 2 - 8 && (left + right) / 2 <= width / 2 + 8,
+	      "the section moved with a long status text: columns %d-%d", left, right);
+	if (on_img)
+		XDestroyImage(on_img);
+	set_status(huge);
+	pump(300);
+	steady_hash();
+	on_img = bar_copy();
+	n = on_img && off_huge ? diff_extent(on_img, off_huge, &left, &right) : -1;
+	CHECK(n == 0, "the section overlapped a status text too long to leave it room (%ld pixels differ)", n);
+	if (on_img)
+		XDestroyImage(on_img);
+	set_status("sysmon-base");
+	XDestroyImage(off_plain);
+	XDestroyImage(off_medium);
+	XDestroyImage(off_huge);
+	remove_value();
+	CHECK(wait_hash(h_dash, 3000), "the section did not return to \"-\" after the centring checks");
 
 	/* garbage in the property: "-", and dwm keeps working */
 	for (i = 0; i < (int)(sizeof garbage / sizeof *garbage); i++) {

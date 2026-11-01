@@ -1104,7 +1104,7 @@ statusblocksig(int x, int evx)
 void
 drawbar(Monitor *m)
 {
-	int x, w, tw = 0, mw = 0;
+	int x, w, tw = 0, mw = 0, mx, end;
 	char mtext[24];
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
@@ -1155,22 +1155,26 @@ drawbar(Monitor *m)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
+	end = m->ww - tw; /* the title and the section share [x, end) */
 	if (showsysmon) {
-		/* fixed width, so the title does not jump as the value changes */
+		/* fixed width, so the section does not move as the value changes */
 		mw = TEXTW("CPU 100%");
-		if (m->ww - tw - x - mw <= bh)
-			mw = 0; /* no room: the title wins */
+		mx = (m->ww - mw) / 2; /* centred in the bar, whatever the left and right parts take */
+		if (mx - x <= bh || mx + mw > end)
+			mw = 0; /* it would crowd the title or reach the status: leave it out */
 		else {
 			if (sysmoncpu < 0)
 				snprintf(mtext, sizeof mtext, "CPU   -");
 			else
 				snprintf(mtext, sizeof mtext, "CPU %3d%%", sysmoncpu);
 			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_text(drw, m->ww - tw - mw, 0, mw, bh, lrpad / 2, mtext, 0);
+			drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
+			drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
+			end = mx;
 		}
 	}
 
-	if ((w = m->ww - tw - mw - x) > bh) {
+	if ((w = end - x) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
 			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
