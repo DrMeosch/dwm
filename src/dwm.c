@@ -371,6 +371,10 @@ static xcb_connection_t *xcon;
 /* configuration, allows nested code to access above variables */
 #include "config.h"
 
+/* the sampler would fall back to its own interval, which dwm's staleness limit does not follow */
+typedef char sysmonintervalinrange[SYSMONINTERVAL >= SYSMON_MININTERVAL
+	&& SYSMONINTERVAL <= SYSMON_MAXINTERVAL ? 1 : -1];
+
 struct Pertag {
 	unsigned int curtag, prevtag; /* current and previous tag */
 	int nmasters[LENGTH(tags) + 1]; /* number of windows in master area */
@@ -2805,7 +2809,7 @@ updatesysmon(void)
 void
 applysysmon(void)
 {
-	unsigned long on[2];
+	unsigned long on[3];
 
 	showsysmon = showsysmon != 0;
 	if (showsysmon == sysmonpublished)
@@ -2813,8 +2817,9 @@ applysysmon(void)
 	sysmonpublished = showsysmon;
 	on[0] = showsysmon;
 	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
+	on[2] = SYSMONINTERVAL;
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
-		PropModeReplace, (unsigned char *)on, 2);
+		PropModeReplace, (unsigned char *)on, 3);
 	XSync(dpy, False); /* a sampler started now must find the flag set */
 	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;

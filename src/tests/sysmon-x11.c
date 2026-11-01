@@ -36,7 +36,10 @@
 #include <unistd.h>
 
 #define STALE_MS 1500 /* dwm.sysmonstale used with the stand-in sampler */
-#define SAMPLER_STALE_MS 4500 /* dwm.sysmonstale used with dwmsysmon, which samples every 2000 ms */
+#define SAMPLE_MS 4000 /* how often dwmsysmon samples: SYSMONINTERVAL in config.h */
+#define SAMPLER_STALE_MS (2 * SAMPLE_MS + 1000) /* dwm.sysmonstale used with dwmsysmon */
+#define VALUE_MS (2 * SAMPLE_MS + 2000) /* until a change of the fixture shows: two samples and a margin */
+#define SENSOR_MS (2 * VALUE_MS) /* until a sensor change shows: sensors are read at most every 6000 ms */
 
 static Display *dpy;
 static Window root;
@@ -323,6 +326,77 @@ enabled_flag(void)
 	return on;
 }
 
+/* The interval dwm publishes for the sampler, -1 if none. */
+static long
+published_interval(void)
+{
+	Atom type;
+	int format;
+	unsigned long n, after;
+	unsigned char *data = NULL;
+	long ms = -1;
+
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 3, False, XA_CARDINAL, &type,
+	    &format, &n, &after, &data) == Success && data) {
+		if (type == XA_CARDINAL && format == 32 && n == 3)
+			ms = (long)((unsigned long *)data)[2];
+		XFree(data);
+	}
+	return ms;
+}
+
+/* Publish another interval in dwm's place, keeping its flag and window. */
+static void
+set_interval(unsigned long ms)
+{
+	Atom type;
+	int format;
+	unsigned long n, after, flag[3];
+	unsigned char *data = NULL;
+
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 3, False, XA_CARDINAL, &type,
+	    &format, &n, &after, &data) != Success || !data || type != XA_CARDINAL
+	|| format != 32 || n != 3) {
+		CHECK(0, "dwm published no interval to replace");
+		if (data)
+			XFree(data);
+		return;
+	}
+	memcpy(flag, data, sizeof flag);
+	XFree(data);
+	flag[2] = ms;
+	XChangeProperty(dpy, root, enabledatom, XA_CARDINAL, 32, PropModeReplace,
+	                (unsigned char *)flag, 3);
+	XFlush(dpy);
+}
+
+/* ms between two consecutive publishes of the sampler by the X server's clock, -1 if they did not come. */
+static long
+publish_period(void)
+{
+	XEvent ev;
+	Time first = 0;
+	long waited, period = -1;
+	int seen = 0;
+
+	XSelectInput(dpy, root, PropertyChangeMask);
+	for (waited = 0; waited <= 3 * SAMPLE_MS && period < 0; waited += 25) {
+		while (period < 0 && XPending(dpy)) {
+			XNextEvent(dpy, &ev);
+			if (ev.type != PropertyNotify || ev.xproperty.atom != sysmonatom)
+				continue;
+			if (seen++)
+				period = (long)(ev.xproperty.time - first);
+			first = ev.xproperty.time;
+		}
+		if (period < 0)
+			pump(25);
+	}
+	XSelectInput(dpy, root, NoEventMask);
+	XSync(dpy, True);
+	return period;
+}
+
 static void
 set_resources(const char *text)
 {
@@ -357,7 +431,7 @@ provide_sampler(const char *target)
 static int
 samplers(pid_t *pid)
 {
-	char path[64], exe[PATH_MAX], env[16384], want[128], *p;
+	char path[300], exe[PATH_MAX], env[16384], want[128], *p; /* path: "/proc/", a name of up to 255 bytes and more */
 	struct dirent *e;
 	DIR *dir;
 	ssize_t len;
@@ -452,7 +526,7 @@ int
 main(int argc, char *argv[])
 {
 	unsigned long h_off, h_dash, h20, h80, h42, h_two, h_one, h_nofan, h_temp47;
-	char big[4096], medium[64], huge[200], stub[PATH_MAX];
+	char big[4096], medium[64], huge[200], stub[PATH_MAX], res[64];
 	XImage *off_plain, *off_medium, *off_huge, *on_img;
 	long n;
 	int left, right, width;
@@ -712,22 +786,46 @@ main(int argc, char *argv[])
 	set_resources("dwm.showsysmon: 0\n");
 	CHECK(wait_hash(h_off, 3000), "the section did not hide before the real sampler's turn");
 	provide_sampler(sampler_exe);
-	set_resources("dwm.showsysmon: 1\ndwm.sysmonstale: 4500\n");
+	snprintf(res, sizeof res, "dwm.showsysmon: 1\ndwm.sysmonstale: %d\n", SAMPLER_STALE_MS);
+	set_resources(res);
 	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start dwmsysmon");
 	fixture_busy = 20;
-	CHECK(wait_hash(h20, 6000), "dwmsysmon's 20%% was not shown by dwm");
+	CHECK(wait_hash(h20, VALUE_MS), "dwmsysmon's 20%% was not shown by dwm");
 	/* no sysfs sensors at all: only the CPU usage is published */
-	CHECK(wait_value("cpu=20", 3000), "dwmsysmon did not publish exactly cpu=20 without sensors");
+	CHECK(wait_value("cpu=20", SAMPLE_MS + 1000), "dwmsysmon did not publish exactly cpu=20 without sensors");
 	fixture_busy = 80;
-	CHECK(wait_hash(h80, 6000), "dwmsysmon's 80%% was not shown by dwm");
+	CHECK(wait_hash(h80, VALUE_MS), "dwmsysmon's 80%% was not shown by dwm");
 	fixture_busy = 20;
-	CHECK(wait_hash(h20, 6000), "dwmsysmon's change back to 20%% was not shown by dwm");
+	CHECK(wait_hash(h20, VALUE_MS), "dwmsysmon's change back to 20%% was not shown by dwm");
+
+	/*
+	 * The sampler samples as often as dwm says: SYSMONINTERVAL from config.h,
+	 * 4000 ms by default, or any other interval in range that dwm publishes,
+	 * and its own default for one out of range.
+	 */
+	CHECK(published_interval() == SAMPLE_MS, "dwm did not tell the sampler to sample every %d ms (%ld)",
+	      SAMPLE_MS, published_interval());
+	n = publish_period();
+	CHECK(n >= SAMPLE_MS - 250 && n <= SAMPLE_MS + 250, "dwmsysmon published every %ld ms, not every %d", n, SAMPLE_MS);
+	set_interval(1000);
+	n = publish_period();
+	CHECK(n >= 750 && n <= 1250, "dwmsysmon published every %ld ms, not every 1000 dwm asked for", n);
+	set_interval(100);
+	n = publish_period();
+	CHECK(n >= SAMPLE_MS - 250 && n <= SAMPLE_MS + 250, "an interval below the minimum gave a period of %ld ms", n);
+	set_interval(1000);
+	publish_period();
+	set_interval(3600000);
+	n = publish_period();
+	CHECK(n >= SAMPLE_MS - 250 && n <= SAMPLE_MS + 250, "an interval above the maximum gave a period of %ld ms", n);
+	set_interval(SAMPLE_MS);
+	CHECK(wait_hash(h20, VALUE_MS), "the value changed while the interval did");
 
 	kill(sampler_pid, SIGSTOP); /* a hung sampler */
 	CHECK(wait_hash(h_dash, SAMPLER_STALE_MS + 3000), "a hung sampler's value did not go stale");
 	responsive("a hung sampler");
 	kill(sampler_pid, SIGCONT);
-	CHECK(wait_hash(h20, 6000), "the value did not return after the sampler resumed");
+	CHECK(wait_hash(h20, VALUE_MS), "the value did not return after the sampler resumed");
 
 	{ /* unreadable and malformed stat files give "-", and recover */
 		FILE *fp = fopen(fixture_path, "w");
@@ -738,7 +836,7 @@ main(int argc, char *argv[])
 			fclose(fp);
 		}
 	}
-	CHECK(wait_hash(h_dash, 4000), "a malformed stat file was not shown as \"-\"");
+	CHECK(wait_hash(h_dash, SAMPLE_MS + 2000), "a malformed stat file was not shown as \"-\"");
 	CHECK(wait_value(NULL, 1000), "dwmsysmon kept publishing for a malformed stat file");
 	responsive("a malformed stat file");
 	unlink(fixture_path);
@@ -746,7 +844,7 @@ main(int argc, char *argv[])
 	CHECK(bar_hash() == h_dash, "a missing stat file was not shown as \"-\"");
 	CHECK(kill(dwm_pid, 0) == 0, "dwm died with the sampler's data missing");
 	fixture_frozen = 0;
-	CHECK(wait_hash(h20, 8000), "the value did not return after the stat file came back");
+	CHECK(wait_hash(h20, VALUE_MS), "the value did not return after the stat file came back");
 
 	/* hidden again: the sampler exits and takes its value along; shown again, dwm starts a new one */
 	set_resources("dwm.showsysmon: 0\n");
@@ -757,7 +855,7 @@ main(int argc, char *argv[])
 	set_resources("dwm.showsysmon: 1\n");
 	CHECK(wait_samplers(1, 3000, &pid) && pid != sampler_pid, "showing the section again did not start a new sampler");
 	sampler_pid = pid;
-	CHECK(wait_hash(h20, 8000), "the value did not return when the section was shown again");
+	CHECK(wait_hash(h20, VALUE_MS), "the value did not return when the section was shown again");
 
 	/*
 	 * A sampler that misses the stop, as one stuck in a sensor read would, does
@@ -774,7 +872,7 @@ main(int argc, char *argv[])
 	kill(stuck, SIGCONT);
 	CHECK(wait_samplers(1, 3000, &pid) && pid != stuck, "the stuck sampler was not retired by the new one");
 	sampler_pid = pid;
-	CHECK(wait_hash(h20, 8000), "the value did not return from the sampler that replaced a stuck one");
+	CHECK(wait_hash(h20, VALUE_MS), "the value did not return from the sampler that replaced a stuck one");
 
 #ifdef HAVE_XTEST
 	{ /* Mod+Shift+b toggles the section */
@@ -799,7 +897,7 @@ main(int argc, char *argv[])
 				CHECK(wait_value(NULL, 3000), "the sampler stopped by Mod+Shift+b left its value behind");
 			} else {
 				CHECK(wait_samplers(1, 3000, &sampler_pid), "Mod+Shift+b did not start the sampler again");
-				CHECK(wait_hash(h20, 8000), "Mod+Shift+b did not show the section with a value");
+				CHECK(wait_hash(h20, VALUE_MS), "Mod+Shift+b did not show the section with a value");
 			}
 		}
 	}
@@ -836,16 +934,16 @@ main(int argc, char *argv[])
 	CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
 	set_resources("dwm.showsysmon: 1\n");
 	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
-	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", 8000), "dwmsysmon did not publish the temperature and both fans");
+	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", VALUE_MS), "dwmsysmon did not publish the temperature and both fans");
 	CHECK(wait_hash(h_two, 3000), "dwm did not show the temperature and both fans");
 	put_sys("devices/hwmon2/fan2_input", NULL);
-	CHECK(wait_value("cpu=20 temp=48 fan=2100", 10000), "a fan that went away was still published");
+	CHECK(wait_value("cpu=20 temp=48 fan=2100", SENSOR_MS), "a fan that went away was still published");
 	CHECK(wait_hash(h_one, 3000), "dwm did not show the one fan left");
 	put_sys("devices/hwmon2/fan1_input", NULL);
-	CHECK(wait_value("cpu=20 temp=48", 10000), "fans that went away were still published");
+	CHECK(wait_value("cpu=20 temp=48", SENSOR_MS), "fans that went away were still published");
 	CHECK(wait_hash(h_nofan, 3000), "dwm did not show the temperature without fans");
 	put_sys("devices/hwmon1/temp1_input", "48 degrees\n");
-	CHECK(wait_value("cpu=20", 10000), "a malformed temperature was published");
+	CHECK(wait_value("cpu=20", SENSOR_MS), "a malformed temperature was published");
 	CHECK(wait_hash(h20, 3000), "dwm showed a malformed temperature");
 	responsive("sensors going away");
 
@@ -861,7 +959,7 @@ main(int argc, char *argv[])
 		snprintf(fifo, sizeof fifo, "%s/devices/hwmon1/temp1_input", sys_path);
 		unlink(fifo);
 		CHECK(mkfifo(fifo, 0644) == 0, "cannot make a fifo");
-		CHECK(wait_hash(h_dash, 12000 + SAMPLER_STALE_MS), "the value of a sampler stuck in a sensor read did not go stale");
+		CHECK(wait_hash(h_dash, SENSOR_MS + SAMPLER_STALE_MS), "the value of a sampler stuck in a sensor read did not go stale");
 		responsive("a sensor read that hangs");
 		CHECK(kill(sampler_pid, 0) == 0, "the sampler died in a slow sensor read");
 		for (i = 0; i < 400 && fd < 0; i++) { /* the sampler is the reader the fifo waits for */
@@ -873,7 +971,7 @@ main(int argc, char *argv[])
 			CHECK(write(fd, "47000\n", 6) == 6, "cannot answer the slow sensor read");
 			close(fd);
 		}
-		CHECK(wait_value("cpu=20 temp=47", 6000), "the value did not return after the slow sensor read");
+		CHECK(wait_value("cpu=20 temp=47", VALUE_MS), "the value did not return after the slow sensor read");
 		CHECK(wait_hash(h_temp47, 3000), "dwm did not show the value after the slow sensor read");
 		put_sys("devices/hwmon1/temp1_input", "47000\n"); /* a plain file again, before the next read */
 	}
@@ -882,7 +980,7 @@ main(int argc, char *argv[])
 	pid = sampler_pid;
 	start_sampler(argv[2]);
 	CHECK(wait_only(sampler_pid, 3000), "a sampler started by hand did not take over from dwm's");
-	CHECK(wait_value("cpu=20 temp=47", 6000), "the sampler started by hand did not publish");
+	CHECK(wait_value("cpu=20 temp=47", VALUE_MS), "the sampler started by hand did not publish");
 
 	/* terminating the sampler removes its value; dwm shows "-" and keeps working */
 	kill(sampler_pid, SIGTERM);

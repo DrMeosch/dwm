@@ -249,7 +249,8 @@ the property is malformed (anything but a string of at most 64 bytes with
 .B cpu=
 and an integer from 0 to 100), or no new value arrived for
 .B dwm.sysmonstale
-milliseconds (default 10000, which must stay above the 2000 ms sampling interval).
+milliseconds (default three times the sampling interval, 12000; it must stay above
+that interval).
 The temperature
 .RB ( temp= ,
 0 to 150 degrees Celsius) and the fans
@@ -265,7 +266,13 @@ reaches it or the title would be left with less than a bar height, the section
 is left out until there is room again.
 .PP
 .B dwmsysmon
-takes no options and samples the CPU every 2000 ms. The temperature is that of the
+takes no options and samples the CPU every 4000 ms. The interval is
+.B SYSMONINTERVAL
+in
+.I config.h
+(250 to 60000 ms); dwm passes it to the sampler in
+.BR _DWM_SYSMON_ENABLED ,
+and the default staleness limit follows it. The temperature is that of the
 .BR coretemp ,
 .BR k10temp ,
 .B zenpower
@@ -283,7 +290,7 @@ of the hwmon chips other than GPUs, up to four; a chip that is slow to read
 .RB ( dell_smm ,
 which reports the same fans as
 .B dell_ddv )
-is only used when no other chip has fans. Sensors are read every 6 seconds,
+is only used when no other chip has fans. Sensors are read with a CPU sample at most every 6 seconds,
 and less often, up to once a minute, when a read takes long; a missing, failing
 or malformed sensor is left out and looked for again at most once a minute. When dwm hides the
 section (property

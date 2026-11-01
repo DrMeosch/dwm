@@ -150,9 +150,11 @@ the CPU usage alone and with the temperature and one, two or four fans. It first
 checks that dwm, running with the section off by default, started no sampler.
 It then shows the section so that dwm starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
 instead of `/proc/stat` and `SYSMON_SYS_PATH` at a fake sysfs tree instead of
-`/sys`, and sampling at its fixed 2000 ms interval (with
-`dwm.sysmonstale` raised to 4500), and checks the published value and the bar
-for a changing load, a stopped (hung) sampler, a malformed and a missing stat file
+`/sys`, and sampling at the default 4000 ms interval (with `dwm.sysmonstale` at
+9000), and checks the published value and the bar for a changing load, that it
+publishes every 4000 ms as dwm tells it, every 1000 ms when another interval is
+published in dwm's place, and every 4000 ms again for an interval below 250 or
+above 60000 ms, a stopped (hung) sampler, a malformed and a missing stat file
 (`-`, then recovery), a hidden section (the sampler exits and leaves no value,
 and showing the section again starts a new one whose value comes back), a
 sampler stopped with SIGSTOP while the section is hidden (dwm hides the section
@@ -174,7 +176,9 @@ the process start and the X property recorded instead, it checks that dwm starts
 `dwmsysmon` exactly once each time the section turns on (at start-up with the
 resource set, by Super+Shift+b or by a reload), never with the section off by
 default or on a reload that changes nothing, and that hiding the section only
-publishes the flag the sampler exits on.
+publishes the flag the sampler exits on. It also checks that dwm publishes the
+4000 ms sampling interval of `config.h` and that the default staleness limit
+covers more than two samples.
 `sysmon-lifecycle.sh` runs from `x11.sh` with two private X servers standing in
 for two X sessions of one user, each with the test dwm, which starts a real
 `dwmsysmon` (found first on its `PATH`) reading an advancing fixture and an

@@ -35,7 +35,6 @@
 #ifndef SYSMON_SYS_PATH
 #define SYSMON_SYS_PATH "/sys"
 #endif
-#define INTERVAL 2000 /* ms between samples */
 #define FIRST_TICK 500 /* ms until the first value */
 
 static int sigfd[2];
@@ -43,6 +42,7 @@ static Display *dpy;
 static Window root, ownwin, dwmwin;
 static Atom sysmonatom, enabledatom, ownatom;
 static int badwindow;
+static long interval = SYSMON_INTERVAL; /* ms between samples, as dwm says */
 
 static void
 onsignal(int sig)
@@ -110,9 +110,9 @@ watch(Window w)
 }
 
 /*
- * dwm publishes whether the section is shown and a window that lives as long
- * as dwm does. No flag means it is wanted; -1 means the dwm that published it
- * is gone.
+ * dwm publishes whether the section is shown, a window that lives as long as
+ * dwm does and the interval between samples. No flag means it is wanted; -1
+ * means the dwm that published it is gone.
  */
 static int
 enabled(void)
@@ -122,16 +122,20 @@ enabled(void)
 	unsigned long n, after;
 	unsigned char *data = NULL;
 	Window w = None;
+	unsigned long ms = 0;
 
-	if (XGetWindowProperty(dpy, root, enabledatom, 0, 2, False, XA_CARDINAL,
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 3, False, XA_CARDINAL,
 	    &type, &format, &n, &after, &data) == Success && data) {
 		if (type == XA_CARDINAL && format == 32 && n >= 1) {
 			on = ((unsigned long *)data)[0] != 0;
 			if (n >= 2)
 				w = ((unsigned long *)data)[1];
+			if (n >= 3)
+				ms = ((unsigned long *)data)[2];
 		}
 		XFree(data);
 	}
+	interval = ms >= SYSMON_MININTERVAL && ms <= SYSMON_MAXINTERVAL ? (long)ms : SYSMON_INTERVAL;
 	if (w != dwmwin) {
 		dwmwin = w;
 		if (w && !watch(w))
@@ -238,7 +242,7 @@ main(int argc, char *argv[])
 				sensornext = t + sensors_delay(nowms() - t);
 			}
 			publish(&val);
-			next = t + INTERVAL;
+			next = t + interval;
 		}
 		if ((timeout = (int)(next - nowms())) < 0)
 			timeout = 0;

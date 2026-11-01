@@ -6,9 +6,10 @@
  * separated fields ("cpu=42 temp=55 fan=2400,2350") in the SYSMON_ATOM property
  * of the root window; a field whose source is missing is left out, and unknown
  * fields are skipped. dwm publishes whether the section is shown as a CARDINAL
- * (0 or 1), followed by a window that exists as long as dwm does, in
- * SYSMON_ENABLED_ATOM: the sampler exits when the section is hidden or that
- * window is gone, and dwm starts a new one when the section is shown.
+ * (0 or 1), followed by a window that exists as long as dwm does and the ms
+ * between samples, in SYSMON_ENABLED_ATOM: the sampler exits when the section
+ * is hidden or that window is gone, and dwm starts a new one when the section
+ * is shown.
  */
 #include <stddef.h>
 
@@ -16,6 +17,9 @@
 #define SYSMON_ENABLED_ATOM "_DWM_SYSMON_ENABLED"
 #define SYSMON_OWNER_ATOM "_DWM_SYSMON_OWNER" /* selection: the sampler of a display */
 #define SYSMON_MAXLEN 64 /* bytes dwm reads; multiple of 4 */
+#define SYSMON_INTERVAL 4000 /* ms between samples when dwm names none, or one out of range */
+#define SYSMON_MININTERVAL 250 /* ms */
+#define SYSMON_MAXINTERVAL 60000 /* ms */
 #define SYSMON_MAXTEMP 150 /* degrees Celsius */
 #define SYSMON_MAXFAN 30000 /* RPM */
 #define SYSMON_FANS 4 /* fans in one payload */
