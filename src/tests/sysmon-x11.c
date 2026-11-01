@@ -350,7 +350,8 @@ main(int argc, char *argv[])
 	remove_value();
 
 	/* shown by the resource: the empty section is "-" and takes room from the title */
-	set_resources("dwm.showsysmon: 1\ndwm.sysmonstale: 1500\n");
+	/* a long stale limit: a payload dwm wrongly accepted must not vanish by itself and pass as "-" */
+	set_resources("dwm.showsysmon: 1\ndwm.sysmonstale: 60000\n");
 	for (i = 0; i < 80 && bar_hash() == h_off; i++)
 		pump(25);
 	h_dash = steady_hash();
@@ -379,7 +380,9 @@ main(int argc, char *argv[])
 	memcpy(big, "cpu=42", 6);
 	publish("cpu=42");
 	CHECK(wait_hash(h42, 2000), "the value was not shown before an oversized payload");
-	publish(big);
+	XChangeProperty(dpy, root, sysmonatom, XA_STRING, 8, PropModeReplace,
+	                (const unsigned char *)big, (int)sizeof big);
+	XFlush(dpy);
 	CHECK(wait_hash(h_dash, 2000), "an oversized payload was not shown as \"-\"");
 	publish("cpu=42");
 	CHECK(wait_hash(h42, 2000), "the value was not shown before a wrong-type payload");
@@ -398,6 +401,8 @@ main(int argc, char *argv[])
 	responsive("garbage payloads");
 
 	/* a value nobody refreshes goes stale by itself, and dwm then sleeps without a timer */
+	set_resources("dwm.sysmonstale: 1500\n");
+	pump(300);
 	publish("cpu=42");
 	CHECK(wait_hash(h42, 2000), "the value was not shown before it went stale");
 	pump(400);
