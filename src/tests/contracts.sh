@@ -49,6 +49,11 @@ cp -R "$root"/src/. "$tmp/dist/src/"
 (cd "$tmp/dist" && make dist >/dev/null)
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/LICENSE"
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/config.mk"
+# the sampler and its shared module must ship with dwm, and install must install the sampler
+for f in sysmon.c sysmon.h dwmsysmon.c; do
+	tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/$f"
+done
+(cd "$tmp/dist" && make -n install DESTDIR="$tmp/inst" | grep -q 'install -Dm755 \./dwm \./dwmsysmon ')
 [ ! -e "$tmp/dist/dwm-$version" ]
 [ ! -e "$root/dwm-$version.tar.gz" ]
 [ -s "$root/LICENSE" ]
@@ -71,7 +76,7 @@ $cc -std=c99 -pedantic -Wall -Wno-unused-function -Wno-deprecated-declarations \
 	$(pkg-config --cflags fontconfig xft x11 x11-xcb xinerama xcb xcb-res 2>/dev/null || true) \
 	"$root/src/dwm.c" "$root/src/drw.c" "$root/src/borderwidth.c" \
 	"$root/src/selborder.c" \
-	"$root/src/sigusr2.c" "$root/src/util.c" \
+	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
 	$(pkg-config --libs x11 x11-xcb xinerama xft fontconfig xcb xcb-res 2>/dev/null || true) \
 	-lm -o "$tmp/dwm"
 if "$tmp/dwm" -v >"$tmp/version.out" 2>&1; then

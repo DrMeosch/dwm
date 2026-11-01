@@ -49,7 +49,7 @@ $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
 	-DVERSION=\"6.5\" $flags "$root/src/dwm.c" "$root/src/drw.c" \
 	"$root/src/borderwidth.c" "$root/src/selborder.c" \
-	"$root/src/sigusr2.c" "$root/src/util.c" \
+	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
 	$libs -lm -o "$tmp/dwm"
 $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-Wno-unused-parameter -Wno-sign-compare \
@@ -57,10 +57,22 @@ $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
 	-DVERSION=\"6.5\" $flags "$root/src/tests/eventloop.c" "$root/src/drw.c" \
 	"$root/src/borderwidth.c" "$root/src/selborder.c" \
-	"$root/src/sigusr2.c" "$root/src/util.c" \
+	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
 	$libs -lm -o "$tmp/eventloop"
 $cc -std=c99 -pedantic -Wall -Wextra $flags "$root/src/tests/x11.c" \
 	$libs -o "$tmp/x11"
+$cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700L \
+	-DSYSMON_STAT_PATH=\"$tmp/sysmon/stat\" $flags "$root/src/dwmsysmon.c" \
+	"$root/src/sysmon.c" -lX11 -o "$tmp/dwmsysmon"
+sysmon_flags=
+sysmon_libs=
+if [ "$input_available" -eq 1 ]; then
+	sysmon_flags="-DHAVE_XTEST $(pkg-config --cflags xtst)"
+	sysmon_libs=$(pkg-config --libs xtst)
+fi
+$cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=700L \
+	$flags $sysmon_flags "$root/src/tests/sysmon-x11.c" $libs $sysmon_libs \
+	-o "$tmp/sysmon-x11"
 if [ "$input_available" -eq 1 ]; then
 	input_flags=$(pkg-config --cflags xtst)
 	input_libs=$(pkg-config --libs xtst)
@@ -203,6 +215,11 @@ kill -USR2 "$dwm_pid"
 printf 'dwm.borderpx: 1\n' | xrdb -load
 kill -USR2 "$dwm_pid"
 "$tmp/x11" bar-color '#50fa7b' 16
+# The system monitor section: values, garbage, stale data and a hung or broken
+# sampler must leave dwm responsive. The sampler reads a fixture, never /proc/stat.
+mkdir "$tmp/sysmon"
+"$tmp/sysmon-x11" "$dwm_pid" "$tmp/dwmsysmon" "$tmp/sysmon"
+kill -0 "$dwm_pid"
 # docs/dwm-{light,dark}.sh must still switch dwm when every desktop step fails,
 # and must report the result with notify-send. The stubs log their arguments;
 # pkill only ever signals the test dwm, never a real one, and notify-send never
@@ -281,5 +298,8 @@ done
 wait_for_border '#b84f7b' 2
 "$tmp/x11" bar-background '#f6e8ee'
 kill -0 "$dwm_pid"
+
+# one sampler per display, and none left behind when dwm goes away
+sh "$root/src/tests/sysmon-lifecycle.sh" "$root" "$tmp/dwm"
 
 printf '%s\n' 'X11 integration checks passed'

@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <spawn.h>
 #include <sys/types.h>
@@ -52,6 +53,7 @@
 #include "borderwidth.h"
 #include "selborder.h"
 #include "sigusr2.h"
+#include "sysmon.h"
 #include "util.h"
 
 /* macros */
@@ -190,6 +192,7 @@ static void arrange(Monitor *m);
 static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
+static int barclick(Monitor *m, int px, Arg *arg);
 static void buttonpress(XEvent *e);
 static void checkotherwm(void);
 static void cleanup(void);
@@ -208,6 +211,7 @@ static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
+static int sysmonbox(Monitor *m, int left, int right, int *mx);
 static void drawbars(void);
 static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
@@ -273,6 +277,7 @@ static int stackpos(const Arg *arg);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void togglebar(const Arg *arg);
+static void togglesysmon(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglescratch(const Arg *arg);
 static void togglesticky(const Arg *arg);
@@ -289,6 +294,10 @@ static int updategeom(void);
 static void updatenumlockmask(void);
 static void updatesizehints(Client *c);
 static void updatestatus(void);
+static void updatesysmon(void);
+static void applysysmon(void);
+static void checksysmon(void);
+static int sysmontimeout(void);
 static void updatetitle(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
@@ -341,6 +350,10 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 };
 static Atom wmatom[WMLast], netatom[NetLast];
 static Atom baropacityatom;
+static Atom sysmonatom, sysmonenabledatom;
+static int sysmoncpu = -1;       /* CPU percent last published by dwmsysmon, -1 when unknown */
+static long long sysmonexpire;   /* monotonic ms at which sysmoncpu goes stale, 0 when none */
+static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
 static int lightbar;
 static int restart = 0;
 static int running = 1;
@@ -575,11 +588,43 @@ unswallow(Client *c)
 	arrange(c->mon);
 }
 
+int
+barclick(Monitor *m, int px, Arg *arg)
+{
+	unsigned int i, occ = 0;
+	int x = 0, left, right, mx;
+	Client *c;
+
+	for (c = m->clients; c; c = c->next)
+		occ |= c->tags == 255 ? 0 : c->tags;
+	i = 0;
+	do {
+		/* do not reserve space for vacant tags */
+		if (!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
+			continue;
+		x += TEXTW(tags[i]);
+	} while (px >= x && ++i < LENGTH(tags));
+	if (i < LENGTH(tags)) {
+		arg->ui = 1 << i;
+		return ClkTagBar;
+	}
+	left = x + TEXTW(m->ltsymbol);
+	if (px < left)
+		return ClkLtSymbol;
+	right = m->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2); /* 2px right padding, as in drawbar */
+	if (px >= right) {
+		dwmblockssig = statusblocksig(right, px);
+		return ClkStatusText;
+	}
+	if (sysmonbox(m, left, right, &mx) && px >= mx)
+		return ClkLast; /* the section and the gap up to the status have no action */
+	return ClkWinTitle;
+}
+
 void
 buttonpress(XEvent *e)
 {
-	unsigned int i, click, occ = 0;
-	int x;
+	unsigned int i, click;
 	Arg arg = {0};
 	Client *c;
 	Monitor *m;
@@ -592,27 +637,9 @@ buttonpress(XEvent *e)
 		selmon = m;
 		focus(NULL);
 	}
-	if (ev->window == selmon->barwin) {
-		i = x = 0;
-		for (c = m->clients; c; c = c->next)
-			occ |= c->tags == 255 ? 0 : c->tags;
-		do {
-			/* do not reserve space for vacant tags */
-			if (!(occ & 1 << i || m->tagset[m->seltags] & 1 << i))
-				continue;
-			x += TEXTW(tags[i]);
-		} while (ev->x >= x && ++i < LENGTH(tags));
-		if (i < LENGTH(tags)) {
-			click = ClkTagBar;
-			arg.ui = 1 << i;
-		} else if (ev->x < x + TEXTW(selmon->ltsymbol))
-			click = ClkLtSymbol;
-		else if (ev->x >= (x = selmon->ww - (drawstatus(stext, strlen(stext), 0, 0) + 2))) { /* 2px right padding, as in drawbar */
-			click = ClkStatusText;
-			dwmblockssig = statusblocksig(x, ev->x);
-		} else
-			click = ClkWinTitle;
-	} else if ((c = wintoclient(ev->window))) {
+	if (ev->window == selmon->barwin)
+		click = barclick(m, ev->x, &arg);
+	else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
 		XAllowEvents(dpy, ReplayPointer, CurrentTime);
@@ -1090,10 +1117,27 @@ statusblocksig(int x, int evx)
 	return sig;
 }
 
+/*
+ * Where the section sits between the layout symbol ending at left and the
+ * status starting at right: centred in the bar at a fixed width. Returns 0
+ * when it is off or would crowd the title or reach the status.
+ */
+int
+sysmonbox(Monitor *m, int left, int right, int *mx)
+{
+	int mw = TEXTW("CPU 100%");
+
+	*mx = (m->ww - mw) / 2;
+	if (!showsysmon || *mx - left <= bh || *mx + mw > right)
+		return 0;
+	return mw;
+}
+
 void
 drawbar(Monitor *m)
 {
-	int x, w, tw = 0;
+	int x, w, tw = 0, mw = 0, mx, end;
+	char mtext[24];
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
@@ -1143,7 +1187,19 @@ drawbar(Monitor *m)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
-	if ((w = m->ww - tw - x) > bh) {
+	end = m->ww - tw; /* the title and the section share [x, end) */
+	if ((mw = sysmonbox(m, x, end, &mx))) {
+		if (sysmoncpu < 0)
+			snprintf(mtext, sizeof mtext, "CPU   -");
+		else
+			snprintf(mtext, sizeof mtext, "CPU %3d%%", sysmoncpu);
+		drw_setscheme(drw, scheme[SchemeNorm]);
+		drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
+		drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
+		end = mx;
+	}
+
+	if ((w = end - x) > bh) {
 		if (m->sel) {
 			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
 			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
@@ -1705,6 +1761,9 @@ propertynotify(XEvent *e)
 
 	if ((ev->window == root) && (ev->atom == XA_WM_NAME)) {
 		updatestatus();
+	} else if (ev->window == root && ev->atom == sysmonatom) {
+		if (showsysmon)
+			updatesysmon();
 	} else if (ev->state == PropertyDelete) {
 		return; /* ignore */
 	} else if ((c = wintoclient(ev->window))) {
@@ -1872,6 +1931,8 @@ run(void)
 	while (running) {
 		if (sigusr2_dispatch(reloadcolors) < 0)
 			die("dwm: signal dispatch:");
+		/* before XPending: redrawing syncs with the server, which can queue events */
+		checksysmon();
 		/* XPending also drains events Xlib left queued in XCB, which poll cannot see. */
 		while (XPending(dpy)) {
 			XNextEvent(dpy, &ev);
@@ -1880,7 +1941,7 @@ run(void)
 		}
 		if (!running)
 			break;
-		if (poll(fds, LENGTH(fds), -1) < 0) {
+		if (poll(fds, LENGTH(fds), sysmontimeout()) < 0) {
 			if (errno == EINTR)
 				continue;
 			die("dwm: poll:");
@@ -1898,7 +1959,9 @@ reloadcolors(void)
 
 void
 runAutostart(void) {
-	system("killall -q dwmblocks; dwmblocks &");
+	int status = system("killall -q dwmblocks; dwmblocks & dwmsysmon &");
+
+	(void)status;
 }
 
 void
@@ -2121,6 +2184,8 @@ setup(void)
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetClientInfo] = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
+	sysmonatom = XInternAtom(dpy, SYSMON_ATOM, False);
+	sysmonenabledatom = XInternAtom(dpy, SYSMON_ENABLED_ATOM, False);
 	baropacityatom = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
@@ -2153,6 +2218,7 @@ setup(void)
 		PropModeReplace, (unsigned char *) netatom, NetLast);
 	XDeleteProperty(dpy, root, netatom[NetClientList]);
 	XDeleteProperty(dpy, root, netatom[NetClientInfo]);
+	applysysmon();
 	/* select events */
 	wa.cursor = cursor[CurNormal]->cursor;
 	wa.event_mask = SubstructureRedirectMask|SubstructureNotifyMask
@@ -2664,6 +2730,90 @@ updatestatus(void)
 		drawbar(m);
 }
 
+static long long
+nowms(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/*
+ * Take over the value dwmsysmon last published. The sampler is a separate
+ * process, so the property may be missing, stale or anything at all: whatever
+ * is not exactly a short, well-formed string counts as "no value".
+ */
+void
+updatesysmon(void)
+{
+	Atom type;
+	int format, cpu = -1;
+	unsigned long n, after;
+	unsigned char *data = NULL;
+
+	if (XGetWindowProperty(dpy, root, sysmonatom, 0, SYSMON_MAXLEN / 4, False,
+	    XA_STRING, &type, &format, &n, &after, &data) == Success && data) {
+		if (type == XA_STRING && format == 8 && !after)
+			cpu = sysmon_decode((char *)data, n);
+		XFree(data);
+	}
+	sysmonexpire = cpu < 0 ? 0 : nowms() + MAX(sysmonstale, 500);
+	if (cpu != sysmoncpu) {
+		sysmoncpu = cpu;
+		drawbars();
+	}
+}
+
+/* Tell the sampler whether the section is shown, and forget the value when that changes. */
+void
+applysysmon(void)
+{
+	unsigned long on[2];
+
+	showsysmon = showsysmon != 0;
+	if (showsysmon == sysmonpublished)
+		return;
+	sysmonpublished = showsysmon;
+	on[0] = showsysmon;
+	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
+	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)on, 2);
+	sysmoncpu = -1;
+	sysmonexpire = 0;
+}
+
+/* A value the sampler stopped refreshing is dropped once it is stale. */
+void
+checksysmon(void)
+{
+	if (sysmonexpire && nowms() >= sysmonexpire) {
+		sysmonexpire = 0;
+		sysmoncpu = -1;
+		drawbars();
+	}
+}
+
+/* poll timeout: only a held value needs a wakeup, so hidden or sampler-less dwm sleeps. */
+int
+sysmontimeout(void)
+{
+	long long t;
+
+	if (!sysmonexpire)
+		return -1;
+	t = sysmonexpire - nowms();
+	return t > 0 ? (int)t : 0;
+}
+
+void
+togglesysmon(const Arg *arg)
+{
+	showsysmon = !showsysmon;
+	applysysmon();
+	drawbars();
+}
+
 void
 updatetitle(Client *c)
 {
@@ -2935,6 +3085,7 @@ xrdb(const Arg *arg)
 	int i, new_lightbar;
 
 	load_xresources();
+	applysysmon();
 	updateborderwidth();
 	new_lightbar = lightbarpalette();
 	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));

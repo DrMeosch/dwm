@@ -6,6 +6,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 
 - Luke's build patches: clickable status bar (statuscmd), scratchpad, bstack/fibonacci/deck/centered-master layouts, vanitygaps, sticky windows, hide-vacant-tags, stacker, shiftview, swallow, true fullscreen. See [`src/README.md`](src/README.md) and [`src/config.h`](src/config.h) for bindings.
 - Colored status bar segments ([status2d](https://dwm.suckless.org/patches/status2d/), reimplemented with bounds-checked parsing): `^c#rrggbb^`/`^b#rrggbb^` truecolor codes and `^C<0-15>^`/`^B<0-15>^` codes that follow `dwm.color0`..`dwm.color15`. Clickable status regions (statuscmd) stay aligned. Grammar in [`src/dwm.1`](src/dwm.1).
+- Optional system monitor section centred in the bar (CPU usage so far; it is left out when a long status text leaves it no room), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, publishes the value in a root window property, so dwm only draws it and stays responsive when the sampler is missing, stuck or sends garbage (the section then shows `-`). See [`src/dwm.1`](src/dwm.1).
 - Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
 - Live theme reload: `SIGUSR2` makes dwm re-read Xresources (`src/sigusr2.c`). `SIGUSR1` stays reserved for dwmblocks.
 - Configurable border width (1 or 2 px) and selected-border color (`src/borderwidth.c`, `src/selborder.c`).
@@ -17,6 +18,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 | `src/` | dwm sources, `config.h`, `config.mk`, man page, `PKGBUILD` |
 | `src/tests/` | Regression checks (see [`src/tests/README.md`](src/tests/README.md)) |
 | `docs/dwm-dark.sh`, `docs/dwm-light.sh` | Switch GTK/xfconf theme, merge Xresources (`dwm.*` plus `dmenu.color0`/`dmenu.color4`), then `pkill -USR2 -x dwm` |
+| `src/dwmsysmon.c`, `src/sysmon.c` | System monitor sampler and the shared value format |
 | `Makefile` | Top-level build, test, install, and dist targets |
 | `treehouse.toml` | Worktree pool config |
 | `.github/workflows/ci.yml` | CI: `make test`, then `make` |

@@ -16,6 +16,8 @@ static unsigned int gappov    = 30;       /* vert outer gap between windows and 
 static int swallowfloating    = 0;        /* 1 means swallow floating windows by default */
 static int smartgaps          = 0;        /* 1 means no outer gap when there is only one window */
 static int showbar            = 1;        /* 0 means no bar */
+static int showsysmon         = 0;        /* 1 shows the CPU usage section published by dwmsysmon */
+static int sysmonstale        = 10000;    /* ms without a new value before the section shows "-"; keep above the dwmsysmon interval (2000) */
 static int topbar             = 1;        /* 0 means bottom bar */
 static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize=10:antialias=true:autohint=true"  };
 static const char *selfontweight = "semibold"; /* fontconfig weight of the selected tag; NULL or "" (or a fonts[] entry that sets weight=, or style= naming a face the family really has) keeps the normal font */
@@ -172,6 +174,8 @@ ResourcePref resources[] = {
 		{ "color4",		STRING,	normfgcolor, sizeof normfgcolor },
 		{ "snap",		INTEGER, &snap, sizeof snap },
 		{ "showbar",		INTEGER, &showbar, sizeof showbar },
+		{ "showsysmon",		INTEGER, &showsysmon, sizeof showsysmon },
+		{ "sysmonstale",	INTEGER, &sysmonstale, sizeof sysmonstale },
 		{ "topbar",		INTEGER, &topbar, sizeof topbar },
 		{ "nmaster",		INTEGER, &nmaster, sizeof nmaster },
 		{ "resizehints",	INTEGER, &resizehints, sizeof resizehints },
@@ -271,7 +275,7 @@ static const Key keys[] = {
 	/* { MODKEY|ShiftMask,		XK_c,          spawn,                  SHCMD("") }, */
 	/* V is automatically bound above in STACKKEYS */
 	{ MODKEY,			XK_b,          togglebar,              {0} },
-	/* { MODKEY|ShiftMask,		XK_b,          spawn,                  SHCMD("") }, */
+	{ MODKEY|ShiftMask,		XK_b,          togglesysmon,           {0} },
 	{ MODKEY,			XK_n,          spawn,                  {.v = (const char*[]){ TERMINAL, "-e", "nvim", "-c", "VimwikiIndex", NULL } } },
 	{ MODKEY|ShiftMask,		XK_n,          spawn,                  SHCMD(TERMINAL " -e newsboat ; pkill -RTMIN+6 dwmblocks") },
 	{ MODKEY,			XK_m,          spawn,                  {.v = (const char*[]){ TERMINAL, "-e", "ncmpcpp", NULL } } },

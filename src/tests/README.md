@@ -101,6 +101,50 @@ theme. After each run `xrdb -query` must show `dmenu.color0` and
 gets the theme colors. With every step succeeding, each script must exit zero,
 stay silent and send the low-urgency "Switched to <theme> theme" notification.
 
+The `sysmon` check covers the contract between dwm and the `dwmsysmon`
+sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,
+overflowing and otherwise malformed lines are no reading), the usage between two
+readings (counters that stand still, go backwards or exceed the elapsed time are
+no value), and the property payload (only a short `cpu=<0-100>` string is a
+value; oversized, empty, non-numeric, out-of-range and NUL-containing payloads
+are not). `core.c` also checks that the section is centred and left out, never
+overlapping the layout symbol or the status, on wide and narrow bars and at the
+exact boundaries, that a held value expires on time and that dwm sets no poll
+timeout without one, and that a click on the section or the gap up to the status
+is neither a title, layout symbol nor status click, while a click on the title
+left of it, on the status, or with the section off or left out for lack of room
+keeps its usual meaning.
+
+`sysmon-x11.c` runs from `x11.sh` against the running test dwm and recognises
+the system monitor section by the bar pixels it produces. It enables the
+section through Xresources and SIGUSR2, and uses itself as a stand-in sampler to
+check that values show up and differ, that garbage (wrong content, wrong type or
+format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
+stale by itself and stays while it is refreshed, and after each of these that
+dwm still redraws a status change. It also checks that the section is centred
+in the bar with a short and with a long status text, and is left out, without
+overlapping anything, when a very long status text reaches the centre. It then
+starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
+instead of `/proc/stat` and sampling at its fixed 2000 ms interval (with
+`dwm.sysmonstale` raised to 4500), and checks the published value and the bar
+for a changing load, a stopped (hung) sampler, a malformed and a missing stat file
+(`-`, then recovery), a hidden section (no value, no flag left behind, and no
+wake-ups of the sampler) and a clean exit on SIGTERM. With XTEST available it
+also toggles the section with Super+Shift+b. The test dwm is left with the
+section hidden.
+
+`core.c` also runs the command dwm hands to `system()` at startup against stub
+`killall`, `dwmblocks` and `dwmsysmon` programs, with nothing else on `PATH`, and
+checks that it starts the sampler without stopping samplers by name.
+`sysmon-lifecycle.sh` runs from `x11.sh` with two private X servers standing in
+for two X sessions of one user, each with the test dwm and a real `dwmsysmon`
+reading an advancing fixture. A replacement sampler on one display must retire
+that display's sampler only, and restarting dwm there must leave the other
+session's sampler and value untouched. When dwm exits normally with the X server
+still running, with the section shown or hidden, or is killed outright, its
+sampler must exit and remove its value, and a sampler started after dwm is gone
+must not linger.
+
 SIGUSR1 stays reserved for dwmblocks; SIGUSR2 requests the Xresources reload.
 
 `changelog.sh` feeds sample PR bodies to `.github/scripts/check-changelog.sh`, the

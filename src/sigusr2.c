@@ -15,11 +15,14 @@ sigusr2_handler(int signal_number)
 {
 	int saved_errno = errno;
 	char byte = 0;
+	ssize_t written;
 
 	(void)signal_number;
 	reload_requested = 1;
-	if (sigusr2pipe[1] >= 0)
-		(void)write(sigusr2pipe[1], &byte, sizeof byte);
+	if (sigusr2pipe[1] >= 0) {
+		written = write(sigusr2pipe[1], &byte, sizeof byte);
+		(void)written;
+	}
 	errno = saved_errno;
 }
 

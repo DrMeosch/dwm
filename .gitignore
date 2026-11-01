@@ -16,3 +16,4 @@ junit
 /dwm
 *.o
 /dwm-*.tar.gz
+/dwmsysmon

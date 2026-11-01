@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -25,10 +26,20 @@ pidof_popen(const char *command, const char *mode)
 	}
 	return fp;
 }
+/* runAutostart() hands its command to system(); keep it instead of running it */
+static char autostart_command[256];
+static int
+autostart_system(const char *command)
+{
+	snprintf(autostart_command, sizeof autostart_command, "%s", command);
+	return 0;
+}
 #define popen pidof_popen
 #define pclose fclose
+#define system autostart_system
 #define main dwm_program_main
 #include "../dwm.c"
+#undef system
 #undef popen
 #undef pclose
 #undef main
@@ -632,9 +643,192 @@ test_buttonpress_status(void)
 	                    "status narrower than the bar");
 }
 
+/* a click on the section or the gap up to the status is no title, tag, layout or status click */
+static void
+test_buttonpress_sysmon(void)
+{
+	/* 100px text padding: the layout symbol ends at 100, the section is [550,650), the status [1098,1200) */
+	static const struct { int x, click; } at[] = {
+		{ 99, ClkLtSymbol }, { 100, ClkWinTitle }, { 549, ClkWinTitle },
+		{ 550, ClkLast }, { 649, ClkLast }, { 650, ClkLast }, { 1097, ClkLast },
+		{ 1098, ClkStatusText }, { 1197, ClkStatusText },
+	};
+	static const int blocks[][2] = { { 549, 0 }, { 550, 0 }, { 1097, 0 }, { 1098, 1 }, { 1197, 1 } };
+	Monitor m = {0};
+	Arg arg = {0};
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
+	size_t i;
+	int got;
+
+	lrpad = 100;
+	bh = 20;
+	m.ww = 1200;
+	m.barwin = 1;
+	mons = selmon = &m;
+	strcpy(rawstext, "\001^f100^");
+	copyvalidchars(stext, rawstext);
+
+	showsysmon = 1;
+	for (i = 0; i < LENGTH(at); i++) {
+		got = barclick(&m, at[i].x, &arg);
+		CHECK(got == at[i].click, "a click at x=%d with the section shown was %d, expected %d",
+		      at[i].x, got, at[i].click);
+	}
+	check_status_clicks("\001^f100^", blocks, LENGTH(blocks), "status beside the section");
+	lrpad = 100;
+	bh = 20;
+	mons = selmon = &m;
+
+	showsysmon = 0;
+	CHECK(barclick(&m, 600, &arg) == ClkWinTitle, "a click at x=600 with the section off was not a title click");
+
+	/* a status reaching into the centre leaves the section out, so its pixels belong to the title */
+	showsysmon = 1;
+	strcpy(rawstext, "\001^f600^");
+	copyvalidchars(stext, rawstext);
+	CHECK(barclick(&m, 500, &arg) == ClkWinTitle, "a click at x=500 with the section left out was not a title click");
+
+	showsysmon = saved_show;
+	lrpad = saved_lrpad;
+	bh = saved_bh;
+	mons = selmon = NULL;
+}
+
+/* the section is centred and never overlaps the layout symbol on its left or the status on its right */
+static void
+test_sysmon_box(void)
+{
+	Monitor m = {0};
+	Arg arg = {0};
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
+	int mx = -1;
+
+	lrpad = 100; /* drw is NULL, so the section is 100px wide */
+	bh = 20;
+	showsysmon = 1;
+	m.barwin = 1;
+	mons = selmon = &m;
+	strcpy(rawstext, "");
+	copyvalidchars(stext, rawstext);
+
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 1198, &mx) == 100 && mx == 550, "a wide bar did not centre the section (x=%d)", mx);
+	/* the layout symbol ends at 100: the title keeps more than a bar height only from a 342px bar */
+	m.ww = 340;
+	CHECK(sysmonbox(&m, 100, 338, &mx) == 0, "the section left only a bar height of title");
+	m.ww = 342;
+	CHECK(sysmonbox(&m, 100, 340, &mx) == 100 && mx == 121, "the section was left out although the title keeps more than a bar height");
+	/* a narrow bar: the centred section would sit on the layout symbol, with room to spare on the right */
+	m.ww = 240;
+	CHECK(sysmonbox(&m, 100, 238, &mx) == 0, "the section was drawn over the layout symbol of a narrow bar");
+	CHECK(barclick(&m, 100, &arg) == ClkWinTitle && barclick(&m, 150, &arg) == ClkWinTitle,
+	      "clicks right of the layout symbol of a narrow bar were not title clicks");
+	m.ww = 130;
+	CHECK(sysmonbox(&m, 100, 128, &mx) == 0, "the section was drawn on a bar barely wider than the layout symbol");
+	/* a status reaching into the centre */
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 600, &mx) == 0, "the section was drawn over the status");
+	CHECK(sysmonbox(&m, 100, 650, &mx) == 100, "the section was left out although it ends where the status begins");
+	CHECK(sysmonbox(&m, 100, 649, &mx) == 0, "the section was drawn over the first pixel of the status");
+	showsysmon = 0;
+	CHECK(sysmonbox(&m, 100, 1198, &mx) == 0, "a hidden section took room");
+
+	showsysmon = saved_show;
+	lrpad = saved_lrpad;
+	bh = saved_bh;
+	mons = selmon = NULL;
+}
+
+/*
+ * The commands dwm runs at startup start the sampler without stopping any other
+ * process of that name: a sampler of another X session must keep running.
+ * They run here against stub programs only, with nothing else on PATH.
+ */
+static void
+test_autostart_command(void)
+{
+	char dir[] = "/tmp/dwm-autostart-XXXXXX", path[512], log[512], line[256];
+	const char *saved_path = getenv("PATH");
+	const char *tools[] = { "killall", "dwmblocks", "dwmsysmon" };
+	int started = 0, killed_sampler = 0, i;
+	FILE *fp;
+
+	if (!mkdtemp(dir)) {
+		CHECK(0, "cannot create a scratch directory");
+		return;
+	}
+	snprintf(log, sizeof log, "%s/log", dir);
+	for (i = 0; i < 3; i++) {
+		snprintf(path, sizeof path, "%s/%s", dir, tools[i]);
+		if ((fp = fopen(path, "w"))) {
+			fprintf(fp, "#!/bin/sh\necho \"%s $*\" >>\"%s\"\n", tools[i], log);
+			fclose(fp);
+			chmod(path, 0755);
+		}
+	}
+	autostart_command[0] = '\0';
+	runAutostart();
+	CHECK(autostart_command[0], "dwm ran no startup command");
+	setenv("PATH", dir, 1);
+	if (autostart_command[0] && system(autostart_command) != 0)
+		CHECK(0, "the startup command failed");
+	for (i = 0; i < 100 && !started; i++) { /* the programs are started in the background */
+		if ((fp = fopen(log, "r"))) {
+			while (fgets(line, sizeof line, fp))
+				if (!strncmp(line, "dwmsysmon", 9))
+					started = 1;
+			fclose(fp);
+		}
+		if (!started)
+			usleep(20000);
+	}
+	setenv("PATH", saved_path ? saved_path : "/usr/bin:/bin", 1);
+	CHECK(started, "the startup command did not start the sampler");
+	if ((fp = fopen(log, "r"))) {
+		while (fgets(line, sizeof line, fp))
+			if (!strncmp(line, "killall", 7) && strstr(line, "dwmsysmon"))
+				killed_sampler = 1;
+		fclose(fp);
+	}
+	CHECK(!killed_sampler, "the startup command stops samplers by name, which includes those of other X sessions");
+	for (i = 0; i < 3; i++) {
+		snprintf(path, sizeof path, "%s/%s", dir, tools[i]);
+		unlink(path);
+	}
+	unlink(log);
+	rmdir(dir);
+}
+
+/* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
+static void
+test_sysmon_expiry(void)
+{
+	int t;
+
+	sysmoncpu = -1;
+	sysmonexpire = 0;
+	CHECK(sysmontimeout() == -1, "dwm sets a poll timeout without a value to expire");
+	sysmoncpu = 40;
+	sysmonexpire = nowms() + 5000;
+	t = sysmontimeout();
+	CHECK(t > 4000 && t <= 5000, "poll timeout %d does not match the time left", t);
+	checksysmon();
+	CHECK(sysmoncpu == 40 && sysmonexpire, "a fresh value was dropped");
+	sysmonexpire = nowms() - 1;
+	CHECK(sysmontimeout() == 0, "an overdue value does not wake poll at once");
+	checksysmon();
+	CHECK(sysmoncpu == -1 && sysmonexpire == 0 && sysmontimeout() == -1,
+	      "a stale value was not dropped and the timer disarmed");
+	checksysmon();
+	CHECK(sysmoncpu == -1, "checksysmon revived a dropped value");
+}
+
 int
 main(void)
 {
+	test_sysmon_expiry();
+	test_sysmon_box();
+	test_autostart_command();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();
@@ -651,6 +845,7 @@ main(void)
 	test_selected_tag_fonts_disabled();
 	test_getdwmblockspid();
 	test_buttonpress_status();
+	test_buttonpress_sysmon();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("core state regression checks passed");

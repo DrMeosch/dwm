@@ -104,6 +104,10 @@ Decrease/increase volume by 5 and 15 respectively.
 .B Super\-b
 Toggles bar on and off.
 .TP
+.B Super\-Shift\-b
+Shows or hides the system monitor section of the bar (see
+.BR "System monitor" ).
+.TP
 .B Super\-q
 Close focused window.
 .TP
@@ -215,6 +219,53 @@ Toggles focused window between floating and tiled state.
 .TP
 .B Super\-Right click
 Resize focused window while dragging. Tiled windows will be toggled to the floating state.
+.SS System monitor
+An optional section in the middle of the bar shows the CPU
+usage as
+.B CPU 42%.
+It is off by default. Super\-Shift\-b toggles it, and the Xresources
+.B dwm.showsysmon
+(0 or 1) sets it at start\-up and on every SIGUSR2 reload; a key press is kept
+across a reload unless that resource is set.
+.PP
+dwm does not measure anything. The separate
+.B dwmsysmon
+program, which dwm starts with the autostart commands, reads
+.I /proc/stat
+and publishes the latest value as a short string in the root window property
+.B _DWM_SYSMON
+(for example
+.BR cpu=42 ).
+dwm only draws what it last received. The section shows
+.B CPU \-
+when there is no value: the sampler is not running, hung or cannot read its data,
+the property is malformed (anything but a short string with
+.B cpu=
+and an integer from 0 to 100), or no new value arrived for
+.B dwm.sysmonstale
+milliseconds (default 10000, which must stay above the 2000 ms sampling interval). A
+missing, crashed or stuck sampler never blocks or crashes dwm, and dwm has no timer
+while there is no value to expire. The section is centred horizontally in the bar,
+whatever the tags and layout symbol on the left and the status text on the right take.
+It never overlaps them: when the centre has no room, because a long status text
+reaches it or the title would be left with less than a bar height, the section
+is left out until there is room again.
+.PP
+.B dwmsysmon
+takes no options and samples every 2000 ms. While dwm hides the
+section (property
+.BR _DWM_SYSMON_ENABLED ,
+set by dwm) the sampler sleeps without a timer and removes its value. It
+removes it when it exits on SIGTERM, SIGINT or SIGHUP as well, and it exits when
+the X connection closes.
+.PP
+Each X display has one sampler. A newly started
+.B dwmsysmon
+takes over that display and the previous one, even if it is stuck reading a
+sensor, retires itself as soon as it looks at its events; no process is ever
+signalled by name, so samplers of other X sessions of the same user keep
+running. The sampler also exits when dwm exits or dies while the X server
+keeps running, and removes its value then.
 .SH CUSTOMIZATION
 dwm is customized by creating a custom config.h and (re)compiling the source
 code. This keeps it fast, secure and simple.
