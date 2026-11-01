@@ -7,8 +7,8 @@
  * of the root window; a field whose source is missing is left out, and unknown
  * fields are skipped. dwm publishes whether the section is shown as a CARDINAL
  * (0 or 1), followed by a window that exists as long as dwm does, in
- * SYSMON_ENABLED_ATOM so an idle sampler can stop waking up and a sampler can
- * tell when dwm is gone.
+ * SYSMON_ENABLED_ATOM: the sampler exits when the section is hidden or that
+ * window is gone, and dwm starts a new one when the section is shown.
  */
 #include <stddef.h>
 

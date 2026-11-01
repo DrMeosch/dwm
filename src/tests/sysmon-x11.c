@@ -6,10 +6,12 @@
  * are, while dwm stays responsive. The section is recognised by the bar pixels
  * it produces.
  *
- * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory>
+ * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory> <link>
  *
  * dwmsysmon must be built with SYSMON_STAT_PATH set to <scratch directory>/stat
- * and SYSMON_SYS_PATH set to <scratch directory>/sys.
+ * and SYSMON_SYS_PATH set to <scratch directory>/sys. <link> is the symbolic
+ * link the test dwm finds as "dwmsysmon" first on its PATH; it must point to
+ * <dwmsysmon> when dwm starts.
  */
 #include <X11/Xatom.h>
 #include <X11/Xlib.h>
@@ -18,8 +20,11 @@
 #ifdef HAVE_XTEST
 #include <X11/extensions/XTest.h>
 #endif
+#include <ctype.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +48,8 @@ static unsigned long long fixture_total, fixture_idle;
 static char fixture_path[512];
 static char sys_path[512]; /* the fake sysfs tree dwmsysmon reads its sensors from */
 static int fixture_frozen; /* leave the stat file alone, e.g. while it is deliberately broken */
+static char sampler_exe[PATH_MAX]; /* the real dwmsysmon, as /proc names its executable */
+static char sampler_link[PATH_MAX]; /* what dwm starts as "dwmsysmon" */
 
 #define CHECK(condition, ...) do { \
 	if (!(condition)) { \
@@ -330,21 +337,90 @@ set_resources(const char *text)
 	kill(dwm_pid, SIGUSR2);
 }
 
-static long
-context_switches(pid_t pid)
+/* Make dwm start target as "dwmsysmon" from now on. */
+static void
+provide_sampler(const char *target)
 {
-	char path[64], line[128];
-	FILE *fp;
-	long n = -1;
+	char tmp[PATH_MAX + 8];
 
-	snprintf(path, sizeof path, "/proc/%ld/status", (long)pid);
-	if (!(fp = fopen(path, "r")))
+	snprintf(tmp, sizeof tmp, "%s.new", sampler_link);
+	unlink(tmp);
+	CHECK(symlink(target, tmp) == 0 && rename(tmp, sampler_link) == 0,
+	      "cannot make dwm start %s", target);
+}
+
+/*
+ * How many real samplers run on this X display, whoever started them, and the
+ * pid of one of them. A sampler of another display, or one that has exited
+ * and is only waiting to be reaped, does not count.
+ */
+static int
+samplers(pid_t *pid)
+{
+	char path[64], exe[PATH_MAX], env[16384], want[128], *p;
+	struct dirent *e;
+	DIR *dir;
+	ssize_t len;
+	int fd, n = 0;
+
+	snprintf(want, sizeof want, "DISPLAY=%s", getenv("DISPLAY"));
+	if (!(dir = opendir("/proc")))
 		return -1;
-	while (fgets(line, sizeof line, fp))
-		if (sscanf(line, "voluntary_ctxt_switches: %ld", &n) == 1)
-			break;
-	fclose(fp);
+	while ((e = readdir(dir))) {
+		if (!isdigit((unsigned char)e->d_name[0]))
+			continue;
+		snprintf(path, sizeof path, "/proc/%s/exe", e->d_name);
+		if ((len = readlink(path, exe, sizeof exe - 1)) < 0)
+			continue;
+		exe[len] = '\0';
+		if (strcmp(exe, sampler_exe))
+			continue;
+		snprintf(path, sizeof path, "/proc/%s/environ", e->d_name);
+		if ((fd = open(path, O_RDONLY)) < 0)
+			continue;
+		len = read(fd, env, sizeof env - 1);
+		close(fd);
+		if (len <= 0)
+			continue;
+		env[len] = '\0';
+		for (p = env; p < env + len; p += strlen(p) + 1)
+			if (!strcmp(p, want)) {
+				if (pid)
+					*pid = (pid_t)atol(e->d_name);
+				n++;
+				break;
+			}
+	}
+	closedir(dir);
 	return n;
+}
+
+/* Wait until pid is the only sampler on this X display. */
+static int
+wait_only(pid_t pid, long millis)
+{
+	long waited;
+	pid_t found;
+
+	for (waited = 0; waited <= millis; waited += 25) {
+		if (samplers(&found) == 1 && found == pid)
+			return 1;
+		pump(25);
+	}
+	return 0;
+}
+
+static int
+wait_samplers(int want, long millis, pid_t *pid)
+{
+	long waited;
+
+	for (waited = 0; waited <= millis; waited += 25) {
+		if (samplers(pid) == want)
+			return 1;
+		pump(25);
+	}
+	return 0;
 }
 
 static void
@@ -376,24 +452,37 @@ int
 main(int argc, char *argv[])
 {
 	unsigned long h_off, h_dash, h20, h80, h42, h_two, h_one, h_nofan, h_temp47;
-	char big[4096], medium[64], huge[200];
+	char big[4096], medium[64], huge[200], stub[PATH_MAX];
 	XImage *off_plain, *off_medium, *off_huge, *on_img;
-	long before, after, n;
+	long n;
 	int left, right, width;
 	unsigned long wrongtype[1] = { 42 };
 	unsigned short wide[8] = { 'c', 'p', 'u', '=', '4', '2' };
-	int i, status, quiet;
+	int i, status;
+	pid_t pid, stuck;
+	FILE *fp;
 	static const struct { const char *text; int len; } garbage[] = {
 		{ "cpu=abc", 7 }, { "cpu=101", 7 }, { "cpu=-5", 6 }, { "cpu=", 4 }, { "cpu", 3 },
 		{ "junk", 4 }, { "\377\377\377\377", 4 }, { "cpu=42x", 7 }, { "cpu=1000000", 11 },
 		{ "cpu=42\0cpu=43", 13 }, { "", 0 }, { "\033[2J\033]0;x\007", 10 },
 	};
 
-	if (argc != 4)
+	if (argc != 5)
 		return 2;
 	dwm_pid = (pid_t)atol(argv[1]);
 	snprintf(fixture_path, sizeof fixture_path, "%s/stat", argv[3]);
 	snprintf(sys_path, sizeof sys_path, "%s/sys", argv[3]);
+	snprintf(sampler_link, sizeof sampler_link, "%s", argv[4]);
+	if (!realpath(argv[2], sampler_exe)) {
+		perror("sysmon-x11: dwmsysmon");
+		return 1;
+	}
+	/* what dwm starts while this program stands in for the sampler: it exits at once */
+	snprintf(stub, sizeof stub, "%s/stub-sampler", argv[3]);
+	if (!(fp = fopen(stub, "w")) || fputs("#!/bin/sh\nexit 0\n", fp) < 0 || fclose(fp) || chmod(stub, 0755)) {
+		perror("sysmon-x11: stub sampler");
+		return 1;
+	}
 	if (!(dpy = XOpenDisplay(NULL))) {
 		fputs("sysmon-x11: cannot open display\n", stderr);
 		return 1;
@@ -411,6 +500,7 @@ main(int argc, char *argv[])
 	h_off = steady_hash();
 	CHECK(h_off, "the bar never settled");
 	CHECK(enabled_flag() == 0, "dwm did not tell the sampler the section is hidden (%ld)", enabled_flag());
+	CHECK(samplers(NULL) == 0, "dwm started a sampler although the section is off by default");
 	publish("cpu=42");
 	pump(300);
 	CHECK(bar_hash() == h_off, "a value published while the section is hidden changed the bar");
@@ -432,6 +522,7 @@ main(int argc, char *argv[])
 	CHECK(off_plain && off_medium && off_huge && steady_hash() == h_off, "cannot capture the bar");
 
 	/* shown by the resource: the empty section is "-" and takes room from the title */
+	provide_sampler(stub);
 	/* a long stale limit: a payload dwm wrongly accepted must not vanish by itself and pass as "-" */
 	set_resources("dwm.showsysmon: 1\ndwm.sysmonstale: 60000\n");
 	for (i = 0; i < 80 && bar_hash() == h_off; i++)
@@ -617,9 +708,12 @@ main(int argc, char *argv[])
 	remove_value();
 	CHECK(wait_hash(h_dash, 2000), "the value did not go away");
 
-	/* the real sampler: values from a stat file, then hang, bad data and no data */
-	set_resources("dwm.sysmonstale: 4500\n");
-	start_sampler(argv[2]);
+	/* the real sampler, started by dwm: values from a stat file, then hang, bad data and no data */
+	set_resources("dwm.showsysmon: 0\n");
+	CHECK(wait_hash(h_off, 3000), "the section did not hide before the real sampler's turn");
+	provide_sampler(sampler_exe);
+	set_resources("dwm.showsysmon: 1\ndwm.sysmonstale: 4500\n");
+	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start dwmsysmon");
 	fixture_busy = 20;
 	CHECK(wait_hash(h20, 6000), "dwmsysmon's 20%% was not shown by dwm");
 	/* no sysfs sensors at all: only the CPU usage is published */
@@ -654,21 +748,33 @@ main(int argc, char *argv[])
 	fixture_frozen = 0;
 	CHECK(wait_hash(h20, 8000), "the value did not return after the stat file came back");
 
-	/* hidden again: the sampler publishes nothing and stops waking up */
+	/* hidden again: the sampler exits and takes its value along; shown again, dwm starts a new one */
 	set_resources("dwm.showsysmon: 0\n");
 	CHECK(wait_hash(h_off, 3000), "turning the section off through Xresources did not restore the bar");
+	CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
 	CHECK(wait_value(NULL, 3000), "the sampler left its value behind while hidden");
 	CHECK(enabled_flag() == 0, "dwm did not tell the sampler the section is hidden again");
-	quiet = 0;
-	for (i = 0; i < 4 && !quiet; i++) {
-		before = context_switches(sampler_pid);
-		pause_millis(1500);
-		after = context_switches(sampler_pid);
-		quiet = before >= 0 && before == after;
-	}
-	CHECK(quiet, "dwmsysmon keeps waking up while the section is hidden");
 	set_resources("dwm.showsysmon: 1\n");
+	CHECK(wait_samplers(1, 3000, &pid) && pid != sampler_pid, "showing the section again did not start a new sampler");
+	sampler_pid = pid;
 	CHECK(wait_hash(h20, 8000), "the value did not return when the section was shown again");
+
+	/*
+	 * A sampler that misses the stop, as one stuck in a sensor read would, does
+	 * not hold up dwm, and the sampler dwm starts next retires it.
+	 */
+	stuck = sampler_pid;
+	kill(stuck, SIGSTOP);
+	set_resources("dwm.showsysmon: 0\n");
+	CHECK(wait_hash(h_off, 3000), "a stuck sampler held up hiding the section");
+	responsive("hiding the section of a stuck sampler");
+	set_resources("dwm.showsysmon: 1\n");
+	CHECK(wait_samplers(2, 3000, NULL), "showing the section did not start a sampler beside the stuck one");
+	responsive("starting a sampler beside a stuck one");
+	kill(stuck, SIGCONT);
+	CHECK(wait_samplers(1, 3000, &pid) && pid != stuck, "the stuck sampler was not retired by the new one");
+	sampler_pid = pid;
+	CHECK(wait_hash(h20, 8000), "the value did not return from the sampler that replaced a stuck one");
 
 #ifdef HAVE_XTEST
 	{ /* Mod+Shift+b toggles the section */
@@ -689,7 +795,10 @@ main(int argc, char *argv[])
 			if (press == 0) {
 				CHECK(wait_hash(h_off, 3000), "Mod+Shift+b did not hide the section");
 				CHECK(enabled_flag() == 0, "Mod+Shift+b did not tell the sampler to stop");
+				CHECK(wait_samplers(0, 3000, NULL), "Mod+Shift+b did not stop the sampler");
+				CHECK(wait_value(NULL, 3000), "the sampler stopped by Mod+Shift+b left its value behind");
 			} else {
+				CHECK(wait_samplers(1, 3000, &sampler_pid), "Mod+Shift+b did not start the sampler again");
 				CHECK(wait_hash(h20, 8000), "Mod+Shift+b did not show the section with a value");
 			}
 		}
@@ -698,9 +807,9 @@ main(int argc, char *argv[])
 
 	/*
 	 * Sensors from a fake sysfs tree: a Dell-like laptop whose two fans show up
-	 * on a fast and a slow chip. Hiding and showing the section makes the
-	 * sampler look for sources at once. Fans that go away are no longer shown,
-	 * and so is a malformed temperature.
+	 * on a fast and a slow chip. Hiding and showing the section starts a new
+	 * sampler, which looks for sources at once. Fans that go away are no longer
+	 * shown, and so is a malformed temperature.
 	 */
 	put_sys("devices/hwmon1/name", "coretemp\n");
 	put_sys("devices/hwmon1/temp1_input", "48000\n");
@@ -724,7 +833,9 @@ main(int argc, char *argv[])
 	}
 	set_resources("dwm.showsysmon: 0\n");
 	CHECK(wait_hash(h_off, 3000), "the section did not hide before the sensors appeared");
+	CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
 	set_resources("dwm.showsysmon: 1\n");
+	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
 	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", 8000), "dwmsysmon did not publish the temperature and both fans");
 	CHECK(wait_hash(h_two, 3000), "dwm did not show the temperature and both fans");
 	put_sys("devices/hwmon2/fan2_input", NULL);
@@ -767,6 +878,12 @@ main(int argc, char *argv[])
 		put_sys("devices/hwmon1/temp1_input", "47000\n"); /* a plain file again, before the next read */
 	}
 
+	/* a sampler started by hand takes over from the one dwm started */
+	pid = sampler_pid;
+	start_sampler(argv[2]);
+	CHECK(wait_only(sampler_pid, 3000), "a sampler started by hand did not take over from dwm's");
+	CHECK(wait_value("cpu=20 temp=47", 6000), "the sampler started by hand did not publish");
+
 	/* terminating the sampler removes its value; dwm shows "-" and keeps working */
 	kill(sampler_pid, SIGTERM);
 	CHECK(waitpid(sampler_pid, &status, 0) == sampler_pid && WIFEXITED(status) && WEXITSTATUS(status) == 0,
@@ -778,6 +895,7 @@ main(int argc, char *argv[])
 	/* leave the shared test dwm as found */
 	set_resources("dwm.showsysmon: 0\n");
 	CHECK(wait_hash(h_off, 3000), "the section was not hidden at the end");
+	CHECK(samplers(NULL) == 0, "a sampler is left running with the section hidden");
 	if (sampler_pid > 0)
 		kill(sampler_pid, SIGKILL);
 	XCloseDisplay(dpy);

@@ -39,6 +39,12 @@ cleanup() {
 	if [ -n "$transient_pid" ]; then kill -TERM "$transient_pid" 2>/dev/null || true; fi
 	if [ -n "$dwm_pid" ]; then kill -TERM "$dwm_pid" 2>/dev/null || true; fi
 	if [ -n "$server_pid" ]; then kill -TERM "$server_pid" 2>/dev/null || true; fi
+	# the samplers the test dwm started, including one a failed check left stopped
+	sampler=$(readlink -f "$tmp/dwmsysmon")
+	for proc in /proc/[0-9]*; do
+		[ "$(readlink "$proc/exe" 2>/dev/null)" = "$sampler" ] && kill -KILL "${proc#/proc/}" 2>/dev/null
+	done
+	rm -rf "$tmp"
 }
 trap cleanup EXIT HUP INT TERM
 
@@ -120,7 +126,10 @@ fi
 
 "$tmp/eventloop"
 
-"$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
+# dwm starts the sampler that reads fixtures, never an installed dwmsysmon
+mkdir "$tmp/bin"
+ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
+PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
 if [ "$input_available" -eq 1 ]; then
@@ -219,7 +228,7 @@ kill -USR2 "$dwm_pid"
 # The system monitor section: values, garbage, stale data and a hung or broken
 # sampler must leave dwm responsive. The sampler reads a fixture, never /proc/stat.
 mkdir "$tmp/sysmon"
-"$tmp/sysmon-x11" "$dwm_pid" "$tmp/dwmsysmon" "$tmp/sysmon"
+"$tmp/sysmon-x11" "$dwm_pid" "$tmp/dwmsysmon" "$tmp/sysmon" "$tmp/bin/dwmsysmon"
 kill -0 "$dwm_pid"
 # docs/dwm-{light,dark}.sh must still switch dwm when every desktop step fails,
 # and must report the result with notify-send. The stubs log their arguments;

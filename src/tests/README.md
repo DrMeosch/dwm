@@ -139,33 +139,58 @@ up and change the bar, that a malformed temperature or fan list is left out
 without hiding the other fields, that garbage (wrong content, wrong type or
 format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
 stale by itself and stays while it is refreshed, and after each of these that
-dwm still redraws a status change. It also checks that the section is centred
+dwm still redraws a status change. The test dwm finds `dwmsysmon` through a
+symbolic link first on its `PATH`, which the check points at a stub that exits
+at once while it stands in for the sampler, and at the fixture build of the real
+sampler otherwise; samplers are counted by their executable and `DISPLAY` in
+`/proc`, so an installed `dwmsysmon` is never started or counted. It also checks that the section is centred
 in the bar with a short and with a long status text, and is left out, without
 overlapping anything, when a very long status text reaches the centre, with
-the CPU usage alone and with the temperature and one, two or four fans. It then
-starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
+the CPU usage alone and with the temperature and one, two or four fans. It first
+checks that dwm, running with the section off by default, started no sampler.
+It then shows the section so that dwm starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
 instead of `/proc/stat` and `SYSMON_SYS_PATH` at a fake sysfs tree instead of
 `/sys`, and sampling at its fixed 2000 ms interval (with
 `dwm.sysmonstale` raised to 4500), and checks the published value and the bar
 for a changing load, a stopped (hung) sampler, a malformed and a missing stat file
-(`-`, then recovery), a hidden section (no value, no flag left behind, and no
-wake-ups of the sampler), sensors appearing in the fake tree (the temperature
+(`-`, then recovery), a hidden section (the sampler exits and leaves no value,
+and showing the section again starts a new one whose value comes back), a
+sampler stopped with SIGSTOP while the section is hidden (dwm hides the section
+and stays responsive, and when the section is shown again the sampler dwm
+starts retires the stopped one once it continues), sensors appearing in the fake tree (the temperature
 and both fans of a Dell-like laptop, then one fan, none, and a malformed
 temperature, each published and drawn), a sensor read that hangs (a FIFO as the
 temperature input: dwm stays responsive and lets the value go stale, and the
-value returns once the read completes) and a clean exit on SIGTERM. With XTEST
-available it also toggles the section with Super+Shift+b. The test dwm is left
-with the section hidden.
+value returns once the read completes), a sampler started by hand taking over
+from the one dwm started, and a clean exit on SIGTERM. With XTEST available it
+also toggles the section with Super+Shift+b, which must stop the sampler and
+remove its value, then start a new one whose value is shown. The test dwm is
+left with the section hidden and no sampler running.
 
 `core.c` also runs the command dwm hands to `system()` at startup against stub
 `killall`, `dwmblocks` and `dwmsysmon` programs, with nothing else on `PATH`, and
-checks that it starts the sampler without stopping samplers by name.
+checks that it starts `dwmblocks` but neither starts nor stops a sampler. With
+the process start and the X property recorded instead, it checks that dwm starts
+`dwmsysmon` exactly once each time the section turns on (at start-up with the
+resource set, by Super+Shift+b or by a reload), never with the section off by
+default or on a reload that changes nothing, and that hiding the section only
+publishes the flag the sampler exits on.
 `sysmon-lifecycle.sh` runs from `x11.sh` with two private X servers standing in
-for two X sessions of one user, each with the test dwm and a real `dwmsysmon`
-reading an advancing fixture and an empty sysfs tree. A replacement sampler on one display must retire
-that display's sampler only, and restarting dwm there must leave the other
-session's sampler and value untouched. When dwm exits normally with the X server
-still running, with the section shown or hidden, or is killed outright, its
+for two X sessions of one user, each with the test dwm, which starts a real
+`dwmsysmon` (found first on its `PATH`) reading an advancing fixture and an
+empty sysfs tree. Samplers are counted per display by their executable and
+`DISPLAY` in `/proc`. With the section off by default no sampler runs on either
+display; showing it through Xresources and SIGUSR2 starts exactly one sampler on
+that display only. A replacement sampler on one display must retire that
+display's sampler only. Hiding the section there must stop its sampler and
+remove its value while the other display's sampler and value stay untouched, a
+sampler started while the section is hidden must exit at once, and showing it
+again must start a new one whose value comes back. A sampler stopped with
+SIGSTOP before the section is hidden must be retired, once it continues, by the
+one dwm starts when the section is shown again. Restarting dwm there must leave
+the other session's sampler and value untouched; dwm started with the section
+shown starts a sampler right away, and started with it hidden starts none. When
+dwm exits normally with the X server still running, or is killed outright, its
 sampler must exit and remove its value, and a sampler started after dwm is gone
 must not linger.
 

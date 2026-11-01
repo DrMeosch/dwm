@@ -165,6 +165,7 @@ static const char *brightness_down_with_shuft[] = { "sb-brightnessctl", "set", "
 
 /* commands */
 static const char *termcmd[]  = { TERMINAL, NULL };
+static const char *sysmoncmd[] = { "dwmsysmon", NULL }; /* runs while the system monitor is shown */
 
 /*
  * Xresources preferences to load at startup and on reload

@@ -1987,7 +1987,7 @@ reloadcolors(void)
 
 void
 runAutostart(void) {
-	int status = system("killall -q dwmblocks; dwmblocks & dwmsysmon &");
+	int status = system("killall -q dwmblocks; dwmblocks &");
 
 	(void)status;
 }
@@ -2796,7 +2796,12 @@ updatesysmon(void)
 	}
 }
 
-/* Tell the sampler whether the section is shown, and forget the value when that changes. */
+/*
+ * Tell the sampler whether the section is shown, and forget the value when that
+ * changes. Showing it starts this display's sampler; hiding it makes the sampler
+ * exit by itself, so dwm never signals or waits for one. A sampler that misses
+ * the flag, stuck in a sensor read, is retired by the next one started.
+ */
 void
 applysysmon(void)
 {
@@ -2810,8 +2815,11 @@ applysysmon(void)
 	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)on, 2);
+	XSync(dpy, False); /* a sampler started now must find the flag set */
 	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;
+	if (showsysmon)
+		spawn(&(Arg){ .v = sysmoncmd });
 }
 
 /* A value the sampler stopped refreshing is dropped once it is stale. */

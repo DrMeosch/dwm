@@ -3,9 +3,10 @@
  * dwmsysmon: samples system load, the CPU temperature and the fans outside the
  * window manager and publishes the latest values in the root window property
  * read by dwm (see sysmon.h). It only ever writes one short property, never
- * blocks dwm, and exits with the X connection. While dwm shows no system
- * monitor it sleeps without a timer. Sensors are read less often than the CPU,
- * and even less often when they are slow to answer (see sensors.h).
+ * blocks dwm, and exits with the X connection. dwm starts it when the system
+ * monitor is shown, and it exits by itself as soon as dwm hides the section.
+ * Sensors are read less often than the CPU, and even less often when they are
+ * slow to answer (see sensors.h).
  *
  * Each X display has at most one sampler: a new one takes the
  * SYSMON_OWNER_ATOM selection and the previous one, which may be stuck in
@@ -35,7 +36,7 @@
 #define SYSMON_SYS_PATH "/sys"
 #endif
 #define INTERVAL 2000 /* ms between samples */
-#define FIRST_TICK 500 /* ms until the first value after sampling starts */
+#define FIRST_TICK 500 /* ms until the first value */
 
 static int sigfd[2];
 static Display *dpy;
@@ -169,8 +170,8 @@ main(int argc, char *argv[])
 	SysmonValues val;
 	Sensors sensors;
 	XEvent ev;
-	long long next = 0, sensornext = 0, t;
-	int on, now, have = 0, timeout, stop = 0;
+	long long next, sensornext, t;
+	int have, timeout, stop = 0;
 
 	(void)argv;
 	if (argc != 1)
@@ -205,12 +206,11 @@ main(int argc, char *argv[])
 
 	sysmon_clear(&val);
 	sensors_init(&sensors);
-	if ((on = enabled()) < 0) /* a dwm that is gone left its property behind */
+	/* hidden, or a dwm that is gone left its property behind */
+	if (enabled() <= 0)
 		stop = 1;
-	else if (on) {
-		have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-		next = sensornext = nowms() + FIRST_TICK;
-	}
+	have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
+	next = sensornext = nowms() + FIRST_TICK;
 	while (!stop) {
 		while (!stop && XPending(dpy)) {
 			XNextEvent(dpy, &ev);
@@ -219,46 +219,29 @@ main(int argc, char *argv[])
 			else if (ev.type == DestroyNotify && ev.xdestroywindow.window == dwmwin)
 				stop = 1; /* dwm exited or died */
 			else if (ev.type == PropertyNotify && ev.xproperty.window == root
-			&& ev.xproperty.atom == enabledatom) {
-				if ((now = enabled()) < 0)
-					stop = 1;
-				else if (now != on) {
-					on = now;
-					have = 0;
-					sysmon_clear(&val);
-					sensors_init(&sensors); /* look again: modules may have come and gone */
-					if (on) {
-						have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-						next = sensornext = nowms() + FIRST_TICK;
-					} else
-						publish(&val);
-				}
-			}
+			&& ev.xproperty.atom == enabledatom && enabled() <= 0)
+				stop = 1; /* dwm hid the section, or is gone */
 		}
 		if (stop)
 			break;
-		timeout = -1;
-		if (on) {
-			if ((t = nowms()) >= next) {
-				if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
-					val.cpu = have ? sysmon_cpu_percent(&prev, &cur) : -1;
-					prev = cur;
-					have = 1;
-				} else {
-					val.cpu = -1;
-					have = 0;
-				}
-				if (t >= sensornext) {
-					sensors_sample(&sensors, SYSMON_SYS_PATH, t, &val);
-					sensornext = t + sensors_delay(nowms() - t);
-				}
-				publish(&val);
-				next = t + INTERVAL;
+		if ((t = nowms()) >= next) {
+			if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
+				val.cpu = have ? sysmon_cpu_percent(&prev, &cur) : -1;
+				prev = cur;
+				have = 1;
+			} else {
+				val.cpu = -1;
+				have = 0;
 			}
-			timeout = (int)(next - nowms());
-			if (timeout < 0)
-				timeout = 0;
+			if (t >= sensornext) {
+				sensors_sample(&sensors, SYSMON_SYS_PATH, t, &val);
+				sensornext = t + sensors_delay(nowms() - t);
+			}
+			publish(&val);
+			next = t + INTERVAL;
 		}
+		if ((timeout = (int)(next - nowms())) < 0)
+			timeout = 0;
 		if (poll(fds, 2, timeout) < 0 && errno != EINTR)
 			break;
 		if (fds[1].revents || (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)))
