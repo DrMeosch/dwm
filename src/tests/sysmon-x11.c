@@ -380,42 +380,29 @@ published_interval(void)
 	return ms;
 }
 
-/*
- * Publish another interval in dwm's place, keeping its flag, window and
- * payload length; with count 3, leave the length out, as a dwm from before
- * the history does.
- */
+/* Publish another interval in dwm's place, keeping its flag and window. */
 static void
-set_flag(unsigned long ms, int count)
+set_interval(unsigned long ms)
 {
 	Atom type;
 	int format;
-	unsigned long n, after, flag[4];
+	unsigned long n, after, flag[3];
 	unsigned char *data = NULL;
 
-	if (XGetWindowProperty(dpy, root, enabledatom, 0, 4, False, XA_CARDINAL, &type,
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 3, False, XA_CARDINAL, &type,
 	    &format, &n, &after, &data) != Success || !data || type != XA_CARDINAL
-	|| format != 32 || n < 3) {
+	|| format != 32 || n != 3) {
 		CHECK(0, "dwm published no interval to replace");
 		if (data)
 			XFree(data);
 		return;
 	}
-	memset(flag, 0, sizeof flag);
-	memcpy(flag, data, n * sizeof *flag);
+	memcpy(flag, data, sizeof flag);
 	XFree(data);
 	flag[2] = ms;
-	if (count == 4 && n < 4)
-		flag[3] = 128;
 	XChangeProperty(dpy, root, enabledatom, XA_CARDINAL, 32, PropModeReplace,
-	                (unsigned char *)flag, count);
+	                (unsigned char *)flag, 3);
 	XFlush(dpy);
-}
-
-static void
-set_interval(unsigned long ms)
-{
-	set_flag(ms, 4);
 }
 
 /* ms between two consecutive publishes of the sampler by the X server's clock, -1 if they did not come. */
@@ -1277,35 +1264,6 @@ main(int argc, char *argv[])
 	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", VALUE_MS), "dwmsysmon did not publish the temperature and both fans");
 	CHECK(wait_look(l_two, 3000), "dwm did not show the temperature and both fans");
 
-	/*
-	 * A dwm from before the history does not say how much of the payload it
-	 * reads: the sampler then keeps to the 64 bytes it does read, leaving out
-	 * the history rather than any value, and sends the history again once dwm
-	 * says it reads more. Sampling every 250 ms fills the history quickly.
-	 */
-	{
-		int ok = 0, fits = 1;
-
-		set_flag(250, 3);
-		for (i = 0; i < 400 && !ok; i++) {
-			pump(25);
-			ok = read_value(value, sizeof value) && !strcmp(value, "cpu=20 temp=48 fan=2100,2050");
-		}
-		CHECK(ok, "dwmsysmon did not leave out the history that does not fit an older dwm (\"%s\")", value);
-		for (i = 0; i < 80; i++) { /* eight samples more */
-			pump(25);
-			if (read_value(value, sizeof value))
-				fits = fits && !strcmp(value, "cpu=20 temp=48 fan=2100,2050");
-		}
-		CHECK(fits, "dwmsysmon did not keep to what an older dwm reads (\"%s\")", value);
-		set_flag(SAMPLE_MS, 4);
-		for (i = 0, ok = 0; i < (2 * SAMPLE_MS) / 25 && !ok; i++) {
-			pump(25);
-			ok = read_value(value, sizeof value) && strlen(value) > 64 && strstr(value, " cpuhist=");
-		}
-		CHECK(ok, "dwmsysmon did not send its history again when dwm said it reads it (\"%s\")", value);
-		CHECK(wait_look(l_two, 3000), "dwm did not show the temperature and both fans with the history");
-	}
 	put_sys("devices/hwmon2/fan2_input", NULL);
 	CHECK(wait_value("cpu=20 temp=48 fan=2100", SENSOR_MS), "a fan that went away was still published");
 	CHECK(wait_look(l_one, 3000), "dwm did not show the one fan left");

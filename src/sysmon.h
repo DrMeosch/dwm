@@ -8,11 +8,10 @@
  * left out, and unknown fields are skipped. cpuhist holds the latest CPU usage
  * samples, oldest first, the last one being the cpu value. dwm publishes whether
  * the section is shown as a CARDINAL (0 or 1), followed by a window that exists
- * as long as dwm does, the ms between samples and how many bytes of the
- * payload it reads, in SYSMON_ENABLED_ATOM: the sampler exits when the section
- * is hidden or that window is gone, and dwm starts a new one when the section
- * is shown. The sampler leaves the history out of a payload that would not fit
- * what dwm reads, so a dwm from before the history keeps its values.
+ * as long as dwm does and the ms between samples, in SYSMON_ENABLED_ATOM: the
+ * sampler exits when the section is hidden or that window is gone, and dwm
+ * starts a new one when the section is shown. A dwm from before the history
+ * cannot read a payload that holds it, and shows "-" until it is restarted.
  */
 #include <stddef.h>
 
@@ -20,7 +19,6 @@
 #define SYSMON_ENABLED_ATOM "_DWM_SYSMON_ENABLED"
 #define SYSMON_OWNER_ATOM "_DWM_SYSMON_OWNER" /* selection: the sampler of a display */
 #define SYSMON_MAXLEN 128 /* bytes dwm reads; multiple of 4 */
-#define SYSMON_OLDMAXLEN 64 /* bytes read by a dwm that does not say */
 #define SYSMON_INTERVAL 4000 /* ms between samples when dwm names none, or one out of range */
 #define SYSMON_MININTERVAL 250 /* ms */
 #define SYSMON_MAXINTERVAL 60000 /* ms */
@@ -58,8 +56,7 @@ void sysmon_clear(SysmonValues *v);
 void sysmon_push(SysmonValues *v, int cpu);
 /*
  * Write the property payload with the values that are in range; returns its
- * length, 0 when there is none, or -1 if it does not fit. The history is left
- * out when only it does not fit.
+ * length, 0 when there is none, or -1 if it does not fit.
  */
 int sysmon_encode(char *buf, size_t size, const SysmonValues *v);
 /*

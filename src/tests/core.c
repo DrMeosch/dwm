@@ -37,7 +37,7 @@ autostart_system(const char *command)
 /* spawn() and the flag applysysmon() publishes, recorded instead of reaching a process or X */
 static const char *spawned[8];
 static int nspawned;
-static unsigned long sysmonflag = 2, sysmoninterval, sysmonmaxlen;
+static unsigned long sysmonflag = 2, sysmoninterval;
 #define posix_spawnp record_spawnp
 #define XChangeProperty record_changeproperty
 #define XSync record_sync
@@ -70,10 +70,9 @@ record_changeproperty(Display *d, Window w, Atom property, Atom type, int format
 	const unsigned char *data, int n)
 {
 	(void)d; (void)w; (void)type; (void)mode;
-	if (property == sysmonenabledatom && format == 32 && n == 4) {
+	if (property == sysmonenabledatom && format == 32 && n == 3) {
 		sysmonflag = ((const unsigned long *)data)[0];
 		sysmoninterval = ((const unsigned long *)data)[2];
-		sysmonmaxlen = ((const unsigned long *)data)[3];
 	}
 	return 1;
 }
@@ -910,8 +909,6 @@ test_sysmon_start(void)
 	CHECK(sysmoninterval == 4000 && sysmoninterval == SYSMONINTERVAL,
 	      "dwm did not tell the sampler to sample every 4000 ms (%lu)", sysmoninterval);
 	CHECK(sysmonstale > 2 * SYSMONINTERVAL, "the default staleness limit (%d ms) does not cover two samples", sysmonstale);
-	/* and sends its history only because dwm says it reads payloads that long */
-	CHECK(sysmonmaxlen == SYSMON_MAXLEN, "dwm did not tell the sampler it reads %d bytes (%lu)", SYSMON_MAXLEN, sysmonmaxlen);
 	applysysmon();
 	CHECK(nspawned == 0, "a reload with the section off started a sampler");
 	showsysmon = 1;

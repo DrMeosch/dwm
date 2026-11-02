@@ -115,11 +115,9 @@ out-of-range or repeated field, such as a history with an empty, signed,
 four-digit or out-of-range sample or a 17th one, is missing while the others
 stay; every combination of values and history lengths survives encoding and
 decoding, the longest payload fits, encoding leaves out a history with a sample
-out of range or too many samples rather than sending part of it, and a
-history that does not fit the buffer rather than the other values; within the
-64 bytes a dwm from before the history reads, a short history is still sent
-and a full one is left out, and the decoder dwm had before temperatures and
-fans still reads the CPU usage of a new sampler). It
+out of range or too many samples rather than sending part of it, a buffer one
+byte short of the longest payload is no payload, and the decoder dwm had before
+temperatures and fans still reads the CPU usage of a new sampler). It
 also builds fake sysfs trees in a scratch directory for the sampler's sensor
 sources: none at all, a Dell-like laptop (sparse `coretemp` inputs, the same two
 fans on the fast `dell_ddv` and the slow `dell_smm` chip, a `dell_smm` label
@@ -139,8 +137,8 @@ least, none for a width of 0 or below) the section is wider by the graph, and
 when room runs short the graph loses bars one at a time down to none before the
 section is left out, at the exact pixel where the status begins and where the
 title would keep only a bar height. It checks that a held value, history
-included, expires on time and that dwm sets no poll timeout without one, that
-dwm tells the sampler it reads 128 bytes, and that a click on the section, its
+included, expires on time and that dwm sets no poll timeout without one, and that
+a click on the section, its
 graph or the gap up to the status is neither a title, layout symbol nor status
 click, while a click on the title left of it, on the status, or with the section
 off or left out for lack of room keeps its usual meaning.
@@ -194,11 +192,7 @@ and both fans of a Dell-like laptop, then one fan, none, and a malformed
 temperature, each published and drawn), a sensor read that hangs (a FIFO as the
 temperature input: dwm stays responsive and lets the value go stale, and the
 value returns once the read completes), a sampler started by hand taking over
-from the one dwm started, and a clean exit on SIGTERM. With the length dwm reads
-left out of `_DWM_SYSMON_ENABLED`, as a dwm from before the graph publishes it,
-and sampling every 250 ms, the sampler must publish the temperature and both
-fans without the history in at most 64 bytes, and send the history again once
-the length is back. With XTEST available it
+from the one dwm started, and a clean exit on SIGTERM. With XTEST available it
 also toggles the section with Super+Shift+b, which must stop the sampler and
 remove its value, then start a new one whose value is shown. The test dwm is
 left with the section hidden and no sampler running.

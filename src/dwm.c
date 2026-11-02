@@ -2860,7 +2860,7 @@ updatesysmon(void)
 void
 applysysmon(void)
 {
-	unsigned long on[4];
+	unsigned long on[3];
 
 	showsysmon = showsysmon != 0;
 	if (showsysmon == sysmonpublished)
@@ -2869,9 +2869,8 @@ applysysmon(void)
 	on[0] = showsysmon;
 	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
 	on[2] = SYSMONINTERVAL;
-	on[3] = SYSMON_MAXLEN; /* so the sampler sends the history only to a dwm that reads it */
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
-		PropModeReplace, (unsigned char *)on, 4);
+		PropModeReplace, (unsigned char *)on, 3);
 	XSync(dpy, False); /* a sampler started now must find the flag set */
 	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;

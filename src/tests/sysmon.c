@@ -230,43 +230,12 @@ test_payload(void)
 	n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
 	CHECK(n > 0 && n <= SYSMON_MAXLEN && sysmon_decode(buf, (unsigned long)n, &back) == 0
 	      && !memcmp(&v, &back, sizeof v), "the longest payload (%d bytes) does not fit", n);
-	/* a buffer too short for the history gets the other values without it */
-	CHECK(sysmon_encode(buf, (size_t)n, &v) > 0 && !strstr(buf, "cpuhist")
-	      && sysmon_decode(buf, strlen(buf), &back) == 0 && back.cpu == 100 && back.nfan == SYSMON_FANS
-	      && back.nhist == 0, "encode did not leave out a history that does not fit: \"%s\"", buf);
+	/* a buffer one byte short of the longest payload overran or left something out */
+	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short of the history");
 	v.nhist = 0;
 	n = sysmon_encode(buf, sizeof buf, &v);
 	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short");
 	CHECK(sysmon_encode(buf, 0, &v) == -1, "encode wrote to an empty buffer");
-	/* what a dwm from before the history reads: every value but the history, at most */
-	sysmon_clear(&v);
-	v.cpu = 100;
-	v.temp = SYSMON_MAXTEMP;
-	for (v.nfan = 0; v.nfan < SYSMON_FANS; v.nfan++)
-		v.fan[v.nfan] = SYSMON_MAXFAN;
-	v.nhist = 1;
-	v.hist[0] = 100;
-	n = sysmon_encode(buf, SYSMON_OLDMAXLEN + 1, &v);
-	CHECK(n > 0 && n <= SYSMON_OLDMAXLEN && !strcmp(buf, "cpu=100 temp=150 fan=30000,30000,30000,30000 cpuhist=100"),
-	      "a history that fits a dwm from before it was left out: \"%s\" (%d bytes)", buf, n);
-	for (v.nhist = 0; v.nhist < SYSMON_HIST; v.nhist++)
-		v.hist[v.nhist] = 100;
-	n = sysmon_encode(buf, SYSMON_OLDMAXLEN + 1, &v);
-	CHECK(n > 0 && n <= SYSMON_OLDMAXLEN && !strstr(buf, "cpuhist") && sysmon_decode(buf, (unsigned long)n, &back) == 0
-	      && back.cpu == 100 && back.temp == SYSMON_MAXTEMP && back.nfan == SYSMON_FANS,
-	      "a dwm from before the history lost values to it: \"%s\"", buf);
-	sysmon_clear(&v);
-	v.cpu = 42;
-	v.temp = 55;
-	v.nfan = 2;
-	v.fan[0] = 2400;
-	v.fan[1] = 2350;
-	v.nhist = 2;
-	v.hist[0] = 40;
-	v.hist[1] = 42;
-	n = sysmon_encode(buf, SYSMON_OLDMAXLEN + 1, &v);
-	CHECK(n > 0 && !strcmp(buf, "cpu=42 temp=55 fan=2400,2350 cpuhist=40,42"),
-	      "a short history that fits was left out: \"%s\"", buf);
 	/* values out of range are left out, never sent */
 	sysmon_clear(&v);
 	v.cpu = 101;

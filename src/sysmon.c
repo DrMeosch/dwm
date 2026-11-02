@@ -126,10 +126,8 @@ sysmon_encode(char *buf, size_t size, const SysmonValues *v)
 	for (i = 0; i < v->nhist; i++)
 		if (v->hist[i] < 0 || v->hist[i] > 100)
 			return (int)len;
-	if ((n = history(buf + len, size - len, len ? " " : "", v)) < 0) {
-		buf[len] = '\0';
-		return (int)len;
-	}
+	if ((n = history(buf + len, size - len, len ? " " : "", v)) < 0)
+		return -1;
 	return (int)len + n;
 }
 

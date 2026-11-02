@@ -289,9 +289,9 @@ in
 .BR _DWM_SYSMON_ENABLED ,
 and the default staleness limit follows it. The sampler keeps its last 16
 CPU usage samples for the graph, and starts over after a reading that fails.
-dwm also says there how long a value it reads; for a dwm that does not say, as
-one from before the graph, the sampler keeps to 64 bytes and leaves the samples
-out when they do not fit. The temperature is that of the
+A dwm from before the graph shows
+.B CPU \-
+for a sampler that sends the samples until it is restarted. The temperature is that of the
 .BR coretemp ,
 .BR k10temp ,
 .B zenpower
