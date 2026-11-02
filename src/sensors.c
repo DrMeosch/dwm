@@ -8,7 +8,9 @@
 #include <string.h>
 #include <unistd.h>
 #ifdef __linux__
+#include <linux/capability.h>
 #include <linux/perf_event.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
 #endif
 
@@ -211,6 +213,7 @@ sensors_init(Sensors *s)
 	s->found = s->gpufound = -1;
 	s->stale = s->gpustale = 1;
 	s->gpuawake = 0;
+	s->gpuopen = 0;
 }
 
 void
@@ -440,39 +443,56 @@ readcounter(int fd, unsigned long long *busy, unsigned long long *enabled)
 	return 0;
 }
 
+/* Open the busy counter of every engine; -1, with none left open, if one cannot be opened. */
+static int
+opencounters(Gpu *g)
+{
+	int i;
+
+	for (i = 0; i < g->nengine; i++)
+		if ((g->fd[i] = opencounter(g, g->config[i])) < 0) {
+			closecounters(g);
+			return -1;
+		}
+	return 0;
+}
+
 /*
  * The usage of an awake Intel GPU since the last reading: the share of the
  * time its busiest engine was busy, as intel_gpu_top and btop show it. The
- * counters are opened at the first reading, which has no value yet; -1 when
- * they cannot be opened or read.
+ * first reading since it woke up has no value yet (SENSORS_PENDING), so no
+ * sample averages over the time it slept; -1 without counters, or when they
+ * cannot be read (closed then, as when its driver goes) or do not advance.
  */
 static int
 intelusage(Gpu *g)
 {
-	unsigned long long busy, enabled;
+	unsigned long long busy[SENSORS_ENGINES], enabled[SENSORS_ENGINES];
 	int i, u, best = 0;
 
-	if (!g->counting) {
-		for (i = 0; i < g->nengine; i++)
-			if ((g->fd[i] = opencounter(g, g->config[i])) < 0
-			|| readcounter(g->fd[i], &g->busyns[i], &g->enabledns[i]) < 0) {
-				closecounters(g);
-				return -1;
-			}
-		g->counting = 1;
+	if (g->fd[0] < 0)
 		return -1;
-	}
-	for (i = 0; i < g->nengine; i++) {
-		if (readcounter(g->fd[i], &busy, &enabled) < 0 || busy < g->busyns[i] || enabled <= g->enabledns[i]) {
+	for (i = 0; i < g->nengine; i++)
+		if (readcounter(g->fd[i], &busy[i], &enabled[i]) < 0) {
 			closecounters(g);
 			return -1;
 		}
-		u = busy - g->busyns[i] >= enabled - g->enabledns[i] ? 100
-		  : (int)((200 * (busy - g->busyns[i]) / (enabled - g->enabledns[i]) + 1) / 2);
+	for (i = 0; g->counting && i < g->nengine; i++) {
+		if (busy[i] < g->busyns[i] || enabled[i] <= g->enabledns[i]) {
+			g->counting = 0; /* start over from this reading */
+			best = -1;
+			break;
+		}
+		u = busy[i] - g->busyns[i] >= enabled[i] - g->enabledns[i] ? 100
+		  : (int)((200 * (busy[i] - g->busyns[i]) / (enabled[i] - g->enabledns[i]) + 1) / 2);
 		if (u > best)
 			best = u;
-		g->busyns[i] = busy;
-		g->enabledns[i] = enabled;
+	}
+	memcpy(g->busyns, busy, g->nengine * sizeof *busy);
+	memcpy(g->enabledns, enabled, g->nengine * sizeof *enabled);
+	if (!g->counting) {
+		g->counting = 1;
+		return best < 0 ? -1 : SENSORS_PENDING;
 	}
 	return best;
 }
@@ -517,27 +537,58 @@ sensors_findgpus(Sensors *s, const char *sys)
 		if (join(path, cards[i].dir, "device/power/autosuspend_delay_ms") == 0
 		&& readvalue(path, &delay) == 0 && delay > s->gpuawake)
 			s->gpuawake = delay;
-		/* counters of the same GPU and engines keep counting */
-		for (j = 0; j < nold; j++)
-			if (old[j].counting && !strcmp(old[j].status, g->status) && old[j].pmutype == g->pmutype
+		/* the counters of the same GPU and engines stay open; others are opened only at the start */
+		for (j = 0; !g->busy[0] && j < nold; j++)
+			if (old[j].fd[0] >= 0 && !strcmp(old[j].status, g->status) && old[j].pmutype == g->pmutype
 			&& old[j].cpu == g->cpu && old[j].nengine == g->nengine
 			&& !memcmp(old[j].config, g->config, g->nengine * sizeof *g->config)) {
 				*g = old[j];
-				old[j].counting = 0;
+				old[j].fd[0] = -1;
 				break;
 			}
+		if (!g->busy[0] && g->fd[0] < 0 && s->gpuopen)
+			opencounters(g);
 		s->ngpu++;
 	}
 	for (j = 0; j < nold; j++)
-		if (old[j].counting)
+		if (old[j].fd[0] >= 0)
 			closecounters(&old[j]);
 }
 
+void
+sensors_startgpus(Sensors *s, const char *sys, long long now)
+{
+	s->gpuopen = 1;
+	sensors_findgpus(s, sys);
+	s->gpuopen = 0;
+	s->gpufound = now;
+}
+
+int
+sensors_dropcaps(void)
+{
+#ifdef __linux__
+	struct __user_cap_header_struct head;
+	struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
+
+	memset(&head, 0, sizeof head);
+	memset(data, 0, sizeof data);
+	head.version = _LINUX_CAPABILITY_VERSION_3;
+	/* the ambient set goes with the permitted one, but older kernels have none */
+	if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) < 0 && errno != EINVAL)
+		return -1;
+	if (syscall(SYS_capset, &head, data) < 0)
+		return -1;
+	return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0 ? -1 : 0;
+#else
+	return 0;
+#endif
+}
+
 /*
- * The usage of a GPU, 0..100, or -1 when it cannot be read; a suspended GPU
- * is idle and left alone. An Intel GPU whose counters were never opened has
- * no usage while it sleeps, so one whose counters cannot be opened is never
- * shown.
+ * The usage of a GPU, 0..100, SENSORS_PENDING, or -1 when it cannot be read;
+ * a suspended GPU is idle and left alone. An Intel GPU without counters has
+ * no usage while it sleeps either, so it is never shown.
  */
 static int
 gpuusage(Gpu *g)
@@ -547,8 +598,10 @@ gpuusage(Gpu *g)
 
 	if (readattr(g->status, status, sizeof status) < 0)
 		return -1;
-	if (!strcmp(status, "suspended") || !strcmp(status, "suspending"))
-		return g->busy[0] || g->counting ? 0 : -1;
+	if (!strcmp(status, "suspended") || !strcmp(status, "suspending")) {
+		g->counting = 0; /* the reading after it wakes up starts over */
+		return g->busy[0] || g->fd[0] >= 0 ? 0 : -1;
+	}
 	/* resuming, or in error: not now */
 	if (strcmp(status, "active") && strcmp(status, "unsupported"))
 		return -1;
@@ -567,10 +620,14 @@ sensors_readgpus(Sensors *s)
 
 	s->gpustale = !s->ngpu;
 	for (i = 0; i < s->ngpu; i++) {
-		if ((u = gpuusage(&s->gpu[i])) < 0)
+		if ((u = gpuusage(&s->gpu[i])) == SENSORS_PENDING) {
+			if (best == -1)
+				best = SENSORS_PENDING;
+		} else if (u < 0) {
 			s->gpustale = 1;
-		else if (u > best)
+		} else if (u > best) {
 			best = u;
+		}
 	}
 	return best;
 }
@@ -578,11 +635,16 @@ sensors_readgpus(Sensors *s)
 void
 sensors_samplegpus(Sensors *s, const char *sys, long long now, SysmonValues *v)
 {
+	int u;
+
 	if (s->gpufound < 0 || (s->gpustale && now - s->gpufound >= SENSORS_REFIND)) {
 		sensors_findgpus(s, sys);
 		s->gpufound = now;
 	}
-	sysmon_pushgpu(v, sensors_readgpus(s));
+	if ((u = sensors_readgpus(s)) == SENSORS_PENDING)
+		v->gpu = -1; /* no value, and no sample: the history goes on */
+	else
+		sysmon_pushgpu(v, u);
 }
 
 long long

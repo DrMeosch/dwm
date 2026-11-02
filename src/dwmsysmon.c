@@ -8,7 +8,9 @@
  * system monitor is shown, and it exits by itself as soon as dwm hides the
  * section. Sensors are read less often than the CPU, and even less often when
  * they are slow to answer; GPUs are read no more often than they take to
- * suspend after a read, and not at all while suspended (see sensors.h).
+ * suspend after a read, and not at all while suspended (see sensors.h). The
+ * only privilege it may have, CAP_PERFMON for Intel GPU counters, it uses to
+ * open them as it starts and then gives up for good.
  *
  * Each X display has at most one sampler: a new one takes the
  * SYSMON_OWNER_ATOM selection and the previous one, which may be stuck in
@@ -179,6 +181,17 @@ main(int argc, char *argv[])
 	long long next, sensornext, gpunext, t;
 	int have, timeout, stop = 0;
 
+	/*
+	 * Counting Intel GPU busy time takes CAP_PERFMON, which make install
+	 * gives this program: open the counters first, then give up every
+	 * privilege for good, before taking any input or talking to X.
+	 */
+	sensors_init(&sensors);
+	sensors_startgpus(&sensors, SYSMON_SYS_PATH, nowms());
+	if (sensors_dropcaps() < 0) {
+		perror("dwmsysmon: cannot drop privileges");
+		return 1;
+	}
 	(void)argv;
 	if (argc != 1)
 		usage();
@@ -211,7 +224,6 @@ main(int argc, char *argv[])
 	fds[0].events = fds[1].events = POLLIN;
 
 	sysmon_clear(&val);
-	sensors_init(&sensors);
 	/* hidden, or a dwm that is gone left its property behind */
 	if (enabled() <= 0)
 		stop = 1;

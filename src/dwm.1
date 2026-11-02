@@ -350,8 +350,12 @@ capability, which
 .B make install
 gives
 .B dwmsysmon
-(and nothing else; dwm needs no privilege). Where it cannot, it says so, and
-the one step left is to run, as root,
+(and nothing else; dwm needs no privilege). The sampler uses it only to open
+the counters, first thing, before it reads its arguments or connects to X,
+then gives up every capability for good (and sets no_new_privs) and reads them
+through the descriptors it keeps, so an Intel GPU that appears later is shown
+only once the sampler is started again. Where make install cannot give it, it
+says so, and the one step left is to run, as root,
 .BR "setcap cap_perfmon=ep /usr/local/bin/dwmsysmon" ;
 without it the Intel GPU is not shown. NVIDIA's and the
 .B xe
@@ -361,7 +365,7 @@ of its device. Reading the usage of a GPU that is
 runtime\-suspended would wake it up, and a read of one that is awake can keep it
 awake for its
 .BR power/autosuspend_delay_ms .
-So the sampler reads a GPU, and opens an Intel GPU's counters, only while its
+So the sampler reads a GPU, or an Intel GPU's counters, only while its
 .B runtime_status
 is
 .B active
@@ -371,11 +375,15 @@ counts it as idle (0%) without reading it while it is
 .B suspended
 or
 .B suspending
-(an Intel GPU only once its counters could be opened, so one they cannot be
-opened for is never shown), and the first reading after that covers the whole
-time since the last one; open counters do not keep the GPU awake, as the kernel
-counts engine busy time in software and samples only engines that are already
-awake. The sampler
+(an Intel GPU only when its counters are open, so one they cannot be opened for
+is never shown); the first reading of an Intel GPU after it wakes up has no
+value yet, so the section shows
+.B GPU \-
+and its graph goes on without a bar for it rather than with one that averages
+over the time it slept. Opening the counters, even of a suspended GPU, and
+keeping them open do not wake it or keep it awake, as the kernel counts engine
+busy time in software and samples only engines that are already awake. The
+sampler
 has no value for it otherwise or when the read fails (as with EBUSY, from a GPU
 that has just suspended), and reads the GPUs with a CPU sample, but only once
 their longest autosuspend delay and a second have passed since the last read.

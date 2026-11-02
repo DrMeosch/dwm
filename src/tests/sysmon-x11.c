@@ -505,6 +505,28 @@ samplers(pid_t *pid)
 	return n;
 }
 
+/* Whether process pid has given up every capability for good: no capability set and no_new_privs. */
+static int
+unprivileged(pid_t pid)
+{
+	char path[64], line[128];
+	FILE *fp;
+	int nnp = -1, caps = 0;
+
+	snprintf(path, sizeof path, "/proc/%d/status", (int)pid);
+	if (!(fp = fopen(path, "r")))
+		return 0;
+	while (fgets(line, sizeof line, fp)) {
+		if (!strncmp(line, "NoNewPrivs:", 11))
+			nnp = atoi(line + 11);
+		if (!strncmp(line, "CapInh:", 7) || !strncmp(line, "CapPrm:", 7) || !strncmp(line, "CapEff:", 7)
+		|| !strncmp(line, "CapAmb:", 7))
+			caps += strtoull(line + 7, NULL, 16) != 0;
+	}
+	fclose(fp);
+	return nnp == 1 && caps == 0;
+}
+
 /* Wait until pid is the only sampler on this X display. */
 static int
 wait_only(pid_t pid, long millis)
@@ -1280,6 +1302,9 @@ main(int argc, char *argv[])
 	snprintf(res, sizeof res, "dwm.showsysmon: 1\ndwm.sysmonstale: %d\n", SAMPLER_STALE_MS);
 	set_resources(res);
 	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start dwmsysmon");
+	for (i = 0; i < 80 && !unprivileged(sampler_pid); i++) /* it gives them up as it starts */
+		pump(25);
+	CHECK(unprivileged(sampler_pid), "dwmsysmon kept a capability or can still gain privileges");
 	fixture_busy = 20;
 	CHECK(wait_look(l20, VALUE_MS), "dwmsysmon's 20%% was not shown by dwm");
 	/* no sysfs sensors at all: only the CPU usage is published */

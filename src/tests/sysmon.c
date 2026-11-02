@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/capability.h>
 #include <linux/perf_event.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -41,6 +42,7 @@ static int failures;
 #define PERFCPU 3 /* the first CPU of its cpumask */
 static char perfdir[512];
 static int perfopens, perferrno;
+static int capsets, capsetzero; /* capset calls, and whether the last asked for no capability at all */
 
 long
 syscall(long number, ...)
@@ -51,6 +53,21 @@ syscall(long number, ...)
 	int pid, cpu, group;
 	va_list ap;
 
+	if (number == SYS_capset) {
+		struct __user_cap_header_struct *head;
+		struct __user_cap_data_struct *data;
+		int i;
+
+		va_start(ap, number);
+		head = va_arg(ap, struct __user_cap_header_struct *);
+		data = va_arg(ap, struct __user_cap_data_struct *);
+		va_end(ap);
+		capsets++;
+		capsetzero = head->version == _LINUX_CAPABILITY_VERSION_3 && head->pid == 0;
+		for (i = 0; i < _LINUX_CAPABILITY_U32S_3; i++)
+			capsetzero = capsetzero && !data[i].effective && !data[i].permitted && !data[i].inheritable;
+		return 0; /* this process has none to give up */
+	}
 	if (number != SYS_perf_event_open) {
 		errno = ENOSYS;
 		return -1;
@@ -1119,11 +1136,12 @@ test_gpus(void)
 	EXPECTGPU(-1, 1, 1, "a usage that cannot be read");
 
 	/*
-	 * Intel: the busy time of its engines in the i915 PMU, over the time the
+	 * Intel: the busy time of its engines in the i915 PMU over the time the
 	 * counters were enabled, of the busiest engine. The counters are opened
-	 * only once it is awake, and the first reading has no value yet; one
-	 * asleep is idle without a read, but only once its counters could be
-	 * opened.
+	 * once, at the start, even of a GPU asleep (which does not wake it), and
+	 * never later; they are read only while it is awake, and the first
+	 * reading since it woke up has no value yet (SENSORS_PENDING), so no
+	 * sample averages over the time it slept.
 	 */
 	reset();
 	snprintf(perfdir, sizeof perfdir, "%s/perf", dir);
@@ -1132,13 +1150,24 @@ test_gpus(void)
 	counters(0, 0, 0, 0, 1000);
 	fds = openfds();
 	sensors_init(&s);
+	perfopens = 0;
 	sensors_findgpus(&s, sys);
 	CHECK(s.ngpu == 1 && s.gpu[0].nengine == 4 && s.gpu[0].pmutype == PERFTYPE && s.gpu[0].cpu == PERFCPU
 	      && !s.gpu[0].busy[0], "the Intel GPU and its four engines were not found (%d GPUs)", s.ngpu);
-	EXPECTREAD(&s, -1, 0, 0, "an Intel GPU asleep since the start");
-	CHECK(s.gpustale, "an Intel GPU without a usage was not looked for again");
+	CHECK(perfopens == 0 && openfds() == fds, "counters were opened after the start");
+	EXPECTREAD(&s, -1, 0, 0, "an asleep Intel GPU without counters");
 	gpu("card0", "active\n");
-	EXPECTREAD(&s, -1, 4, 4, "the first reading of an Intel GPU");
+	EXPECTREAD(&s, -1, 0, 0, "an awake Intel GPU without counters");
+	CHECK(s.gpustale, "an Intel GPU without counters was not looked for again");
+	gpu("card0", "suspended\n");
+	perfopens = gpureads = 0;
+	sensors_startgpus(&s, sys, 5000);
+	CHECK(perfopens == 4 && gpureads == 0 && openfds() == fds + 4 && s.gpufound == 5000 && !s.gpuopen,
+	      "the start did not open the four counters of a suspended Intel GPU without reading them (%d opens)", perfopens);
+	EXPECTREAD(&s, 0, 0, 0, "a suspended Intel GPU with counters");
+	gpu("card0", "active\n");
+	EXPECTREAD(&s, SENSORS_PENDING, 0, 4, "the first reading of an Intel GPU");
+	CHECK(!s.gpustale, "a pending Intel GPU was looked for again");
 	counters(500000000, 100000000, 0, 0, 1000000000 + 1000);
 	EXPECTREAD(&s, 50, 0, 4, "the render engine busy half the time");
 	counters(510000000, 1000000000, 0, 0, 2000000000 + 1000);
@@ -1151,29 +1180,32 @@ test_gpus(void)
 	EXPECTREAD(&s, 0, 0, 4, "idle engines");
 	counters(510000000, 1000000000, 4949 + 4950, 50000, 2000040000 + 1000);
 	EXPECTREAD(&s, 100, 0, 4, "an engine busier than the time counted");
-	/* asleep after counting: idle and left alone, then the reading covers the time since the last */
+	/* asleep: idle and left alone; the reading after it wakes up starts over */
 	gpu("card0", "suspending\n");
 	EXPECTREAD(&s, 0, 0, 0, "an Intel GPU going to sleep");
 	gpu("card0", "suspended\n");
 	EXPECTREAD(&s, 0, 0, 0, "a suspended Intel GPU");
 	gpu("card0", "active\n");
-	counters(510000000 + 2500, 1000000000, 4949 + 4950, 50000, 2000050000 + 1000);
-	EXPECTREAD(&s, 25, 0, 4, "the reading after a suspend");
+	counters(510000000 + 900000000, 1000000000, 4949 + 4950, 50000, 3000040000 + 1000);
+	EXPECTREAD(&s, SENSORS_PENDING, 0, 4, "the first reading after a suspend");
+	counters(510000000 + 900002500, 1000000000, 4949 + 4950, 50000, 3000050000 + 1000);
+	EXPECTREAD(&s, 25, 0, 4, "the second reading after a suspend");
 	CHECK(!s.gpustale && openfds() == fds + 4, "the counting Intel GPU was stale or holds %d descriptors", openfds() - fds);
 	/* looking for the GPUs again keeps the same counters counting */
 	sensors_findgpus(&s, sys);
-	counters(510000000 + 5000, 1000000000, 4949 + 4950, 50000, 2000060000 + 1000);
+	counters(510000000 + 900005000, 1000000000, 4949 + 4950, 50000, 3000060000 + 1000);
 	EXPECTREAD(&s, 25, 0, 4, "a reading after the GPUs were looked for again");
 	CHECK(openfds() == fds + 4, "looking for the GPUs again leaked or closed counters");
-	/* counters that stop or cannot be read are closed, and opened again at the next reading */
-	EXPECTREAD(&s, -1, 0, 1, "counters whose time did not advance");
-	CHECK(s.gpustale && openfds() == fds, "counters that stopped were not closed");
-	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
-	counters(510000000 + 5000, 1000000000, 0, 50000, 2000070000);
-	EXPECTREAD(&s, -1, 0, 3, "a counter that went backwards");
-	CHECK(openfds() == fds, "a counter that went backwards left counters open");
-	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
-	counters(510000000 + 5000, 1000000000, 0, 50000, 2000080000);
+	/* counters that do not advance or go backwards: no value, and counting starts over */
+	EXPECTREAD(&s, -1, 0, 4, "counters whose time did not advance");
+	CHECK(s.gpustale && openfds() == fds + 4, "counters that stopped were closed, or the GPU not looked for again");
+	counters(510000000 + 900007500, 1000000000, 4949 + 4950, 50000, 3000070000 + 1000);
+	EXPECTREAD(&s, 25, 0, 4, "the reading after counters stopped");
+	counters(510000000 + 900010000, 1000000000, 0, 50000, 3000080000 + 1000);
+	EXPECTREAD(&s, -1, 0, 4, "a counter that went backwards");
+	counters(510000000 + 900012500, 1000000000, 0, 50000, 3000090000 + 1000);
+	EXPECTREAD(&s, 25, 0, 4, "the reading after a counter went backwards");
+	/* a counter that cannot be read, as when the driver goes: closed for good, and the GPU no longer shown */
 	{
 		char path[600];
 		FILE *fp;
@@ -1186,21 +1218,32 @@ test_gpus(void)
 	}
 	EXPECTREAD(&s, -1, 0, 2, "a counter that cannot be read");
 	CHECK(openfds() == fds, "a counter that cannot be read left counters open");
-	/* an engine whose counter cannot be opened: none is left open */
+	gpu("card0", "suspended\n");
+	EXPECTREAD(&s, -1, 0, 0, "an asleep Intel GPU whose counters were closed");
+	perfopens = 0;
+	sensors_findgpus(&s, sys);
+	gpu("card0", "active\n");
+	EXPECTREAD(&s, -1, 0, 0, "an Intel GPU whose counters were closed, looked for again");
+	CHECK(openfds() == fds, "counters were opened again after the start");
+	/* an engine whose counter cannot be opened at the start: none is left open */
 	counters(0, 0, 0, 0, 1000);
 	snprintf(rel, sizeof rel, "%s/%llx", perfdir, engines[3]);
 	unlink(rel);
-	EXPECTREAD(&s, -1, 4, 3, "an engine without a counter");
-	CHECK(openfds() == fds, "counters were left open when one could not be opened");
-	/* another set of engines after the GPUs are looked for again: the old counters are closed */
+	perfopens = 0;
+	sensors_startgpus(&s, sys, 6000);
+	CHECK(perfopens == 4 && openfds() == fds && s.gpu[0].fd[0] < 0, "counters were left open when one could not be opened");
+	EXPECTREAD(&s, -1, 0, 0, "an Intel GPU whose counters could not all be opened");
+	/* another set of engines after the GPUs are looked for again: the old counters are closed, and no new ones opened */
 	counters(0, 0, 0, 0, 1000);
-	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
+	sensors_startgpus(&s, sys, 7000);
+	CHECK(openfds() == fds + 4, "the start did not open the counters");
 	put("bus/event_source/devices/i915/events/ccs0-busy", "config=0x4000\n");
 	counter(0x4000, 0, 1000);
 	sensors_findgpus(&s, sys);
-	CHECK(s.gpu[0].nengine == 5 && openfds() == fds, "the counters of the old engines stayed open");
-	EXPECTREAD(&s, -1, 5, 5, "the counters of five engines");
+	CHECK(s.gpu[0].nengine == 5 && s.gpu[0].fd[0] < 0 && openfds() == fds, "the counters of the old engines stayed open, or new ones were opened");
 	/* a GPU that went away: its counters are closed */
+	sensors_startgpus(&s, sys, 8000);
+	CHECK(openfds() == fds + 5, "the start did not open the counters of five engines");
 	reset();
 	sensors_findgpus(&s, sys);
 	CHECK(s.ngpu == 0 && openfds() == fds, "the counters of a GPU that went away stayed open");
@@ -1216,6 +1259,7 @@ test_gpus(void)
 			sysmon_clear(&v);
 			sensors_init(&s);
 			gpu("card0", "active\n");
+			sensors_startgpus(&s, sys, 0);
 			sensors_samplegpus(&s, sys, 1000, &v);
 			sensors_samplegpus(&s, sys, 2000, &v);
 			gpu("card0", "suspended\n");
@@ -1225,6 +1269,31 @@ test_gpus(void)
 		}
 		perferrno = 0;
 	}
+
+	/* a reading still pending after the GPU woke up shows no value, and leaves the history going on */
+	reset();
+	intel("card0", "active\n");
+	counters(0, 0, 0, 0, 1000);
+	sysmon_clear(&v);
+	sensors_init(&s);
+	sensors_startgpus(&s, sys, 0);
+	sensors_samplegpus(&s, sys, 1000, &v);
+	CHECK(v.gpu == -1 && v.ngpuhist == 0, "the first reading of an Intel GPU had a value");
+	counters(400, 0, 0, 0, 2000);
+	sensors_samplegpus(&s, sys, 2000, &v);
+	gpu("card0", "suspended\n");
+	sensors_samplegpus(&s, sys, 3000, &v);
+	CHECK(v.gpu == 0 && v.ngpuhist == 2 && v.gpuhist[0] == 40 && v.gpuhist[1] == 0, "an Intel GPU's history is not 40%%, then idle");
+	gpu("card0", "active\n");
+	counters(400 + 9000, 0, 0, 0, 2000 + 10000);
+	sensors_samplegpus(&s, sys, 4000, &v);
+	CHECK(v.gpu == -1 && v.ngpuhist == 2 && v.gpuhist[1] == 0, "the first reading after a suspend was not pending, or ended the history");
+	counters(400 + 9000 + 300, 0, 0, 0, 2000 + 10000 + 1000);
+	sensors_samplegpus(&s, sys, 5000, &v);
+	CHECK(v.gpu == 30 && v.ngpuhist == 3 && v.gpuhist[2] == 30, "the history did not go on after a pending reading");
+	reset();
+	sensors_findgpus(&s, sys);
+	CHECK(openfds() == fds, "the counters were not closed when the GPU went away");
 
 	/* not an Intel GPU this source can read */
 	reset();
@@ -1299,8 +1368,8 @@ test_gpus(void)
 	gpuattr("card1", "device/gpu_busy_percent", "80\n");
 	fds = openfds();
 	sensors_init(&s);
-	sensors_findgpus(&s, sys);
-	EXPECTREAD(&s, 0, 4, 4, "an awake Intel GPU's first reading beside a suspended amdgpu");
+	sensors_startgpus(&s, sys, 0);
+	EXPECTREAD(&s, 0, 0, 4, "an awake Intel GPU's first reading beside a suspended amdgpu");
 	counters(300, 0, 0, 0, 2000);
 	EXPECTREAD(&s, 30, 0, 4, "an awake Intel GPU beside a suspended amdgpu");
 	gpu("card1", "active\n");
@@ -1312,12 +1381,37 @@ test_gpus(void)
 	CHECK(s.gpustale, "a GPU failing with EBUSY was not looked for again");
 	busy = NULL;
 	gpu("card0", "suspended\n");
+	EXPECTREAD(&s, 80, 0, 1, "an awake amdgpu beside a suspended Intel GPU");
+	gpu("card0", "active\n");
 	gpu("card1", "suspended\n");
+	EXPECTREAD(&s, 0, 0, 4, "a pending Intel GPU beside a suspended amdgpu");
+	gpu("card0", "suspended\n");
 	EXPECTREAD(&s, 0, 0, 0, "every GPU suspended");
 	reset();
 	sensors_findgpus(&s, sys);
 	CHECK(openfds() == fds, "the hybrid laptop's counters were not closed");
 	perfdir[0] = '\0';
+
+	/* the sampler gives up every capability for good once its counters are open */
+	{
+		char line[128];
+		FILE *fp;
+		int nnp = -1, caps = 0;
+
+		CHECK(sensors_dropcaps() == 0, "dropping the capabilities failed");
+		CHECK(capsets == 1 && capsetzero, "the capabilities were not all cleared (%d capset calls)", capsets);
+		if ((fp = fopen("/proc/self/status", "r"))) {
+			while (fgets(line, sizeof line, fp)) {
+				if (!strncmp(line, "NoNewPrivs:", 11))
+					nnp = atoi(line + 11);
+				if (!strncmp(line, "CapInh:", 7) || !strncmp(line, "CapPrm:", 7) || !strncmp(line, "CapEff:", 7)
+				|| !strncmp(line, "CapAmb:", 7))
+					caps += strtoull(line + 7, NULL, 16) != 0;
+			}
+			fclose(fp);
+		}
+		CHECK(nnp == 1 && caps == 0, "the process can still gain privileges (NoNewPrivs %d) or holds %d capability sets", nnp, caps);
+	}
 
 	/* more cards than are read: the first ones by number */
 	reset();

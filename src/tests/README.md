@@ -146,20 +146,26 @@ with no read when `suspended` or `suspending`; no value and no read when
 resuming, in error, malformed or missing), a read failing with EBUSY or a usage
 that cannot be read (no value, and looked for again), an Intel GPU's engines
 (the `*-busy` events of its PMU with an engine config, other events and
-malformed configs left out; its counters opened system-wide on the first CPU
-of the PMU's cpumask, with the enabled time, only once it is awake, the first
-reading without a value; the busiest engine's share of the enabled time,
-rounded, at most 100%; asleep from the start no value and no open or read,
-asleep after counting idle with no read, and the reading after it covering the
-whole time; counters kept open when the GPUs are looked for again and closed
-when the engines change or the GPU goes away; counters that stop, go backwards,
-cannot be read or cannot all be opened closed with no descriptor left, and
-opened again; EACCES, EPERM and other open errors never showing the GPU, awake
-or asleep; xe, a missing driver, a PMU without a type or of type 0 or without
-engines not used; a discrete card's PMU named after its PCI device beside the
-integrated one's, and a cpumask range or none; more engines than are counted),
+malformed configs left out, at most 16 in order of class and instance; its
+counters opened system-wide on the first CPU of the PMU's cpumask, with the
+enabled time, only at the start, even while it is suspended, without a read,
+and never by a later look for GPUs; no counters, never shown, asleep or
+awake; the busiest engine's share of the enabled time, rounded, at most 100%;
+asleep idle with no read, and the first reading since it woke up, like the
+very first, pending; counters kept open when the GPUs are looked for again and
+closed, without new ones, when the engines change or the GPU goes away;
+counters that stop or go backwards no value, counting again from there,
+counters that cannot be read closed for good, and counters that cannot all be
+opened at the start none left open; EACCES, EPERM and other open errors never
+showing the GPU; a pending reading publishing no usage while the history goes
+on; xe, a missing driver, a PMU without a type or of type 0 or without engines
+not used; a discrete card's PMU named after its PCI device beside the
+integrated one's, and a cpumask range or none),
 a hybrid laptop (the busier GPU, the suspended one idle and not read, one
-failing with EBUSY beside one read), more cards than are read, the
+failing with EBUSY beside one read, an awake one beside a suspended Intel GPU,
+and a pending Intel GPU beside a suspended one), giving up every capability for
+good (`capset` asked to clear them all, and `NoNewPrivs` set in
+`/proc/self/status`), more cards than are read, the
 delay between reads (never within the longest autosuspend delay of the GPUs
 plus a second, a delay that cannot be read or is negative, the sampler's
 interval at least, 5% of the time for slow reads, no overflow), the history and
@@ -232,7 +238,8 @@ above 60000 ms, a stopped (hung) sampler, a malformed and a missing stat file
 and showing the section again starts a new one whose value comes back), a
 sampler stopped with SIGSTOP while the section is hidden (dwm hides the section
 and stays responsive, and when the section is shown again the sampler dwm
-starts retires the stopped one once it continues), sensors appearing in the fake tree (the temperature
+starts retires the stopped one once it continues), the sampler dwm starts holding no capability and unable to gain
+any (`/proc/<pid>/status`), sensors appearing in the fake tree (the temperature
 and both fans of a Dell-like laptop, then one fan, none, and a malformed
 temperature, each published and drawn), a sensor read that hangs (a FIFO as the
 temperature input: dwm stays responsive and lets the value go stale, and the
