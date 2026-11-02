@@ -75,6 +75,8 @@
 #define SPTAG(i)		((1 << LENGTH(tags)) << (i))
 #define SPTAGMASK		(((1 << LENGTH(scratchpads))-1) << LENGTH(tags))
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
+#define SYSMONBARW              MAX(1, sysmongraph / SYSMON_HIST) /* px of a CPU usage graph bar */
+#define SYSMONGAP               "  " /* as wide as the gap before the CPU usage graph */
 #define TRUNC(X,A,B)            (MAX((A), MIN((X), (B))))
 
 /* enums */
@@ -211,8 +213,10 @@ static void detach(Client *c);
 static void detachstack(Client *c);
 static Monitor *dirtomon(int dir);
 static void drawbar(Monitor *m);
-static int sysmonbox(Monitor *m, int left, int right, int *mx);
-static void sysmontext(char *buf, size_t size, int widest);
+static int sysmonbars(void);
+static int sysmonbox(Monitor *m, int left, int right, int *mx, int *bars);
+static void sysmondraw(int x, int w, int bars);
+static void sysmontext(char *cpu, char *rest, size_t size, int widest);
 static void drawbars(void);
 static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
@@ -352,7 +356,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 static Atom wmatom[WMLast], netatom[NetLast];
 static Atom baropacityatom;
 static Atom sysmonatom, sysmonenabledatom;
-static SysmonValues sysmonval = { -1, -1, 0, {0} }; /* last published by dwmsysmon; -1 or no fans when unknown */
+static SysmonValues sysmonval = { .cpu = -1, .temp = -1 }; /* last published by dwmsysmon; -1, no fans or no samples when unknown */
 static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
 static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
 static int lightbar;
@@ -597,7 +601,7 @@ int
 barclick(Monitor *m, int px, Arg *arg)
 {
 	unsigned int i, occ = 0;
-	int x = 0, left, right, mx;
+	int x = 0, left, right, mx, bars;
 	Client *c;
 
 	for (c = m->clients; c; c = c->next)
@@ -621,7 +625,7 @@ barclick(Monitor *m, int px, Arg *arg)
 		dwmblockssig = statusblocksig(right, px);
 		return ClkStatusText;
 	}
-	if (sysmonbox(m, left, right, &mx) && px >= mx)
+	if (sysmonbox(m, left, right, &mx, &bars) && px >= mx)
 		return ClkLast; /* the section and the gap up to the status have no action */
 	return ClkWinTitle;
 }
@@ -1123,56 +1127,104 @@ statusblocksig(int x, int evx)
 }
 
 /*
- * The section's text: the CPU usage ("-" when unknown), then the temperature
- * and every fan when the sampler has them. With widest set, the widest text of
- * the same fields, so the section keeps its width while the values change.
+ * The section's text before and after the graph: the CPU usage ("-" when
+ * unknown), then the temperature and every fan when the sampler has them. With
+ * widest set, the widest text of the same fields, so the section keeps its
+ * width while the values change.
  */
 void
-sysmontext(char *buf, size_t size, int widest)
+sysmontext(char *cpu, char *rest, size_t size, int widest)
 {
 	int i, fan;
 
 	if (sysmonval.cpu < 0 && !widest)
-		snprintf(buf, size, "CPU   - "); /* as wide as a value, so the fields after it stay put */
+		snprintf(cpu, size, "CPU   - "); /* as wide as a value, so the fields after it stay put */
 	else
-		snprintf(buf, size, "CPU %3d%%", widest ? 100 : sysmonval.cpu);
+		snprintf(cpu, size, "CPU %3d%%", widest ? 100 : sysmonval.cpu);
+	rest[0] = '\0';
 	if (sysmonval.temp >= 0)
-		snprintf(buf + strlen(buf), size - strlen(buf), " %3d°C", widest ? 100 : sysmonval.temp);
+		snprintf(rest, size, " %3d°C", widest ? 100 : sysmonval.temp);
 	/* last in the section, so the fans need no padding to keep the other fields put */
 	for (i = 0; i < sysmonval.nfan; i++) {
 		fan = sysmonval.fan[i];
-		snprintf(buf + strlen(buf), size - strlen(buf), "%s%d", i ? "/" : "  ",
+		snprintf(rest + strlen(rest), size - strlen(rest), "%s%d", i ? "/" : "  ",
 		         widest ? (fan > 9999 ? 99999 : 9999) : fan);
 	}
 	if (sysmonval.nfan)
-		snprintf(buf + strlen(buf), size - strlen(buf), "rpm");
+		snprintf(rest + strlen(rest), size - strlen(rest), "rpm");
+}
+
+/* Graph bars at most: one per sample, sysmongraph pixels wide in all. */
+int
+sysmonbars(void)
+{
+	return sysmongraph > 0 ? MIN(SYSMON_HIST, sysmongraph / SYSMONBARW) : 0;
 }
 
 /*
  * Where the section sits between the layout symbol ending at left and the
- * status starting at right: centred in the bar, as wide as its widest text.
- * Returns 0 when it is off or would crowd the title or reach the status.
+ * status starting at right: centred in the bar, as wide as its widest text and
+ * the graph beside the CPU usage. When there is not enough room, the graph
+ * gives up its oldest bars, down to none, before the section is left out; while
+ * it has bars, the section also keeps the graph's gap from the status, so the
+ * two never read as one. Returns its width, or 0 when it is off or would crowd
+ * the title or reach the status; *bars is how many graph bars it has room for.
  */
 int
-sysmonbox(Monitor *m, int left, int right, int *mx)
+sysmonbox(Monitor *m, int left, int right, int *mx, int *bars)
 {
-	char widest[64];
-	int mw;
+	char cpu[64], rest[64];
+	int mw, tw, gap;
 
-	sysmontext(widest, sizeof widest, 1);
-	mw = TEXTW(widest);
-
-	*mx = (m->ww - mw) / 2;
-	if (!showsysmon || *mx - left <= bh || *mx + mw > right)
+	if (!showsysmon)
 		return 0;
-	return mw;
+	sysmontext(cpu, rest, sizeof cpu, 1);
+	tw = TEXTW(cpu) + drw_fontset_getwidth(drw, rest);
+	gap = drw_fontset_getwidth(drw, SYSMONGAP);
+	for (*bars = sysmonbars(); *bars >= 0; --*bars) {
+		mw = tw + (*bars ? gap + *bars * SYSMONBARW : 0);
+		*mx = (m->ww - mw) / 2;
+		if (*mx - left > bh && *mx + mw + (*bars ? gap : 0) <= right)
+			return mw;
+	}
+	*bars = 0;
+	return 0;
+}
+
+/*
+ * Draw the section at x, w wide: the CPU usage, then a graph of its latest
+ * samples with room for bars of them, the newest on the right, then the other
+ * fields. A sample is a bar rising from the baseline of the text to at most
+ * about the height of its digits, and at least a pixel high, so idle time
+ * shows as a line and a missing sample as nothing. Uses the current scheme.
+ */
+void
+sysmondraw(int x, int w, int bars)
+{
+	char cpu[64], rest[64];
+	int i, n, gx, rx, base, gh, h;
+
+	sysmontext(cpu, rest, sizeof cpu, 1);
+	rx = x + lrpad / 2 + drw_fontset_getwidth(drw, cpu); /* past the widest CPU usage */
+	gx = rx + drw_fontset_getwidth(drw, SYSMONGAP);
+	if (bars)
+		rx = gx + bars * SYSMONBARW;
+	sysmontext(cpu, rest, sizeof cpu, 0);
+	drw_text(drw, x, 0, w, bh, lrpad / 2, cpu, 0);
+	drw_text(drw, rx, 0, x + w - rx, bh, 0, rest, 0);
+	base = (bh - drw->fonts->h) / 2 + drw->fonts->xfont->ascent; /* as drw_text places the text */
+	gh = MAX(1, (drw->fonts->xfont->ascent * 4 + 2) / 5); /* digits take about 4/5 of the ascent */
+	n = MIN(bars, sysmonval.nhist);
+	for (i = 0; i < n; i++) {
+		h = MAX(1, (sysmonval.hist[sysmonval.nhist - n + i] * gh + 50) / 100);
+		drw_rect(drw, gx + (bars - n + i) * SYSMONBARW, base - h, SYSMONBARW, h, 1, 0);
+	}
 }
 
 void
 drawbar(Monitor *m)
 {
-	int x, w, tw = 0, mw = 0, mx, end;
-	char mtext[64];
+	int x, w, tw = 0, mw = 0, mx, end, bars;
 	int boxs = drw->fonts->h / 9;
 	int boxw = drw->fonts->h / 6 + 2;
 	unsigned int i, occ = 0, urg = 0;
@@ -1223,10 +1275,9 @@ drawbar(Monitor *m)
 	x = drw_text(drw, x, 0, w, bh, lrpad / 2, m->ltsymbol, 0);
 
 	end = m->ww - tw; /* the title and the section share [x, end) */
-	if ((mw = sysmonbox(m, x, end, &mx))) {
-		sysmontext(mtext, sizeof mtext, 0);
+	if ((mw = sysmonbox(m, x, end, &mx, &bars))) {
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		drw_text(drw, mx, 0, mw, bh, lrpad / 2, mtext, 0);
+		sysmondraw(mx, mw, bars);
 		drw_rect(drw, mx + mw, 0, end - mx - mw, bh, 1, 1); /* the gap up to the status */
 		end = mx;
 	}
@@ -2809,7 +2860,7 @@ updatesysmon(void)
 void
 applysysmon(void)
 {
-	unsigned long on[3];
+	unsigned long on[4];
 
 	showsysmon = showsysmon != 0;
 	if (showsysmon == sysmonpublished)
@@ -2818,8 +2869,9 @@ applysysmon(void)
 	on[0] = showsysmon;
 	on[1] = wmcheckwin; /* the sampler leaves when this window goes with dwm */
 	on[2] = SYSMONINTERVAL;
+	on[3] = SYSMON_MAXLEN; /* so the sampler sends the history only to a dwm that reads it */
 	XChangeProperty(dpy, root, sysmonenabledatom, XA_CARDINAL, 32,
-		PropModeReplace, (unsigned char *)on, 3);
+		PropModeReplace, (unsigned char *)on, 4);
 	XSync(dpy, False); /* a sampler started now must find the flag set */
 	sysmon_clear(&sysmonval);
 	sysmonexpire = 0;

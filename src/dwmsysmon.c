@@ -1,9 +1,10 @@
 /* See LICENSE file for copyright and license details. */
 /*
  * dwmsysmon: samples system load, the CPU temperature and the fans outside the
- * window manager and publishes the latest values in the root window property
- * read by dwm (see sysmon.h). It only ever writes one short property, never
- * blocks dwm, and exits with the X connection. dwm starts it when the system
+ * window manager and publishes the latest values, with the last SYSMON_HIST CPU
+ * usage samples for the graph, in the root window property read by dwm (see
+ * sysmon.h). It only ever writes one short property, never blocks dwm, and
+ * exits with the X connection. dwm starts it when the system
  * monitor is shown, and it exits by itself as soon as dwm hides the section.
  * Sensors are read less often than the CPU, and even less often when they are
  * slow to answer (see sensors.h).
@@ -43,6 +44,7 @@ static Window root, ownwin, dwmwin;
 static Atom sysmonatom, enabledatom, ownatom;
 static int badwindow;
 static long interval = SYSMON_INTERVAL; /* ms between samples, as dwm says */
+static int maxlen = SYSMON_OLDMAXLEN; /* bytes of the payload dwm reads, as it says */
 
 static void
 onsignal(int sig)
@@ -111,8 +113,8 @@ watch(Window w)
 
 /*
  * dwm publishes whether the section is shown, a window that lives as long as
- * dwm does and the interval between samples. No flag means it is wanted; -1
- * means the dwm that published it is gone.
+ * dwm does, the interval between samples and how long a payload it reads. No
+ * flag means it is wanted; -1 means the dwm that published it is gone.
  */
 static int
 enabled(void)
@@ -122,9 +124,9 @@ enabled(void)
 	unsigned long n, after;
 	unsigned char *data = NULL;
 	Window w = None;
-	unsigned long ms = 0;
+	unsigned long ms = 0, len = 0;
 
-	if (XGetWindowProperty(dpy, root, enabledatom, 0, 3, False, XA_CARDINAL,
+	if (XGetWindowProperty(dpy, root, enabledatom, 0, 4, False, XA_CARDINAL,
 	    &type, &format, &n, &after, &data) == Success && data) {
 		if (type == XA_CARDINAL && format == 32 && n >= 1) {
 			on = ((unsigned long *)data)[0] != 0;
@@ -132,10 +134,14 @@ enabled(void)
 				w = ((unsigned long *)data)[1];
 			if (n >= 3)
 				ms = ((unsigned long *)data)[2];
+			if (n >= 4)
+				len = ((unsigned long *)data)[3];
 		}
 		XFree(data);
 	}
 	interval = ms >= SYSMON_MININTERVAL && ms <= SYSMON_MAXINTERVAL ? (long)ms : SYSMON_INTERVAL;
+	/* a dwm from before the history does not say, and takes no more than it ever did */
+	maxlen = !len ? SYSMON_OLDMAXLEN : len > SYSMON_MAXLEN ? SYSMON_MAXLEN : (int)len;
 	if (w != dwmwin) {
 		dwmwin = w;
 		if (w && !watch(w))
@@ -147,10 +153,10 @@ enabled(void)
 static void
 publish(const SysmonValues *v)
 {
-	char buf[SYSMON_MAXLEN];
+	char buf[SYSMON_MAXLEN + 1];
 	int n;
 
-	if ((n = sysmon_encode(buf, sizeof buf, v)) <= 0)
+	if ((n = sysmon_encode(buf, maxlen + 1, v)) <= 0)
 		XDeleteProperty(dpy, root, sysmonatom);
 	else
 		XChangeProperty(dpy, root, sysmonatom, XA_STRING, 8, PropModeReplace,
@@ -230,11 +236,11 @@ main(int argc, char *argv[])
 			break;
 		if ((t = nowms()) >= next) {
 			if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
-				val.cpu = have ? sysmon_cpu_percent(&prev, &cur) : -1;
+				sysmon_push(&val, have ? sysmon_cpu_percent(&prev, &cur) : -1);
 				prev = cur;
 				have = 1;
 			} else {
-				val.cpu = -1;
+				sysmon_push(&val, -1);
 				have = 0;
 			}
 			if (t >= sensornext) {

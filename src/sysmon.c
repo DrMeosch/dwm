@@ -59,8 +59,23 @@ sysmon_cpu_percent(const SysmonCpu *prev, const SysmonCpu *cur)
 void
 sysmon_clear(SysmonValues *v)
 {
-	memset(v, 0, sizeof *v); /* unused fans too, so equal values compare equal */
+	memset(v, 0, sizeof *v); /* unused fans and samples too, so equal values compare equal */
 	v->cpu = v->temp = -1;
+}
+
+void
+sysmon_push(SysmonValues *v, int cpu)
+{
+	if (cpu < 0 || cpu > 100) {
+		v->cpu = -1;
+		v->nhist = 0;
+		memset(v->hist, 0, sizeof v->hist);
+		return;
+	}
+	v->cpu = cpu;
+	if (v->nhist == SYSMON_HIST)
+		memmove(v->hist, v->hist + 1, --v->nhist * sizeof *v->hist);
+	v->hist[v->nhist++] = cpu;
 }
 
 /* Append to buf, which holds len bytes; -1 when it does not fit. */
@@ -70,6 +85,19 @@ sysmon_clear(SysmonValues *v)
 		return -1; \
 	len += n; \
 } while (0)
+
+/* " cpuhist=..." with sep for the space; its length, or -1 when it does not fit. */
+static int
+history(char *buf, size_t size, const char *sep, const SysmonValues *v)
+{
+	size_t len = 0;
+	int i, n;
+
+	APPEND("%scpuhist=%d", sep, v->hist[0]);
+	for (i = 1; i < v->nhist; i++)
+		APPEND(",%d", v->hist[i]);
+	return (int)len;
+}
 
 int
 sysmon_encode(char *buf, size_t size, const SysmonValues *v)
@@ -92,7 +120,17 @@ sysmon_encode(char *buf, size_t size, const SysmonValues *v)
 		else
 			APPEND("%sfan=%d", len ? " " : "", v->fan[i]);
 	}
-	return (int)len;
+	/* the history is all or nothing: leaving out a sample would shift the others in time */
+	if (v->nhist <= 0 || v->nhist > SYSMON_HIST)
+		return (int)len;
+	for (i = 0; i < v->nhist; i++)
+		if (v->hist[i] < 0 || v->hist[i] > 100)
+			return (int)len;
+	if ((n = history(buf + len, size - len, len ? " " : "", v)) < 0) {
+		buf[len] = '\0';
+		return (int)len;
+	}
+	return (int)len + n;
 }
 
 /* 1..digits decimal digits worth at most max, or -1; *end is set past the digits. */
@@ -107,14 +145,32 @@ number(const char *p, int digits, int max, const char **end)
 	return n && v <= max ? v : -1;
 }
 
+/*
+ * 1..max comma separated values of number() that end exactly at end, stored
+ * in out; returns how many, or -1 if the list is malformed or too long.
+ */
+static int
+list(const char *p, const char *end, int *out, int max, int digits, int limit)
+{
+	int n = 0, v;
+
+	for (;; p++) {
+		if (n == max || (v = number(p, digits, limit, &p)) < 0)
+			return -1;
+		out[n++] = v;
+		if (*p != ',')
+			return p == end ? n : -1;
+	}
+}
+
 int
 sysmon_decode(const char *data, unsigned long len, SysmonValues *v)
 {
-	enum { Cpu = 1, Temp = 2, Fan = 4 };
+	enum { Cpu = 1, Temp = 2, Fan = 4, Hist = 8 };
 	char buf[SYSMON_MAXLEN + 1];
 	const char *p, *q, *end;
 	SysmonValues got;
-	int field, ok, n, seen = 0, bad = 0;
+	int field, ok, seen = 0, bad = 0;
 
 	sysmon_clear(v);
 	if (!data || len == 0 || len > SYSMON_MAXLEN)
@@ -137,16 +193,10 @@ sysmon_decode(const char *data, unsigned long len, SysmonValues *v)
 			ok = (got.temp = number(p + 5, 3, SYSMON_MAXTEMP, &q)) >= 0 && q == end;
 		} else if (!strncmp(p, "fan=", 4)) {
 			field = Fan;
-			/* comma separated RPM values, one per fan */
-			for (q = p + 4, got.nfan = 0;; q++) {
-				if (got.nfan == SYSMON_FANS || (n = number(q, 5, SYSMON_MAXFAN, &q)) < 0)
-					break;
-				got.fan[got.nfan++] = n;
-				if (*q != ',') {
-					ok = q == end;
-					break;
-				}
-			}
+			ok = (got.nfan = list(p + 4, end, got.fan, SYSMON_FANS, 5, SYSMON_MAXFAN)) > 0;
+		} else if (!strncmp(p, "cpuhist=", 8)) {
+			field = Hist;
+			ok = (got.nhist = list(p + 8, end, got.hist, SYSMON_HIST, 3, 100)) > 0;
 		}
 		if (field && (!ok || seen & field))
 			bad |= field;
@@ -162,5 +212,9 @@ sysmon_decode(const char *data, unsigned long len, SysmonValues *v)
 		v->nfan = got.nfan;
 		memcpy(v->fan, got.fan, got.nfan * sizeof *got.fan);
 	}
-	return v->cpu >= 0 || v->temp >= 0 || v->nfan ? 0 : -1;
+	if (seen & Hist && !(bad & Hist)) {
+		v->nhist = got.nhist;
+		memcpy(v->hist, got.hist, got.nhist * sizeof *got.hist);
+	}
+	return v->cpu >= 0 || v->temp >= 0 || v->nfan || v->nhist ? 0 : -1;
 }

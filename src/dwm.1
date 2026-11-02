@@ -221,9 +221,18 @@ Toggles focused window between floating and tiled state.
 Resize focused window while dragging. Tiled windows will be toggled to the floating state.
 .SS System monitor
 An optional section in the middle of the bar shows the CPU
-usage, and the CPU temperature and the speed of every fan where the machine
-has them, as
-.BR "CPU  42%  55\(deC  2400/2350rpm" .
+usage, a small graph of its recent samples, and the CPU temperature and the
+speed of every fan where the machine has them, as
+.B "CPU  42%"
+followed by the graph and
+.BR "55\(deC  2400/2350rpm" .
+The graph has a bar for each of the last 16 samples, the newest on the right,
+rising from the baseline of the text to about the height of its digits; an
+idle sample is a line, and a sample not taken yet is left empty. Its width is
+.B sysmongraph
+in
+.I config.h
+(32 pixels: 2 for each bar; 0 leaves the graph out).
 A temperature or fan the machine does not report is not shown at all.
 It is off by default. Super\-Shift\-b toggles it, and the Xresources
 .B dwm.showsysmon
@@ -241,11 +250,11 @@ and the sensors below
 and publishes the latest values as a short string in the root window property
 .B _DWM_SYSMON
 (for example
-.BR "cpu=42 temp=55 fan=2400,2350" ).
+.BR "cpu=42 temp=55 fan=2400,2350 cpuhist=40,38,42" ).
 dwm only draws what it last received. The section shows
 .B CPU \-
 when there is no CPU value: the sampler is not running, hung or cannot read its data,
-the property is malformed (anything but a string of at most 64 bytes with
+the property is malformed (anything but a string of at most 128 bytes with
 .B cpu=
 and an integer from 0 to 100), or no new value arrived for
 .B dwm.sysmonstale
@@ -253,17 +262,23 @@ milliseconds (default three times the sampling interval, 12000; it must stay abo
 that interval).
 The temperature
 .RB ( temp= ,
-0 to 150 degrees Celsius) and the fans
+0 to 150 degrees Celsius), the fans
 .RB ( fan= ,
-up to four comma separated speeds from 0 to 30000 RPM) are left out in the same
-cases, and each one also when only it is malformed or given twice. A
+up to four comma separated speeds from 0 to 30000 RPM) and the graph's samples
+.RB ( cpuhist= ,
+up to 16 comma separated CPU usages from 0 to 100, oldest first) are left out
+in the same cases, and each one also when only it is malformed or given twice;
+the graph is then empty. A
 missing, crashed or stuck sampler never blocks or crashes dwm, and dwm has no timer
 while there is no value to expire. The section is centred horizontally in the bar,
 whatever the tags and layout symbol on the left and the status text on the right take,
-and as wide as the fields it has can get, so it does not move while their values change.
-It never overlaps them: when the centre has no room, because a long status text
-reaches it or the title would be left with less than a bar height, the section
-is left out until there is room again.
+and as wide as the fields it has and the graph can get, so it does not move while
+their values change.
+It never overlaps them: when the centre is short of room, because a long status
+text reaches it or the title would be left with less than a bar height, the
+graph gives up its oldest bars first, keeping the section as far from the status
+as the graph is from the CPU usage. Only when the section does not fit even
+without its graph is it left out, until there is room again.
 .PP
 .B dwmsysmon
 takes no options and samples the CPU every 4000 ms. The interval is
@@ -272,7 +287,11 @@ in
 .I config.h
 (250 to 60000 ms); dwm passes it to the sampler in
 .BR _DWM_SYSMON_ENABLED ,
-and the default staleness limit follows it. The temperature is that of the
+and the default staleness limit follows it. The sampler keeps its last 16
+CPU usage samples for the graph, and starts over after a reading that fails.
+dwm also says there how long a value it reads; for a dwm that does not say, as
+one from before the graph, the sampler keeps to 64 bytes and leaves the samples
+out when they do not fit. The temperature is that of the
 .BR coretemp ,
 .BR k10temp ,
 .B zenpower
