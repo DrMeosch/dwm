@@ -17,7 +17,8 @@ static int swallowfloating    = 0;        /* 1 means swallow floating windows by
 static int smartgaps          = 0;        /* 1 means no outer gap when there is only one window */
 static int showbar            = 1;        /* 0 means no bar */
 static int showsysmon         = 0;        /* 1 shows the CPU usage, temperature and fan section published by dwmsysmon */
-static int sysmonstale        = 10000;    /* ms without a new value before the section shows "-"; keep above the dwmsysmon interval (2000) */
+#define SYSMONINTERVAL 4000                /* ms between dwmsysmon samples, 250 to 60000 */
+static int sysmonstale        = 3 * SYSMONINTERVAL; /* ms without a new value before the section shows "-"; keep above SYSMONINTERVAL */
 static int topbar             = 1;        /* 0 means bottom bar */
 static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize=10:antialias=true:autohint=true"  };
 static const char *selfontweight = "semibold"; /* fontconfig weight of the selected tag; NULL or "" (or a fonts[] entry that sets weight=, or style= naming a face the family really has) keeps the normal font */
@@ -165,6 +166,7 @@ static const char *brightness_down_with_shuft[] = { "sb-brightnessctl", "set", "
 
 /* commands */
 static const char *termcmd[]  = { TERMINAL, NULL };
+static const char *sysmoncmd[] = { "dwmsysmon", NULL }; /* runs while the system monitor is shown */
 
 /*
  * Xresources preferences to load at startup and on reload

@@ -12,7 +12,7 @@ This is suckless, mmmbud, the source code is the documentation! Check out [confi
 
 - [Clickable statusbar](https://dwm.suckless.org/patches/statuscmd/) with [Luke Smith's build of dwmblocks](https://github.com/lukesmithxyz/dwmblocks).
 - [status2d](https://dwm.suckless.org/patches/status2d/): colored status text via `^c#rrggbb^`, `^b#rrggbb^`, `^C<0-15>^` (`dwm.color<n>`), `^d^`, `^r` and `^f`. It is not the upstream patch: the parser is bounds-checked, malformed codes show as plain text, and one walker measures and draws so the clickable statusbar regions stay correct. See `dwm.1`.
-- System monitor section in the bar (<kbd>super+shift+b</kbd>, `dwm.showsysmon`): CPU usage, CPU temperature and fan speeds published by the separate `dwmsysmon` sampler, installed next to `dwm` and started by the autostart commands. See `dwm.1`.
+- System monitor section in the bar (<kbd>super+shift+b</kbd>, `dwm.showsysmon`): CPU usage, CPU temperature and fan speeds published by the separate `dwmsysmon` sampler, installed next to `dwm`, which dwm starts while the section is shown and which exits when it is hidden. See `dwm.1`.
 - Reads [xresources](https://dwm.suckless.org/patches/xresources/) colors/variables (i.e. works with `pywal`, etc.).
 - scratchpad: Accessible with <kbd>mod+shift+enter</kbd>.
 - New layouts: bstack, fibonacci, deck, centered master and more. All bound to keys <kbd>super+(shift+)t/y/u/i</kbd>.

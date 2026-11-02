@@ -34,6 +34,13 @@ autostart_system(const char *command)
 	snprintf(autostart_command, sizeof autostart_command, "%s", command);
 	return 0;
 }
+/* spawn() and the flag applysysmon() publishes, recorded instead of reaching a process or X */
+static const char *spawned[8];
+static int nspawned;
+static unsigned long sysmonflag = 2, sysmoninterval;
+#define posix_spawnp record_spawnp
+#define XChangeProperty record_changeproperty
+#define XSync record_sync
 #define popen pidof_popen
 #define pclose fclose
 #define system autostart_system
@@ -43,6 +50,39 @@ autostart_system(const char *command)
 #undef popen
 #undef pclose
 #undef main
+#undef XSync
+#undef XChangeProperty
+#undef posix_spawnp
+
+int
+record_spawnp(pid_t *pid, const char *file, const posix_spawn_file_actions_t *actions,
+	const posix_spawnattr_t *attr, char *const argv[], char *const envp[])
+{
+	(void)pid; (void)actions; (void)attr; (void)argv; (void)envp;
+	if (nspawned < (int)LENGTH(spawned))
+		spawned[nspawned] = file;
+	nspawned++;
+	return 0;
+}
+
+int
+record_changeproperty(Display *d, Window w, Atom property, Atom type, int format, int mode,
+	const unsigned char *data, int n)
+{
+	(void)d; (void)w; (void)type; (void)mode;
+	if (property == sysmonenabledatom && format == 32 && n == 3) {
+		sysmonflag = ((const unsigned long *)data)[0];
+		sysmoninterval = ((const unsigned long *)data)[2];
+	}
+	return 1;
+}
+
+int
+record_sync(Display *d, Bool discard)
+{
+	(void)d; (void)discard;
+	return 1;
+}
 
 static int failures;
 
@@ -740,9 +780,10 @@ test_sysmon_box(void)
 }
 
 /*
- * The commands dwm runs at startup start the sampler without stopping any other
- * process of that name: a sampler of another X session must keep running.
- * They run here against stub programs only, with nothing else on PATH.
+ * The commands dwm runs at startup leave the sampler alone: dwm starts it only
+ * while the section is shown, and stopping one by name would also stop the
+ * samplers of other X sessions. They run here against stub programs only, with
+ * nothing else on PATH.
  */
 static void
 test_autostart_command(void)
@@ -750,7 +791,7 @@ test_autostart_command(void)
 	char dir[] = "/tmp/dwm-autostart-XXXXXX", path[512], log[512], line[256];
 	const char *saved_path = getenv("PATH");
 	const char *tools[] = { "killall", "dwmblocks", "dwmsysmon" };
-	int started = 0, blocks = 0, killed_sampler = 0, i;
+	int sampler = 0, blocks = 0, i;
 	FILE *fp;
 
 	if (!mkdtemp(dir)) {
@@ -772,35 +813,78 @@ test_autostart_command(void)
 	setenv("PATH", dir, 1);
 	if (autostart_command[0] && system(autostart_command) != 0)
 		CHECK(0, "the startup command failed");
-	/* the programs are started in the background; keep their stubs until both ran */
-	for (i = 0; i < 100 && !(started && blocks); i++) {
+	/* the programs are started in the background; keep their stubs until they ran */
+	for (i = 0; i < 100 && !blocks; i++) {
 		if ((fp = fopen(log, "r"))) {
-			while (fgets(line, sizeof line, fp)) {
-				if (!strncmp(line, "dwmsysmon", 9))
-					started = 1;
+			while (fgets(line, sizeof line, fp))
 				if (!strncmp(line, "dwmblocks", 9))
 					blocks = 1;
-			}
 			fclose(fp);
 		}
-		if (!(started && blocks))
+		if (!blocks)
 			usleep(20000);
 	}
+	usleep(100000); /* time for a sampler started in the background as well */
 	setenv("PATH", saved_path ? saved_path : "/usr/bin:/bin", 1);
-	CHECK(started, "the startup command did not start the sampler");
+	CHECK(blocks, "the startup command did not start dwmblocks");
 	if ((fp = fopen(log, "r"))) {
 		while (fgets(line, sizeof line, fp))
-			if (!strncmp(line, "killall", 7) && strstr(line, "dwmsysmon"))
-				killed_sampler = 1;
+			if (strstr(line, "dwmsysmon"))
+				sampler = 1;
 		fclose(fp);
 	}
-	CHECK(!killed_sampler, "the startup command stops samplers by name, which includes those of other X sessions");
+	CHECK(!sampler, "the startup command starts or stops samplers, whether the section is shown or not");
 	for (i = 0; i < 3; i++) {
 		snprintf(path, sizeof path, "%s/%s", dir, tools[i]);
 		unlink(path);
 	}
 	unlink(log);
 	rmdir(dir);
+}
+
+/*
+ * The sampler runs only while the section is shown: dwm starts it once each
+ * time the section turns on, at start-up, by a key or by a reload, and turning
+ * the section off only clears the flag the sampler exits on.
+ */
+static void
+test_sysmon_start(void)
+{
+	int saved_show = showsysmon, saved_published = sysmonpublished;
+
+	nspawned = 0;
+	sysmonflag = 2;
+	sysmonpublished = -1; /* as at start-up */
+	showsysmon = 0;
+	applysysmon();
+	CHECK(sysmonflag == 0 && nspawned == 0, "dwm started a sampler with the section off by default (%d)", nspawned);
+	/* the sampler samples as often as config.h says, and dwm waits for more than two samples */
+	CHECK(sysmoninterval == 4000 && sysmoninterval == SYSMONINTERVAL,
+	      "dwm did not tell the sampler to sample every 4000 ms (%lu)", sysmoninterval);
+	CHECK(sysmonstale > 2 * SYSMONINTERVAL, "the default staleness limit (%d ms) does not cover two samples", sysmonstale);
+	applysysmon();
+	CHECK(nspawned == 0, "a reload with the section off started a sampler");
+	showsysmon = 1;
+	applysysmon();
+	CHECK(sysmonflag == 1 && nspawned == 1 && !strcmp(spawned[0], "dwmsysmon"),
+	      "showing the section did not start dwmsysmon once (%d)", nspawned);
+	applysysmon();
+	CHECK(nspawned == 1, "a reload with the section still shown started another sampler (%d)", nspawned);
+	togglesysmon(NULL);
+	CHECK(sysmonflag == 0 && showsysmon == 0 && nspawned == 1,
+	      "hiding the section did not tell the sampler to stop, or started one (%d)", nspawned);
+	togglesysmon(NULL);
+	CHECK(sysmonflag == 1 && nspawned == 2 && !strcmp(spawned[1], "dwmsysmon"),
+	      "showing the section again did not start dwmsysmon (%d)", nspawned);
+	nspawned = 0;
+	sysmonpublished = -1;
+	showsysmon = 5; /* any non-zero resource value */
+	applysysmon();
+	CHECK(sysmonflag == 1 && nspawned == 1, "dwm did not start a sampler with the section shown at start-up");
+	showsysmon = saved_show;
+	sysmonpublished = saved_published;
+	sysmon_clear(&sysmonval);
+	sysmonexpire = 0;
 }
 
 /* The section keeps a value only while the sampler refreshes it, and dwm sleeps without one. */
@@ -879,6 +963,7 @@ main(void)
 	test_sysmon_text();
 	test_sysmon_box();
 	test_autostart_command();
+	test_sysmon_start();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();

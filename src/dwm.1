@@ -232,7 +232,9 @@ across a reload unless that resource is set.
 .PP
 dwm does not measure anything. The separate
 .B dwmsysmon
-program, which dwm starts with the autostart commands, reads
+program, which dwm starts whenever the section is shown (at start\-up, by
+Super\-Shift\-b or by a reload) and which exits as soon as the section is
+hidden, reads
 .I /proc/stat
 and the sensors below
 .IR /sys ,
@@ -247,7 +249,8 @@ the property is malformed (anything but a string of at most 64 bytes with
 .B cpu=
 and an integer from 0 to 100), or no new value arrived for
 .B dwm.sysmonstale
-milliseconds (default 10000, which must stay above the 2000 ms sampling interval).
+milliseconds (default three times the sampling interval, 12000; it must stay above
+that interval).
 The temperature
 .RB ( temp= ,
 0 to 150 degrees Celsius) and the fans
@@ -263,7 +266,13 @@ reaches it or the title would be left with less than a bar height, the section
 is left out until there is room again.
 .PP
 .B dwmsysmon
-takes no options and samples the CPU every 2000 ms. The temperature is that of the
+takes no options and samples the CPU every 4000 ms. The interval is
+.B SYSMONINTERVAL
+in
+.I config.h
+(250 to 60000 ms); dwm passes it to the sampler in
+.BR _DWM_SYSMON_ENABLED ,
+and the default staleness limit follows it. The temperature is that of the
 .BR coretemp ,
 .BR k10temp ,
 .B zenpower
@@ -281,19 +290,22 @@ of the hwmon chips other than GPUs, up to four; a chip that is slow to read
 .RB ( dell_smm ,
 which reports the same fans as
 .B dell_ddv )
-is only used when no other chip has fans. Sensors are read every 6 seconds,
+is only used when no other chip has fans. Sensors are read with a CPU sample at most every 6 seconds,
 and less often, up to once a minute, when a read takes long; a missing, failing
-or malformed sensor is left out and looked for again at most once a minute. While dwm hides the
+or malformed sensor is left out and looked for again at most once a minute. When dwm hides the
 section (property
 .BR _DWM_SYSMON_ENABLED ,
-set by dwm) the sampler sleeps without a timer and removes its value. It
-removes it when it exits on SIGTERM, SIGINT or SIGHUP as well, and it exits when
+set by dwm) the sampler removes its value and exits, so no sampler runs while
+the section is off, which it is by default; one started while it is hidden
+exits at once. dwm never signals or waits for the sampler. The sampler also
+removes its value when it exits on SIGTERM, SIGINT or SIGHUP, and it exits when
 the X connection closes.
 .PP
 Each X display has one sampler. A newly started
 .B dwmsysmon
 takes over that display and the previous one, even if it is stuck reading a
-sensor, retires itself as soon as it looks at its events; no process is ever
+sensor and missed that the section was hidden, retires itself as soon as it
+looks at its events; no process is ever
 signalled by name, so samplers of other X sessions of the same user keep
 running. The sampler also exits when dwm exits or dies while the X server
 keeps running, and removes its value then.
