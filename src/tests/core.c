@@ -696,12 +696,13 @@ test_buttonpress_sysmon(void)
 	static const int blocks[][2] = { { 549, 0 }, { 550, 0 }, { 1097, 0 }, { 1098, 1 }, { 1197, 1 } };
 	Monitor m = {0};
 	Arg arg = {0};
-	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon, saved_graph = sysmongraph;
 	size_t i;
 	int got;
 
 	lrpad = 100;
 	bh = 20;
+	sysmongraph = 0;
 	m.ww = 1200;
 	m.barwin = 1;
 	mons = selmon = &m;
@@ -728,7 +729,16 @@ test_buttonpress_sysmon(void)
 	copyvalidchars(stext, rawstext);
 	CHECK(barclick(&m, 500, &arg) == ClkWinTitle, "a click at x=500 with the section left out was not a title click");
 
+	/* the graph is part of the section: 16 bars of 2px make it [534,666) */
+	sysmongraph = 32;
+	strcpy(rawstext, "\001^f100^");
+	copyvalidchars(stext, rawstext);
+	CHECK(barclick(&m, 533, &arg) == ClkWinTitle, "a click left of the section with its graph was not a title click");
+	CHECK(barclick(&m, 534, &arg) == ClkLast && barclick(&m, 640, &arg) == ClkLast
+	      && barclick(&m, 665, &arg) == ClkLast, "a click on the section with its graph was a title click");
+
 	showsysmon = saved_show;
+	sysmongraph = saved_graph;
 	lrpad = saved_lrpad;
 	bh = saved_bh;
 	mons = selmon = NULL;
@@ -740,11 +750,12 @@ test_sysmon_box(void)
 {
 	Monitor m = {0};
 	Arg arg = {0};
-	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon;
-	int mx = -1;
+	int saved_lrpad = lrpad, saved_bh = bh, saved_show = showsysmon, saved_graph = sysmongraph;
+	int mx = -1, bars = -1;
 
-	lrpad = 100; /* drw is NULL, so the section is 100px wide */
+	lrpad = 100; /* drw is NULL, so the section is 100px wide without its graph */
 	bh = 20;
+	sysmongraph = 0;
 	showsysmon = 1;
 	m.barwin = 1;
 	mons = selmon = &m;
@@ -752,28 +763,64 @@ test_sysmon_box(void)
 	copyvalidchars(stext, rawstext);
 
 	m.ww = 1200;
-	CHECK(sysmonbox(&m, 100, 1198, &mx) == 100 && mx == 550, "a wide bar did not centre the section (x=%d)", mx);
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 100 && mx == 550 && bars == 0, "a wide bar did not centre the section (x=%d)", mx);
 	/* the layout symbol ends at 100: the title keeps more than a bar height only from a 342px bar */
 	m.ww = 340;
-	CHECK(sysmonbox(&m, 100, 338, &mx) == 0, "the section left only a bar height of title");
+	CHECK(sysmonbox(&m, 100, 338, &mx, &bars) == 0, "the section left only a bar height of title");
 	m.ww = 342;
-	CHECK(sysmonbox(&m, 100, 340, &mx) == 100 && mx == 121, "the section was left out although the title keeps more than a bar height");
+	CHECK(sysmonbox(&m, 100, 340, &mx, &bars) == 100 && mx == 121, "the section was left out although the title keeps more than a bar height");
 	/* a narrow bar: the centred section would sit on the layout symbol, with room to spare on the right */
 	m.ww = 240;
-	CHECK(sysmonbox(&m, 100, 238, &mx) == 0, "the section was drawn over the layout symbol of a narrow bar");
+	CHECK(sysmonbox(&m, 100, 238, &mx, &bars) == 0, "the section was drawn over the layout symbol of a narrow bar");
 	CHECK(barclick(&m, 100, &arg) == ClkWinTitle && barclick(&m, 150, &arg) == ClkWinTitle,
 	      "clicks right of the layout symbol of a narrow bar were not title clicks");
 	m.ww = 130;
-	CHECK(sysmonbox(&m, 100, 128, &mx) == 0, "the section was drawn on a bar barely wider than the layout symbol");
+	CHECK(sysmonbox(&m, 100, 128, &mx, &bars) == 0, "the section was drawn on a bar barely wider than the layout symbol");
 	/* a status reaching into the centre */
 	m.ww = 1200;
-	CHECK(sysmonbox(&m, 100, 600, &mx) == 0, "the section was drawn over the status");
-	CHECK(sysmonbox(&m, 100, 650, &mx) == 100, "the section was left out although it ends where the status begins");
-	CHECK(sysmonbox(&m, 100, 649, &mx) == 0, "the section was drawn over the first pixel of the status");
+	CHECK(sysmonbox(&m, 100, 600, &mx, &bars) == 0, "the section was drawn over the status");
+	CHECK(sysmonbox(&m, 100, 650, &mx, &bars) == 100, "the section was left out although it ends where the status begins");
+	CHECK(sysmonbox(&m, 100, 649, &mx, &bars) == 0, "the section was drawn over the first pixel of the status");
 	showsysmon = 0;
-	CHECK(sysmonbox(&m, 100, 1198, &mx) == 0, "a hidden section took room");
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 0, "a hidden section took room");
+
+	/*
+	 * The graph: up to 16 bars, sysmongraph / 16 px each, beside the CPU
+	 * usage. Short of room it gives up its oldest bars, down to none, before
+	 * the section is left out.
+	 */
+	showsysmon = 1;
+	sysmongraph = 32;
+	CHECK(sysmonbars() == 16 && SYSMONBARW == 2, "a 32px graph has %d bars of %dpx", sysmonbars(), SYSMONBARW);
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 132 && mx == 534 && bars == 16,
+	      "a wide bar did not centre the section with its graph (x=%d, %d bars)", mx, bars);
+	m.ww = 360;
+	CHECK(sysmonbox(&m, 100, 358, &mx, &bars) == 118 && mx == 121 && bars == 9,
+	      "a narrow bar did not shrink the graph to what fits (x=%d, %d bars)", mx, bars);
+	m.ww = 342;
+	CHECK(sysmonbox(&m, 100, 340, &mx, &bars) == 100 && mx == 121 && bars == 0,
+	      "the graph was not left out before the section (x=%d, %d bars)", mx, bars);
+	m.ww = 340;
+	CHECK(sysmonbox(&m, 100, 338, &mx, &bars) == 0, "the section with its graph left only a bar height of title");
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 666, &mx, &bars) == 132 && bars == 16, "the graph was cut although it ends where the status begins");
+	CHECK(sysmonbox(&m, 100, 665, &mx, &bars) == 130 && mx == 535 && bars == 15,
+	      "the graph reached the first pixel of the status (x=%d, %d bars)", mx, bars);
+	CHECK(sysmonbox(&m, 100, 650, &mx, &bars) == 100 && bars == 0, "a status near the centre did not leave the graph out");
+	CHECK(sysmonbox(&m, 100, 649, &mx, &bars) == 0, "the section was drawn over the status for want of a graph");
+	sysmongraph = 8;
+	CHECK(sysmonbars() == 8 && SYSMONBARW == 1, "an 8px graph has %d bars of %dpx", sysmonbars(), SYSMONBARW);
+	sysmongraph = 64;
+	CHECK(sysmonbars() == 16 && SYSMONBARW == 4, "a 64px graph has %d bars of %dpx", sysmonbars(), SYSMONBARW);
+	sysmongraph = 40;
+	CHECK(sysmonbars() == 16 && SYSMONBARW == 2, "a 40px graph has %d bars of %dpx", sysmonbars(), SYSMONBARW);
+	sysmongraph = -5;
+	CHECK(sysmonbars() == 0 && sysmonbox(&m, 100, 1198, &mx, &bars) == 100 && bars == 0, "a negative graph width took room");
+	sysmongraph = 0;
+	CHECK(sysmonbars() == 0, "a graph of no width has bars");
 
 	showsysmon = saved_show;
+	sysmongraph = saved_graph;
 	lrpad = saved_lrpad;
 	bh = saved_bh;
 	mons = selmon = NULL;
@@ -901,17 +948,20 @@ test_sysmon_expiry(void)
 	sysmonval.nfan = 2;
 	sysmonval.fan[0] = 2400;
 	sysmonval.fan[1] = 2350;
+	sysmonval.nhist = 2;
+	sysmonval.hist[0] = 38;
+	sysmonval.hist[1] = 40;
 	sysmonexpire = nowms() + 5000;
 	t = sysmontimeout();
 	CHECK(t > 4000 && t <= 5000, "poll timeout %d does not match the time left", t);
 	checksysmon();
-	CHECK(sysmonval.cpu == 40 && sysmonval.temp == 55 && sysmonval.nfan == 2 && sysmonexpire,
+	CHECK(sysmonval.cpu == 40 && sysmonval.temp == 55 && sysmonval.nfan == 2 && sysmonval.nhist == 2 && sysmonexpire,
 	      "a fresh value was dropped");
 	sysmonexpire = nowms() - 1;
 	CHECK(sysmontimeout() == 0, "an overdue value does not wake poll at once");
 	checksysmon();
-	CHECK(sysmonval.cpu == -1 && sysmonval.temp == -1 && sysmonval.nfan == 0 && sysmonexpire == 0
-	      && sysmontimeout() == -1, "a stale value was not dropped and the timer disarmed");
+	CHECK(sysmonval.cpu == -1 && sysmonval.temp == -1 && sysmonval.nfan == 0 && sysmonval.nhist == 0
+	      && sysmonexpire == 0 && sysmontimeout() == -1, "a stale value was not dropped and the timer disarmed");
 	checksysmon();
 	CHECK(sysmonval.cpu == -1, "checksysmon revived a dropped value");
 }
@@ -934,7 +984,7 @@ test_sysmon_text(void)
 		{ 100, 150, 4, { 30000, 30000, 30000, 30000 }, "CPU 100% 150°C  30000/30000/30000/30000rpm",
 		  "CPU 100% 100°C  99999/99999/99999/99999rpm" },
 	};
-	char text[64], widest[64];
+	char text[128], widest[128], cpu[64], rest[64];
 	size_t i;
 
 	for (i = 0; i < LENGTH(cases); i++) {
@@ -942,17 +992,24 @@ test_sysmon_text(void)
 		sysmonval.temp = cases[i].temp;
 		sysmonval.nfan = cases[i].nfan;
 		memcpy(sysmonval.fan, cases[i].fan, sizeof sysmonval.fan);
-		sysmontext(text, sizeof text, 0);
-		sysmontext(widest, sizeof widest, 1);
+		/* the graph goes between the CPU usage and the rest */
+		sysmontext(cpu, rest, sizeof cpu, 0);
+		CHECK(strlen(cpu) == 8, "the CPU usage \"%s\" is not as long as \"CPU 100%%\"", cpu);
+		snprintf(text, sizeof text, "%s%s", cpu, rest);
+		sysmontext(cpu, rest, sizeof cpu, 1);
+		snprintf(widest, sizeof widest, "%s%s", cpu, rest);
 		CHECK(!strcmp(text, cases[i].text), "the section reads \"%s\", expected \"%s\"", text, cases[i].text);
 		CHECK(!strcmp(widest, cases[i].widest), "the section is as wide as \"%s\", expected \"%s\"",
 		      widest, cases[i].widest);
 		CHECK(strlen(text) <= strlen(widest), "\"%s\" is longer than its width \"%s\"", text, widest);
 	}
 	/* a small buffer is never overrun */
-	memset(text, 'z', sizeof text);
-	sysmontext(text, 8, 1);
-	CHECK(text[7] == '\0' && text[8] == 'z', "the section text overran its buffer");
+	sysmonval.temp = 100;
+	sysmonval.nfan = 1;
+	memset(cpu, 'z', sizeof cpu);
+	memset(rest, 'z', sizeof rest);
+	sysmontext(cpu, rest, 6, 1);
+	CHECK(cpu[5] == '\0' && cpu[6] == 'z' && rest[5] == '\0' && rest[6] == 'z', "the section text overran its buffer");
 	sysmon_clear(&sysmonval);
 }
 

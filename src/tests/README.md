@@ -105,12 +105,19 @@ The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,
 overflowing and otherwise malformed lines are no reading), the usage between two
 readings (counters that stand still, go backwards or exceed the elapsed time are
-no value), and the property payload (`cpu=<0-100>`, `temp=<0-150>` and
-`fan=<rpm>[,<rpm>...]` with up to four fans of 0-30000 in at most 64 bytes;
+no value), the sampler's history (the latest 16 readings, oldest first, the
+oldest dropped when it is full, and cleared by a missing or out-of-range
+reading), and the property payload (`cpu=<0-100>`, `temp=<0-150>`,
+`fan=<rpm>[,<rpm>...]` with up to four fans of 0-30000 and
+`cpuhist=<0-100>[,<0-100>...]` with up to 16 samples, in at most 128 bytes;
 oversized, empty and NUL-containing payloads are no value, and a malformed,
-out-of-range or repeated field is missing while the others stay; every
-combination of values survives encoding and decoding, and the decoder dwm had
-before temperatures and fans still reads the CPU usage of a new sampler). It
+out-of-range or repeated field, such as a history with an empty, signed,
+four-digit or out-of-range sample or a 17th one, is missing while the others
+stay; every combination of values and history lengths survives encoding and
+decoding, the longest payload fits, encoding leaves out a history with a sample
+out of range or too many samples rather than sending part of it, a buffer one
+byte short of the longest payload is no payload, and the decoder dwm had before
+temperatures and fans still reads the CPU usage of a new sampler). It
 also builds fake sysfs trees in a scratch directory for the sampler's sensor
 sources: none at all, a Dell-like laptop (sparse `coretemp` inputs, the same two
 fans on the fast `dell_ddv` and the slow `dell_smm` chip, a `dell_smm` label
@@ -122,14 +129,19 @@ packages, unreadable and malformed or implausible readings (missing, and the
 read reports the failure), more chips and fans than are used, attributes and
 roots too long for the buffers, when sources are looked for again, and the
 slower cadence for slow reads. `core.c` also checks the section's text with and
-without each field, that its width follows the fields present but not their
-values, and that it is centred and left out, never
+without each field, split where the graph goes, that its width follows the
+fields present but not their values, and that it is centred and left out, never
 overlapping the layout symbol or the status, on wide and narrow bars and at the
-exact boundaries, that a held value expires on time and that dwm sets no poll
-timeout without one, and that a click on the section or the gap up to the status
-is neither a title, layout symbol nor status click, while a click on the title
-left of it, on the status, or with the section off or left out for lack of room
-keeps its usual meaning.
+exact boundaries; with the graph (16 bars of `sysmongraph` / 16 px, 1 px at
+least, none for a width of 0 or below) the section is wider by the graph, and
+when room runs short the graph loses bars one at a time down to none before the
+section is left out, at the exact pixel where the status begins and where the
+title would keep only a bar height. It checks that a held value, history
+included, expires on time and that dwm sets no poll timeout without one, and that
+a click on the section, its
+graph or the gap up to the status is neither a title, layout symbol nor status
+click, while a click on the title left of it, on the status, or with the section
+off or left out for lack of room keeps its usual meaning.
 
 `sysmon-x11.c` runs from `x11.sh` against the running test dwm and recognises
 the system monitor section by the bar pixels it produces. It enables the
@@ -139,7 +151,19 @@ up and change the bar, that a malformed temperature or fan list is left out
 without hiding the other fields, that garbage (wrong content, wrong type or
 format, oversized, empty, removed) shows `-`, that a value nobody refreshes goes
 stale by itself and stays while it is refreshed, and after each of these that
-dwm still redraws a status change. The test dwm finds `dwmsysmon` through a
+dwm still redraws a status change. For the graph it checks that it is 32 px
+wide between the CPU usage and the other fields, with no text pixel in or next
+to its columns; that full bars are all as high, on one bottom row; that a
+history of 100% then 0% is a full bar left of a 1 px line at the right end and
+a single 50% sample half a bar there, with the rest of the graph empty, and a
+99% sample a full bar (heights are rounded to the nearest pixel); that a
+malformed history (empty, out of range, signed, four digits, 17 samples,
+repeated and more) draws nothing and leaves the other fields where they are;
+that a history goes stale with its value; and, with the status a red rectangle
+of a width searched for, that a status taking the graph's room cuts it to whole
+bars, keeping the newest, while every pixel of the status stays red and the
+section keeps at least as far from the status as the graph is from the CPU
+usage. The test dwm finds `dwmsysmon` through a
 symbolic link first on its `PATH`, which the check points at a stub that exits
 at once while it stands in for the sampler, and at the fixture build of the real
 sampler otherwise; samplers are counted by their executable and `DISPLAY` in
@@ -151,7 +175,11 @@ checks that dwm, running with the section off by default, started no sampler.
 It then shows the section so that dwm starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
 instead of `/proc/stat` and `SYSMON_SYS_PATH` at a fake sysfs tree instead of
 `/sys`, and sampling at the default 4000 ms interval (with `dwm.sysmonstale` at
-9000), and checks the published value and the bar for a changing load, that it
+9000), and checks the published value and the bar for a changing load (the
+bar outside the graph's columns, which the stand-in measures for each set of
+fields, since the graph follows the sampler's history), that the history
+holds 20%, 80% and 20% in that order and ends with the published usage, and
+that dwm draws it exactly as it draws the same payload from the stand-in, that it
 publishes every 4000 ms as dwm tells it, every 1000 ms when another interval is
 published in dwm's place, and every 4000 ms again for an interval below 250 or
 above 60000 ms, a stopped (hung) sampler, a malformed and a missing stat file

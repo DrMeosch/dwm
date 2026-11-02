@@ -114,7 +114,7 @@ legacy_decode(const char *data, unsigned long len)
 	return -1;
 }
 
-/* "cpu temp fan,fan" with -1 for a missing value, as a decoded payload is compared */
+/* "cpu temp fan,fan /sample,sample" with -1 for a missing value, as a decoded payload is compared */
 static void
 values_text(const SysmonValues *v, char *buf, size_t size)
 {
@@ -123,6 +123,8 @@ values_text(const SysmonValues *v, char *buf, size_t size)
 	snprintf(buf, size, "%d %d", v->cpu, v->temp);
 	for (i = 0; i < v->nfan; i++)
 		snprintf(buf + strlen(buf), size - strlen(buf), "%c%d", i ? ',' : ' ', v->fan[i]);
+	for (i = 0; i < v->nhist; i++)
+		snprintf(buf + strlen(buf), size - strlen(buf), "%s%d", i ? "," : " /", v->hist[i]);
 }
 
 static void
@@ -150,11 +152,26 @@ test_payload(void)
 		{ "cpu=42 fan=1,", "42 -1" }, { "cpu=42 fan=,1", "42 -1" }, { "cpu=42 fan=1,,2", "42 -1" },
 		{ "cpu=42 fan=1,2,3,4,5", "42 -1" }, { "cpu=42 fan=-1", "42 -1" }, { "cpu=42 fan=1;2", "42 -1" },
 		{ "cpu=42 fan=1 2", "42 -1 1" }, { "cpu=42 fan=2400rpm", "42 -1" }, { "cpu=x temp=55 fan=9", "-1 55 9" },
+		/* the CPU usage history: up to SYSMON_HIST samples of 0-100, all or nothing */
+		{ "cpu=42 cpuhist=40,42", "42 -1 /40,42" }, { "cpuhist=7", "-1 -1 /7" },
+		{ "cpuhist=0,100,042,5", "-1 -1 /0,100,42,5" },
+		{ "cpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16", "-1 -1 /1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16" },
+		{ "cpu=42 temp=55 fan=2400,2350 cpuhist=40,42", "42 55 2400,2350 /40,42" },
+		{ "cpuhist=40,42 fan=2400 cpu=42", "42 -1 2400 /40,42" },
+		{ "cpu=42 cpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17", "42 -1" },
+		{ "cpu=42 cpuhist=", "42 -1" }, { "cpu=42 cpuhist", "42 -1" }, { "cpu=42 cpuhist=101", "42 -1" },
+		{ "cpu=42 cpuhist=40,101", "42 -1" }, { "cpu=42 cpuhist=1000", "42 -1" }, { "cpu=42 cpuhist=0042", "42 -1" },
+		{ "cpu=42 cpuhist=-1", "42 -1" }, { "cpu=42 cpuhist=+1", "42 -1" }, { "cpu=42 cpuhist=1,", "42 -1" },
+		{ "cpu=42 cpuhist=,1", "42 -1" }, { "cpu=42 cpuhist=1,,2", "42 -1" }, { "cpu=42 cpuhist=1;2", "42 -1" },
+		{ "cpu=42 cpuhist=1.5", "42 -1" }, { "cpu=42 cpuhist=4x", "42 -1" }, { "cpu=42 cpuhist=0x10", "42 -1" },
+		{ "cpu=42 CPUHIST=1", "42 -1" }, { "cpu=42 cpuhist:1", "42 -1" }, { "cpu=42 xcpuhist=1", "42 -1" },
+		{ "cpu=42 cpuhist=1 cpuhist=1", "42 -1" }, { "cpu=42 cpuhist=1 2", "42 -1 /1" },
+		{ "cpu=4x2 temp=55 cpuhist=40,42", "-1 55 /40,42" }, { "cpu=42 temp=55 cpuhist=4,,2", "42 55" },
 	};
-	char buf[SYSMON_MAXLEN + 64], exact[SYSMON_MAXLEN + 64], got[64];
+	char buf[SYSMON_MAXLEN + 64], exact[SYSMON_MAXLEN + 64], got[128];
 	SysmonValues v, back;
 	size_t i;
-	int n, rc, cpu, temp, fans;
+	int n, rc, cpu, temp, fans, hist;
 
 	for (i = 0; i < LENGTH(cases); i++) {
 		size_t len = strlen(cases[i].text);
@@ -183,33 +200,44 @@ test_payload(void)
 	/* every combination of values goes through encode and decode unchanged */
 	for (cpu = -1; cpu <= 100; cpu += 101 / 3)
 		for (temp = -1; temp <= SYSMON_MAXTEMP; temp += 38)
-			for (fans = 0; fans <= SYSMON_FANS; fans++) {
-				sysmon_clear(&v);
-				v.cpu = cpu;
-				v.temp = temp;
-				for (v.nfan = 0; v.nfan < fans; v.nfan++)
-					v.fan[v.nfan] = v.nfan * (SYSMON_MAXFAN / 3);
-				n = sysmon_encode(buf, sizeof buf, &v);
-				CHECK(n >= 0 && n <= SYSMON_MAXLEN, "encode of %d/%d/%d fans gave %d", cpu, temp, fans, n);
-				if (n == 0) {
-					CHECK(cpu < 0 && temp < 0 && !fans, "encode left out values");
-					continue;
+			for (fans = 0; fans <= SYSMON_FANS; fans++)
+				for (hist = 0; hist <= SYSMON_HIST; hist += SYSMON_HIST / 2 - 1) {
+					sysmon_clear(&v);
+					v.cpu = cpu;
+					v.temp = temp;
+					for (v.nfan = 0; v.nfan < fans; v.nfan++)
+						v.fan[v.nfan] = v.nfan * (SYSMON_MAXFAN / 3);
+					for (v.nhist = 0; v.nhist < hist; v.nhist++)
+						v.hist[v.nhist] = v.nhist * 100 / (SYSMON_HIST - 1);
+					n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
+					CHECK(n >= 0 && n <= SYSMON_MAXLEN, "encode of %d/%d/%d fans/%d samples gave %d",
+					      cpu, temp, fans, hist, n);
+					if (n == 0) {
+						CHECK(cpu < 0 && temp < 0 && !fans && !hist, "encode left out values");
+						continue;
+					}
+					CHECK(sysmon_decode(buf, (unsigned long)n, &back) == 0 && !memcmp(&v, &back, sizeof v),
+					      "\"%s\" did not decode to what was encoded", buf);
 				}
-				CHECK(sysmon_decode(buf, (unsigned long)n, &back) == 0 && !memcmp(&v, &back, sizeof v),
-				      "\"%s\" did not decode to what was encoded", buf);
-			}
 	/* the longest payload fits */
 	sysmon_clear(&v);
 	v.cpu = 100;
 	v.temp = SYSMON_MAXTEMP;
 	for (v.nfan = 0; v.nfan < SYSMON_FANS; v.nfan++)
 		v.fan[v.nfan] = SYSMON_MAXFAN;
-	n = sysmon_encode(buf, sizeof buf, &v);
+	for (v.nhist = 0; v.nhist < SYSMON_HIST; v.nhist++)
+		v.hist[v.nhist] = 100;
+	n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
 	CHECK(n > 0 && n <= SYSMON_MAXLEN && sysmon_decode(buf, (unsigned long)n, &back) == 0
 	      && !memcmp(&v, &back, sizeof v), "the longest payload (%d bytes) does not fit", n);
+	/* a buffer one byte short of the longest payload overran or left something out */
+	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short of the history");
+	v.nhist = 0;
+	n = sysmon_encode(buf, sizeof buf, &v);
 	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short");
 	CHECK(sysmon_encode(buf, 0, &v) == -1, "encode wrote to an empty buffer");
 	/* values out of range are left out, never sent */
+	sysmon_clear(&v);
 	v.cpu = 101;
 	v.temp = SYSMON_MAXTEMP + 1;
 	v.nfan = 3;
@@ -222,7 +250,24 @@ test_payload(void)
 	v.temp = -1;
 	v.nfan = 0;
 	CHECK(sysmon_encode(buf, sizeof buf, &v) == 0 && !buf[0], "encode of nothing was not empty");
-	CHECK(sysmon_encode(buf, 5, &(SysmonValues){ 42, -1, 0, { 0 } }) == -1, "encode overran a small buffer");
+	CHECK(sysmon_encode(buf, 5, &(SysmonValues){ .cpu = 42, .temp = -1 }) == -1, "encode overran a small buffer");
+	/* a history with a sample out of range, or too many samples, is left out, never sent in part */
+	sysmon_clear(&v);
+	v.cpu = 42;
+	v.nhist = 3;
+	v.hist[0] = 40;
+	v.hist[1] = 101;
+	v.hist[2] = 42;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42"), "encode sent a bad history: \"%s\"", buf);
+	v.hist[1] = -1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42"), "encode sent a bad history: \"%s\"", buf);
+	v.hist[1] = 41;
+	v.nhist = SYSMON_HIST + 1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42"), "encode sent an overlong history: \"%s\"", buf);
+	v.nhist = -1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42"), "encode sent a negative history: \"%s\"", buf);
+	v.nhist = 3;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42"), "encode of a history: \"%s\"", buf);
 
 	/* old and new: a dwm from before temperatures and fans still reads the CPU of a new sampler */
 	sysmon_clear(&v);
@@ -238,6 +283,38 @@ test_payload(void)
 	CHECK(!strcmp(buf, "cpu=100") && legacy_decode(buf, (unsigned long)n) == 100, "a CPU-only payload changed: \"%s\"", buf);
 	/* and a new dwm reads an old sampler */
 	CHECK(sysmon_decode("cpu=37", 6, &v) == 0 && v.cpu == 37 && v.temp == -1 && !v.nfan, "an old sampler's payload is not read");
+}
+
+/* The sampler's history: the latest SYSMON_HIST readings, oldest first, cleared by a missing one. */
+static void
+test_push(void)
+{
+	SysmonValues v, want;
+	int i;
+
+	sysmon_clear(&v);
+	sysmon_push(&v, 7);
+	CHECK(v.cpu == 7 && v.nhist == 1 && v.hist[0] == 7, "the first reading is not the history");
+	for (i = 1; i < SYSMON_HIST + 5; i++)
+		sysmon_push(&v, i * 3);
+	CHECK(v.cpu == (SYSMON_HIST + 4) * 3 && v.nhist == SYSMON_HIST, "a full history has %d samples", v.nhist);
+	for (i = 0; i < SYSMON_HIST; i++)
+		CHECK(v.hist[i] == (i + 5) * 3, "sample %d of a full history is %d, want %d", i, v.hist[i], (i + 5) * 3);
+	v.temp = 55;
+	v.nfan = 1;
+	v.fan[0] = 2400;
+	sysmon_push(&v, -1);
+	sysmon_clear(&want);
+	want.temp = 55;
+	want.nfan = 1;
+	want.fan[0] = 2400;
+	CHECK(!memcmp(&v, &want, sizeof v), "a missing reading did not clear the CPU usage and its history alone");
+	sysmon_push(&v, 100);
+	sysmon_push(&v, 0);
+	sysmon_push(&v, 101);
+	CHECK(v.cpu == -1 && v.nhist == 0, "a reading out of range was kept");
+	sysmon_push(&v, 0);
+	CHECK(v.cpu == 0 && v.nhist == 1 && v.hist[0] == 0, "the history did not start again after a missing reading");
 }
 
 /* Fake sysfs trees below a scratch directory. */
@@ -626,6 +703,7 @@ main(void)
 	test_parse();
 	test_percent();
 	test_payload();
+	test_push();
 	test_sensors();
 	if (failures)
 		return EXIT_FAILURE;

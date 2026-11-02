@@ -1,9 +1,10 @@
 /* See LICENSE file for copyright and license details. */
 /*
  * dwmsysmon: samples system load, the CPU temperature and the fans outside the
- * window manager and publishes the latest values in the root window property
- * read by dwm (see sysmon.h). It only ever writes one short property, never
- * blocks dwm, and exits with the X connection. dwm starts it when the system
+ * window manager and publishes the latest values, with the last SYSMON_HIST CPU
+ * usage samples for the graph, in the root window property read by dwm (see
+ * sysmon.h). It only ever writes one short property, never blocks dwm, and
+ * exits with the X connection. dwm starts it when the system
  * monitor is shown, and it exits by itself as soon as dwm hides the section.
  * Sensors are read less often than the CPU, and even less often when they are
  * slow to answer (see sensors.h).
@@ -147,7 +148,7 @@ enabled(void)
 static void
 publish(const SysmonValues *v)
 {
-	char buf[SYSMON_MAXLEN];
+	char buf[SYSMON_MAXLEN + 1];
 	int n;
 
 	if ((n = sysmon_encode(buf, sizeof buf, v)) <= 0)
@@ -230,11 +231,11 @@ main(int argc, char *argv[])
 			break;
 		if ((t = nowms()) >= next) {
 			if (readcpu(SYSMON_STAT_PATH, &cur) == 0) {
-				val.cpu = have ? sysmon_cpu_percent(&prev, &cur) : -1;
+				sysmon_push(&val, have ? sysmon_cpu_percent(&prev, &cur) : -1);
 				prev = cur;
 				have = 1;
 			} else {
-				val.cpu = -1;
+				sysmon_push(&val, -1);
 				have = 0;
 			}
 			if (t >= sensornext) {

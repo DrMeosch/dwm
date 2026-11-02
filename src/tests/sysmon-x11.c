@@ -2,9 +2,10 @@
  * End-to-end checks of the system monitor section against the running test dwm:
  * a stand-in sampler (this program) and the real dwmsysmon publish through the
  * root window property, and the bar must show the values, "-" when the CPU
- * usage is missing, malformed or stale, and no temperature or fans when they
- * are, while dwm stays responsive. The section is recognised by the bar pixels
- * it produces.
+ * usage is missing, malformed or stale, and no temperature, fans or graph when
+ * they are, while dwm stays responsive. The section is recognised by the bar
+ * pixels it produces. The real sampler's graph follows its history, so the
+ * checks of its values leave the graph's columns out.
  *
  * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory> <link>
  *
@@ -40,6 +41,8 @@
 #define SAMPLER_STALE_MS (2 * SAMPLE_MS + 1000) /* dwm.sysmonstale used with dwmsysmon */
 #define VALUE_MS (2 * SAMPLE_MS + 2000) /* until a change of the fixture shows: two samples and a margin */
 #define SENSOR_MS (2 * VALUE_MS) /* until a sensor change shows: sensors are read at most every 6000 ms */
+#define GRAPH_BARS 16 /* SYSMON_HIST samples in the graph */
+#define GRAPH_PX 32 /* sysmongraph in config.h: a bar of 2px each */
 
 static Display *dpy;
 static Window root;
@@ -53,6 +56,13 @@ static char sys_path[512]; /* the fake sysfs tree dwmsysmon reads its sensors fr
 static int fixture_frozen; /* leave the stat file alone, e.g. while it is deliberately broken */
 static char sampler_exe[PATH_MAX]; /* the real dwmsysmon, as /proc names its executable */
 static char sampler_link[PATH_MAX]; /* what dwm starts as "dwmsysmon" */
+static int skip_left = 1, skip_right = 0; /* columns bar_hash leaves out, none while left > right */
+
+/* What the bar shows outside the columns from left to right. */
+typedef struct {
+	unsigned long hash;
+	int left, right;
+} Look;
 
 #define CHECK(condition, ...) do { \
 	if (!(condition)) { \
@@ -160,7 +170,8 @@ bar_hash(void)
 		return 0;
 	for (y = 0; y < wa.height; y++)
 		for (x = 0; x < wa.width; x++)
-			h = (h ^ XGetPixel(image, x, y)) * 1099511628211UL;
+			if (x < skip_left || x > skip_right)
+				h = (h ^ XGetPixel(image, x, y)) * 1099511628211UL;
 	XDestroyImage(image);
 	return h;
 }
@@ -281,9 +292,9 @@ read_value(char *buf, size_t size)
 	unsigned long n, after;
 	unsigned char *data = NULL;
 
-	if (XGetWindowProperty(dpy, root, sysmonatom, 0, 16, False, XA_STRING, &type,
+	if (XGetWindowProperty(dpy, root, sysmonatom, 0, 32, False, XA_STRING, &type,
 	    &format, &n, &after, &data) == Success && data) {
-		if (type == XA_STRING && format == 8 && n < size) {
+		if (type == XA_STRING && format == 8 && !after && n < size) {
 			memcpy(buf, data, n);
 			buf[n] = '\0';
 			ok = 1;
@@ -293,14 +304,38 @@ read_value(char *buf, size_t size)
 	return ok;
 }
 
+/* Take the history field out of buf: its samples, oldest first, and how many. */
+static int
+split_history(char *buf, int *samples)
+{
+	char *p, *q, *end;
+	int n = 0;
+
+	if (!(p = strstr(buf, "cpuhist=")))
+		return 0;
+	for (q = p + 8; n < GRAPH_BARS + 1; q = end + 1) {
+		samples[n++] = (int)strtol(q, &end, 10);
+		if (*end != ',')
+			break;
+	}
+	end = p + strcspn(p, " ");
+	if (p > buf)
+		memmove(p - 1, end, strlen(end) + 1); /* with the space before it */
+	else
+		memmove(p, end + strspn(end, " "), strlen(end + strspn(end, " ")) + 1);
+	return n;
+}
+
+/* Wait for the sampler's value, without its history, to be want; NULL waits for none. */
 static int
 wait_value(const char *want, long millis)
 {
-	char buf[64];
+	char buf[160];
+	int samples[GRAPH_BARS + 1];
 	long waited;
 
 	for (waited = 0; waited <= millis; waited += 25) {
-		if (want ? (read_value(buf, sizeof buf) && !strcmp(buf, want))
+		if (want ? (read_value(buf, sizeof buf) && (split_history(buf, samples), !strcmp(buf, want)))
 		         : !read_value(buf, sizeof buf))
 			return 1;
 		pump(25);
@@ -522,10 +557,100 @@ reference(const char *payload)
 	return h;
 }
 
+/* The bar for payload, as the stand-in sampler publishes it. */
+static XImage *
+look_at(const char *payload)
+{
+	reference(payload);
+	return bar_copy();
+}
+
+/* payload with a history of count samples, oldest first, all worth value but the last, worth last. */
+static const char *
+with_history(const char *payload, int count, int value, int last)
+{
+	static char buf[256];
+	int i;
+
+	snprintf(buf, sizeof buf, "%s%scpuhist=", payload, *payload ? " " : "");
+	for (i = 0; i < count; i++)
+		snprintf(buf + strlen(buf), sizeof buf - strlen(buf), "%s%d", i ? "," : "", i == count - 1 ? last : value);
+	return buf;
+}
+
+/* The columns of the graph in the section drawn for payload: those a full history changes. */
+static void
+graph_columns(const char *payload, int *left, int *right)
+{
+	XImage *none = look_at(payload), *full = look_at(with_history(payload, GRAPH_BARS, 100, 100));
+
+	*left = 1;
+	*right = 0;
+	CHECK(none && full && diff_extent(none, full, left, right) > 0, "\"%s\" has no graph", payload);
+	if (none)
+		XDestroyImage(none);
+	if (full)
+		XDestroyImage(full);
+}
+
+/* What the bar shows for payload (NULL: none) but in the graph's columns, placed as for layout. */
+static Look
+look_without_graph(const char *layout, const char *payload)
+{
+	Look l;
+
+	graph_columns(layout, &l.left, &l.right);
+	skip_left = l.left;
+	skip_right = l.right;
+	l.hash = reference(payload);
+	skip_left = 1;
+	skip_right = 0;
+	return l;
+}
+
+/* Wait until the bar shows what l describes; bar_hash leaves the same columns out until the next look. */
+static int
+wait_look(Look l, long millis)
+{
+	skip_left = l.left;
+	skip_right = l.right;
+	return wait_hash(l.hash, millis);
+}
+
+/* Whether column x of a bar image has anything but its background, which text and bars leave in its top row. */
+static int
+ink(XImage *img, int x)
+{
+	int y;
+
+	for (y = 1; y < img->height; y++)
+		if (XGetPixel(img, x, y) != XGetPixel(img, x, 0))
+			return 1;
+	return 0;
+}
+
+/* How many pixels of column x differ between a and b, and the lowest row that does. */
+static int
+column_diff(XImage *a, XImage *b, int x, int *bottom)
+{
+	int y, n = 0;
+
+	*bottom = -1;
+	for (y = 0; y < a->height; y++)
+		if (XGetPixel(a, x, y) != XGetPixel(b, x, y)) {
+			n++;
+			*bottom = y;
+		}
+	return n;
+}
+
 int
 main(int argc, char *argv[])
 {
 	unsigned long h_off, h_dash, h20, h80, h42, h_two, h_one, h_nofan, h_temp47;
+	Look l_off, l_dash, l20, l80, l_two, l_one, l_nofan, l_temp47;
+	char value[160];
+	int samples[GRAPH_BARS + 1], nsamples;
 	char big[4096], medium[64], huge[200], stub[PATH_MAX], res[64];
 	XImage *off_plain, *off_medium, *off_huge, *on_img;
 	long n;
@@ -648,9 +773,10 @@ main(int argc, char *argv[])
 	/*
 	 * The section sits at the centre of the bar, whatever the status text takes
 	 * on the right, and is left out rather than overlapping it when that
-	 * does not fit. "cpu=100" fills the whole box, so its ink spans it.
+	 * does not fit. "cpu=100" with a full graph fills the whole box, so its
+	 * ink spans it.
 	 */
-	publish("cpu=100");
+	publish(with_history("cpu=100", GRAPH_BARS, 100, 100));
 	set_status("sysmon-base");
 	pump(300);
 	steady_hash();
@@ -689,7 +815,7 @@ main(int argc, char *argv[])
 		int lastwidth = 0;
 
 		for (i = 0; i < (int)(sizeof payloads / sizeof *payloads); i++) {
-			publish(payloads[i]);
+			publish(with_history(payloads[i], GRAPH_BARS, 100, 100));
 			set_status("sysmon-base");
 			pump(300);
 			steady_hash();
@@ -722,6 +848,149 @@ main(int argc, char *argv[])
 				XDestroyImage(on_img);
 		}
 	}
+
+	/*
+	 * The graph of the CPU usage history: 16 bars of 2px between the CPU usage
+	 * and the other fields, which keep their pixels. A sample is a bar rising
+	 * from the same bottom row, as high as its share of a full bar and at least
+	 * a pixel; the newest is on the right, and a short history fills the right
+	 * of the graph only. A malformed history draws nothing.
+	 */
+	{
+		static const char *fields = "cpu=42 temp=55 fan=2400,2350";
+		static const char *bad[] = {
+			"cpuhist=", "cpuhist=101", "cpuhist=1,,2", "cpuhist=4x", "cpuhist=-1", "cpuhist=1,", "cpuhist=0042",
+			"cpuhist=1 cpuhist=2", "CPUHIST=1", "cpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17",
+		};
+		char payload[256];
+		XImage *none, *img;
+		int gl, gr, x, h, bottom, full = 0, fullbottom = -1, ok;
+		unsigned long h_fields;
+
+		set_status("sysmon-base");
+		none = look_at(fields);
+		h_fields = steady_hash();
+		graph_columns(fields, &gl, &gr);
+		CHECK(gr - gl + 1 == GRAPH_PX, "the graph is %d px wide, not %d", gr - gl + 1, GRAPH_PX);
+		n = none && off_plain ? diff_extent(none, off_plain, &left, &right) : 0;
+		CHECK(n > 0 && left < gl - 8 && right > gr + 8,
+		      "the graph (columns %d-%d) is not between the CPU usage and the other fields (%d-%d)", gl, gr, left, right);
+		for (x = gl - 4, ok = 1; none && off_plain && x <= gr + 4; x++)
+			ok = ok && column_diff(none, off_plain, x, &bottom) == 0;
+		CHECK(ok, "text of the section is drawn in or next to the graph's columns %d-%d", gl, gr);
+
+		if ((img = look_at(with_history(fields, GRAPH_BARS, 100, 100)))) {
+			for (x = gl, ok = 1; none && x <= gr; x++) {
+				h = column_diff(img, none, x, &bottom);
+				if (x == gl) {
+					full = h;
+					fullbottom = bottom;
+				}
+				ok = ok && h == full && bottom == fullbottom;
+			}
+			CHECK(ok && full >= 6 && full < img->height - 2, "full bars are not all %d px high on one row", full);
+			XDestroyImage(img);
+		}
+		if ((img = look_at(with_history(fields, 2, 100, 0)))) {
+			for (x = gl, ok = 1; none && x <= gr; x++) {
+				h = column_diff(img, none, x, &bottom);
+				if (x >= gr - 1)
+					ok = ok && h == 1 && bottom == fullbottom;
+				else if (x >= gr - 3)
+					ok = ok && h == full && bottom == fullbottom;
+				else
+					ok = ok && h == 0;
+			}
+			CHECK(ok, "a history of 100%% then 0%% is not a full bar left of a line at the right of the graph");
+			XDestroyImage(img);
+		}
+		if ((img = look_at(with_history(fields, 1, 50, 50)))) {
+			for (x = gl, ok = 1; none && x <= gr; x++) {
+				h = column_diff(img, none, x, &bottom);
+				ok = ok && h == (x >= gr - 1 ? (50 * full + 50) / 100 : 0) && (!h || bottom == fullbottom);
+			}
+			CHECK(ok, "a single sample of 50%% is not a half bar at the right of the graph");
+			XDestroyImage(img);
+		}
+		if ((img = look_at(with_history(fields, 1, 99, 99)))) { /* rounded to the nearest pixel */
+			h = none ? column_diff(img, none, gr, &bottom) : -1;
+			CHECK(h == full, "a sample of 99%% is %d px high, not a full bar of %d", h, full);
+			XDestroyImage(img);
+		}
+		for (i = 0; i < (int)(sizeof bad / sizeof *bad); i++) {
+			snprintf(payload, sizeof payload, "%s %s", fields, bad[i]);
+			CHECK(reference(payload) == h_fields, "the malformed history \"%s\" changed the bar", bad[i]);
+		}
+		CHECK(reference(with_history(fields, 3, 20, 30)) != h_fields, "a valid history did not show after malformed ones");
+		CHECK(reference("cpu=42 temp=55 cpuhist=4,,2 fan=2400,2350") == h_fields, "a malformed history moved the fields");
+		if (none)
+			XDestroyImage(none);
+
+		/*
+		 * A status text that takes the graph's room cuts it, oldest bars first,
+		 * before the section is left out, and it is never drawn over: the
+		 * status is a red rectangle of a given width.
+		 */
+		{
+			char status[96];
+			int lo = 100, hi = 1000, mid, w = -1, red, y, cpu_end, status_at, last;
+			XImage *a = NULL, *b = NULL;
+
+			while (lo <= hi) {
+				mid = (lo + hi) / 2;
+				snprintf(status, sizeof status, "^c#ff0000^^r0,0,%d,99^^f%d^", mid, mid);
+				set_status(status);
+				if (a)
+					XDestroyImage(a);
+				if (b)
+					XDestroyImage(b);
+				a = look_at(fields);
+				b = look_at(with_history(fields, GRAPH_BARS, 100, 100));
+				w = a && b && diff_extent(a, b, &gl, &gr) ? gr - gl + 1 : 0;
+				if (w == GRAPH_PX)
+					lo = mid + 1;
+				else if (w == 0)
+					hi = mid - 1;
+				else
+					break;
+			}
+			CHECK(w > 0 && w < GRAPH_PX && w % 2 == 0, "no status width cut the graph to whole bars (%d px)", w);
+			if (w > 0 && w < GRAPH_PX && b) {
+				for (x = 0, red = 0; x < b->width; x++)
+					for (y = 0; y < b->height; y++)
+						red += XGetPixel(b, x, y) == 0xff0000;
+				CHECK(red == mid * b->height, "the section with a cut graph drew over the status (%d of %d red pixels)",
+				      red, mid * b->height);
+				/* and keeps as far from the status as the graph is from the CPU usage */
+				for (x = gl - 1, cpu_end = -1; x >= 0 && cpu_end < 0; x--)
+					if (ink(b, x))
+						cpu_end = x;
+				for (x = gr + 1, status_at = -1, last = -1; x < b->width && status_at < 0; x++) {
+					if (XGetPixel(b, x, 0) == 0xff0000)
+						status_at = x;
+					else if (ink(b, x))
+						last = x;
+				}
+				CHECK(cpu_end >= 0 && last > gr && status_at > last && status_at - last >= gl - cpu_end,
+				      "the section with a cut graph ends %d px before the status, the graph starts %d px after the CPU usage",
+				      status_at - last, gl - cpu_end);
+				if (a)
+					XDestroyImage(a);
+				a = look_at(with_history(fields, GRAPH_BARS, 100, 0));
+				for (x = gl, ok = 1; a && x <= gr; x++) {
+					h = column_diff(a, b, x, &bottom);
+					ok = ok && h == (x >= gr - 1 ? full - 1 : 0);
+				}
+				CHECK(ok, "the cut graph did not keep the newest samples");
+			}
+			if (a)
+				XDestroyImage(a);
+			if (b)
+				XDestroyImage(b);
+		}
+		set_status("sysmon-base");
+	}
+
 	set_status("sysmon-base");
 	XDestroyImage(off_plain);
 	XDestroyImage(off_medium);
@@ -779,24 +1048,81 @@ main(int argc, char *argv[])
 		publish("cpu=80");
 	}
 	CHECK(bar_hash() == h80, "a refreshed value went stale");
+	CHECK(reference(with_history("cpu=80", 3, 70, 80)) != h80, "a history did not show before it went stale");
+	CHECK(wait_hash(h_dash, STALE_MS + 3000), "a history that was never refreshed did not go stale");
+	responsive("a stale history");
 	remove_value();
 	CHECK(wait_hash(h_dash, 2000), "the value did not go away");
+
+	/*
+	 * The real sampler's graph shows whatever history it has gathered, so its
+	 * values are checked without the graph's columns, wherever the fields it
+	 * has place them.
+	 */
+	l20 = look_without_graph("cpu=20", "cpu=20");
+	l80 = look_without_graph("cpu=20", "cpu=80");
+	l_dash = look_without_graph("cpu=20", NULL);
+	l_two = look_without_graph("cpu=20 temp=48 fan=2100,2050", "cpu=20 temp=48 fan=2100,2050");
+	l_one = look_without_graph("cpu=20 temp=48 fan=2100", "cpu=20 temp=48 fan=2100");
+	l_nofan = look_without_graph("cpu=20 temp=48", "cpu=20 temp=48");
+	l_temp47 = look_without_graph("cpu=20 temp=48", "cpu=20 temp=47");
+	CHECK(l20.hash && l80.hash && l_dash.hash && l20.hash != l80.hash && l20.hash != l_dash.hash
+	      && l_two.hash != l_one.hash && l_nofan.hash != l_temp47.hash,
+	      "the values do not look distinct without the graph");
 
 	/* the real sampler, started by dwm: values from a stat file, then hang, bad data and no data */
 	set_resources("dwm.showsysmon: 0\n");
 	CHECK(wait_hash(h_off, 3000), "the section did not hide before the real sampler's turn");
+	skip_left = l20.left;
+	skip_right = l20.right;
+	l_off.hash = steady_hash();
+	l_off.left = l20.left;
+	l_off.right = l20.right;
 	provide_sampler(sampler_exe);
 	snprintf(res, sizeof res, "dwm.showsysmon: 1\ndwm.sysmonstale: %d\n", SAMPLER_STALE_MS);
 	set_resources(res);
 	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start dwmsysmon");
 	fixture_busy = 20;
-	CHECK(wait_hash(h20, VALUE_MS), "dwmsysmon's 20%% was not shown by dwm");
+	CHECK(wait_look(l20, VALUE_MS), "dwmsysmon's 20%% was not shown by dwm");
 	/* no sysfs sensors at all: only the CPU usage is published */
 	CHECK(wait_value("cpu=20", SAMPLE_MS + 1000), "dwmsysmon did not publish exactly cpu=20 without sensors");
 	fixture_busy = 80;
-	CHECK(wait_hash(h80, VALUE_MS), "dwmsysmon's 80%% was not shown by dwm");
+	CHECK(wait_look(l80, VALUE_MS), "dwmsysmon's 80%% was not shown by dwm");
 	fixture_busy = 20;
-	CHECK(wait_hash(h20, VALUE_MS), "dwmsysmon's change back to 20%% was not shown by dwm");
+	CHECK(wait_look(l20, VALUE_MS), "dwmsysmon's change back to 20%% was not shown by dwm");
+
+	/*
+	 * The sampler's history holds its samples, oldest first, up to the CPU
+	 * usage it publishes, and the graph shows them as the stand-in's would.
+	 */
+	{
+		char raw[160];
+		unsigned long drawn;
+		int first20 = -1, then80 = -1, ok;
+
+		kill(sampler_pid, SIGSTOP);
+		pump(300);
+		ok = read_value(raw, sizeof raw);
+		snprintf(value, sizeof value, "%s", ok ? raw : "");
+		nsamples = split_history(value, samples);
+		CHECK(ok && !strcmp(value, "cpu=20") && nsamples >= 3 && nsamples <= GRAPH_BARS && samples[nsamples - 1] == 20,
+		      "dwmsysmon published \"%s\", not 20%% with its history", raw);
+		for (i = 0; i < nsamples; i++) {
+			if (samples[i] == 20 && first20 < 0)
+				first20 = i;
+			if (samples[i] == 80 && first20 >= 0 && then80 < 0)
+				then80 = i;
+		}
+		CHECK(first20 >= 0 && then80 > first20 && then80 < nsamples - 1,
+		      "the history \"%s\" does not hold 20%%, then 80%%, then 20%% in order", raw);
+		skip_left = 1;
+		skip_right = 0;
+		drawn = steady_hash();
+		CHECK(reference("cpu=20") != drawn, "dwm drew no graph for the sampler's history");
+		CHECK(reference(raw) == drawn, "dwm did not draw the sampler's history as it draws the same payload");
+		kill(sampler_pid, SIGCONT);
+		CHECK(wait_look(l20, VALUE_MS), "the value did not return after the history check");
+	}
 
 	/*
 	 * The sampler samples as often as dwm says: SYSMONINTERVAL from config.h,
@@ -819,13 +1145,13 @@ main(int argc, char *argv[])
 	n = publish_period();
 	CHECK(n >= SAMPLE_MS - 250 && n <= SAMPLE_MS + 250, "an interval above the maximum gave a period of %ld ms", n);
 	set_interval(SAMPLE_MS);
-	CHECK(wait_hash(h20, VALUE_MS), "the value changed while the interval did");
+	CHECK(wait_look(l20, VALUE_MS), "the value changed while the interval did");
 
 	kill(sampler_pid, SIGSTOP); /* a hung sampler */
-	CHECK(wait_hash(h_dash, SAMPLER_STALE_MS + 3000), "a hung sampler's value did not go stale");
+	CHECK(wait_look(l_dash, SAMPLER_STALE_MS + 3000), "a hung sampler's value did not go stale");
 	responsive("a hung sampler");
 	kill(sampler_pid, SIGCONT);
-	CHECK(wait_hash(h20, VALUE_MS), "the value did not return after the sampler resumed");
+	CHECK(wait_look(l20, VALUE_MS), "the value did not return after the sampler resumed");
 
 	{ /* unreadable and malformed stat files give "-", and recover */
 		FILE *fp = fopen(fixture_path, "w");
@@ -836,26 +1162,26 @@ main(int argc, char *argv[])
 			fclose(fp);
 		}
 	}
-	CHECK(wait_hash(h_dash, SAMPLE_MS + 2000), "a malformed stat file was not shown as \"-\"");
+	CHECK(wait_look(l_dash, SAMPLE_MS + 2000), "a malformed stat file was not shown as \"-\"");
 	CHECK(wait_value(NULL, 1000), "dwmsysmon kept publishing for a malformed stat file");
 	responsive("a malformed stat file");
 	unlink(fixture_path);
 	pause_millis(1200);
-	CHECK(bar_hash() == h_dash, "a missing stat file was not shown as \"-\"");
+	CHECK(bar_hash() == l_dash.hash, "a missing stat file was not shown as \"-\"");
 	CHECK(kill(dwm_pid, 0) == 0, "dwm died with the sampler's data missing");
 	fixture_frozen = 0;
-	CHECK(wait_hash(h20, VALUE_MS), "the value did not return after the stat file came back");
+	CHECK(wait_look(l20, VALUE_MS), "the value did not return after the stat file came back");
 
 	/* hidden again: the sampler exits and takes its value along; shown again, dwm starts a new one */
 	set_resources("dwm.showsysmon: 0\n");
-	CHECK(wait_hash(h_off, 3000), "turning the section off through Xresources did not restore the bar");
+	CHECK(wait_look(l_off, 3000), "turning the section off through Xresources did not restore the bar");
 	CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
 	CHECK(wait_value(NULL, 3000), "the sampler left its value behind while hidden");
 	CHECK(enabled_flag() == 0, "dwm did not tell the sampler the section is hidden again");
 	set_resources("dwm.showsysmon: 1\n");
 	CHECK(wait_samplers(1, 3000, &pid) && pid != sampler_pid, "showing the section again did not start a new sampler");
 	sampler_pid = pid;
-	CHECK(wait_hash(h20, VALUE_MS), "the value did not return when the section was shown again");
+	CHECK(wait_look(l20, VALUE_MS), "the value did not return when the section was shown again");
 
 	/*
 	 * A sampler that misses the stop, as one stuck in a sensor read would, does
@@ -864,15 +1190,16 @@ main(int argc, char *argv[])
 	stuck = sampler_pid;
 	kill(stuck, SIGSTOP);
 	set_resources("dwm.showsysmon: 0\n");
-	CHECK(wait_hash(h_off, 3000), "a stuck sampler held up hiding the section");
+	CHECK(wait_look(l_off, 3000), "a stuck sampler held up hiding the section");
 	responsive("hiding the section of a stuck sampler");
 	set_resources("dwm.showsysmon: 1\n");
 	CHECK(wait_samplers(2, 3000, NULL), "showing the section did not start a sampler beside the stuck one");
+	CHECK(wait_look(l20, VALUE_MS), "the sampler started beside a stuck one showed no value");
 	responsive("starting a sampler beside a stuck one");
 	kill(stuck, SIGCONT);
 	CHECK(wait_samplers(1, 3000, &pid) && pid != stuck, "the stuck sampler was not retired by the new one");
 	sampler_pid = pid;
-	CHECK(wait_hash(h20, VALUE_MS), "the value did not return from the sampler that replaced a stuck one");
+	CHECK(wait_look(l20, VALUE_MS), "the value did not return from the sampler that replaced a stuck one");
 
 #ifdef HAVE_XTEST
 	{ /* Mod+Shift+b toggles the section */
@@ -891,13 +1218,13 @@ main(int argc, char *argv[])
 			XTestFakeKeyEvent(dpy, super, False, CurrentTime);
 			XFlush(dpy);
 			if (press == 0) {
-				CHECK(wait_hash(h_off, 3000), "Mod+Shift+b did not hide the section");
+				CHECK(wait_look(l_off, 3000), "Mod+Shift+b did not hide the section");
 				CHECK(enabled_flag() == 0, "Mod+Shift+b did not tell the sampler to stop");
 				CHECK(wait_samplers(0, 3000, NULL), "Mod+Shift+b did not stop the sampler");
 				CHECK(wait_value(NULL, 3000), "the sampler stopped by Mod+Shift+b left its value behind");
 			} else {
 				CHECK(wait_samplers(1, 3000, &sampler_pid), "Mod+Shift+b did not start the sampler again");
-				CHECK(wait_hash(h20, VALUE_MS), "Mod+Shift+b did not show the section with a value");
+				CHECK(wait_look(l20, VALUE_MS), "Mod+Shift+b did not show the section with a value");
 			}
 		}
 	}
@@ -930,21 +1257,22 @@ main(int argc, char *argv[])
 		}
 	}
 	set_resources("dwm.showsysmon: 0\n");
-	CHECK(wait_hash(h_off, 3000), "the section did not hide before the sensors appeared");
+	CHECK(wait_look(l_off, 3000), "the section did not hide before the sensors appeared");
 	CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
 	set_resources("dwm.showsysmon: 1\n");
 	CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
 	CHECK(wait_value("cpu=20 temp=48 fan=2100,2050", VALUE_MS), "dwmsysmon did not publish the temperature and both fans");
-	CHECK(wait_hash(h_two, 3000), "dwm did not show the temperature and both fans");
+	CHECK(wait_look(l_two, 3000), "dwm did not show the temperature and both fans");
+
 	put_sys("devices/hwmon2/fan2_input", NULL);
 	CHECK(wait_value("cpu=20 temp=48 fan=2100", SENSOR_MS), "a fan that went away was still published");
-	CHECK(wait_hash(h_one, 3000), "dwm did not show the one fan left");
+	CHECK(wait_look(l_one, 3000), "dwm did not show the one fan left");
 	put_sys("devices/hwmon2/fan1_input", NULL);
 	CHECK(wait_value("cpu=20 temp=48", SENSOR_MS), "fans that went away were still published");
-	CHECK(wait_hash(h_nofan, 3000), "dwm did not show the temperature without fans");
+	CHECK(wait_look(l_nofan, 3000), "dwm did not show the temperature without fans");
 	put_sys("devices/hwmon1/temp1_input", "48 degrees\n");
 	CHECK(wait_value("cpu=20", SENSOR_MS), "a malformed temperature was published");
-	CHECK(wait_hash(h20, 3000), "dwm showed a malformed temperature");
+	CHECK(wait_look(l20, 3000), "dwm showed a malformed temperature");
 	responsive("sensors going away");
 
 	/*
@@ -959,7 +1287,7 @@ main(int argc, char *argv[])
 		snprintf(fifo, sizeof fifo, "%s/devices/hwmon1/temp1_input", sys_path);
 		unlink(fifo);
 		CHECK(mkfifo(fifo, 0644) == 0, "cannot make a fifo");
-		CHECK(wait_hash(h_dash, SENSOR_MS + SAMPLER_STALE_MS), "the value of a sampler stuck in a sensor read did not go stale");
+		CHECK(wait_look(l_dash, SENSOR_MS + SAMPLER_STALE_MS), "the value of a sampler stuck in a sensor read did not go stale");
 		responsive("a sensor read that hangs");
 		CHECK(kill(sampler_pid, 0) == 0, "the sampler died in a slow sensor read");
 		for (i = 0; i < 400 && fd < 0; i++) { /* the sampler is the reader the fifo waits for */
@@ -972,7 +1300,7 @@ main(int argc, char *argv[])
 			close(fd);
 		}
 		CHECK(wait_value("cpu=20 temp=47", VALUE_MS), "the value did not return after the slow sensor read");
-		CHECK(wait_hash(h_temp47, 3000), "dwm did not show the value after the slow sensor read");
+		CHECK(wait_look(l_temp47, 3000), "dwm did not show the value after the slow sensor read");
 		put_sys("devices/hwmon1/temp1_input", "47000\n"); /* a plain file again, before the next read */
 	}
 
@@ -987,12 +1315,12 @@ main(int argc, char *argv[])
 	CHECK(waitpid(sampler_pid, &status, 0) == sampler_pid && WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	      "dwmsysmon did not exit cleanly on SIGTERM");
 	sampler_pid = 0;
-	CHECK(wait_hash(h_dash, 2000), "dwm kept showing a value after the sampler exited");
+	CHECK(wait_look(l_dash, 2000), "dwm kept showing a value after the sampler exited");
 	responsive("the sampler exiting");
 
 	/* leave the shared test dwm as found */
 	set_resources("dwm.showsysmon: 0\n");
-	CHECK(wait_hash(h_off, 3000), "the section was not hidden at the end");
+	CHECK(wait_look(l_off, 3000), "the section was not hidden at the end");
 	CHECK(samplers(NULL) == 0, "a sampler is left running with the section hidden");
 	if (sampler_pid > 0)
 		kill(sampler_pid, SIGKILL);
