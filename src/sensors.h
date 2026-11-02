@@ -8,8 +8,8 @@
  * Opening those counters takes CAP_PERFMON (make install gives dwmsysmon that
  * capability as permitted, and the sampler makes it effective only to open the
  * counters, first thing, so a system without it just shows no Intel GPU), and
- * then the sampler gives up every privilege; it reads them through the open descriptors from then on. Only the
- * sampler reads sensors; dwm never does.
+ * then the sampler gives up every privilege; it reads them through the open
+ * descriptors from then on. Only the sampler reads sensors; dwm never does.
  *
  * Reading the usage of a GPU that is runtime-suspended would wake it up (or
  * fail with EBUSY on newer kernels), and a read of an awake one may restart
