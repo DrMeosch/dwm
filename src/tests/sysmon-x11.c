@@ -2,10 +2,10 @@
  * End-to-end checks of the system monitor section against the running test dwm:
  * a stand-in sampler (this program) and the real dwmsysmon publish through the
  * root window property, and the bar must show the values, "-" when the CPU
- * usage is missing, malformed or stale, and no temperature, fans or graph when
- * they are, while dwm stays responsive. The section is recognised by the bar
- * pixels it produces. The real sampler's graph follows its history, so the
- * checks of its values leave the graph's columns out.
+ * usage is missing, malformed or stale, and no temperature, fans, GPU usage or
+ * graph when they are, while dwm stays responsive. The section is recognised by
+ * the bar pixels it produces. The real sampler's graph follows its history, so
+ * the checks of its values leave the graph's columns out.
  *
  * usage: sysmon-x11 <dwm pid> <dwmsysmon> <scratch directory> <link>
  *
@@ -292,7 +292,7 @@ read_value(char *buf, size_t size)
 	unsigned long n, after;
 	unsigned char *data = NULL;
 
-	if (XGetWindowProperty(dpy, root, sysmonatom, 0, 32, False, XA_STRING, &type,
+	if (XGetWindowProperty(dpy, root, sysmonatom, 0, 64, False, XA_STRING, &type,
 	    &format, &n, &after, &data) == Success && data) {
 		if (type == XA_STRING && format == 8 && !after && n < size) {
 			memcpy(buf, data, n);
@@ -304,16 +304,16 @@ read_value(char *buf, size_t size)
 	return ok;
 }
 
-/* Take the history field out of buf: its samples, oldest first, and how many. */
+/* Take the history field name (as "cpuhist=") out of buf: its samples, oldest first, and how many. */
 static int
-split_history(char *buf, int *samples)
+split_history(char *buf, const char *name, int *samples)
 {
 	char *p, *q, *end;
 	int n = 0;
 
-	if (!(p = strstr(buf, "cpuhist=")))
+	if (!(p = strstr(buf, name)))
 		return 0;
-	for (q = p + 8; n < GRAPH_BARS + 1; q = end + 1) {
+	for (q = p + strlen(name); n < GRAPH_BARS + 1; q = end + 1) {
 		samples[n++] = (int)strtol(q, &end, 10);
 		if (*end != ',')
 			break;
@@ -326,16 +326,17 @@ split_history(char *buf, int *samples)
 	return n;
 }
 
-/* Wait for the sampler's value, without its history, to be want; NULL waits for none. */
+/* Wait for the sampler's value, without its histories, to be want; NULL waits for none. */
 static int
 wait_value(const char *want, long millis)
 {
-	char buf[160];
+	char buf[300];
 	int samples[GRAPH_BARS + 1];
 	long waited;
 
 	for (waited = 0; waited <= millis; waited += 25) {
-		if (want ? (read_value(buf, sizeof buf) && (split_history(buf, samples), !strcmp(buf, want)))
+		if (want ? (read_value(buf, sizeof buf) && (split_history(buf, "cpuhist=", samples),
+		            split_history(buf, "gpuhist=", samples), !strcmp(buf, want)))
 		         : !read_value(buf, sizeof buf))
 			return 1;
 		pump(25);
@@ -565,17 +566,24 @@ look_at(const char *payload)
 	return bar_copy();
 }
 
-/* payload with a history of count samples, oldest first, all worth value but the last, worth last. */
+/* payload with a field of count samples, oldest first, all worth value but the last, worth last. */
 static const char *
-with_history(const char *payload, int count, int value, int last)
+with_samples(const char *payload, const char *name, int count, int value, int last)
 {
-	static char buf[256];
+	static char buf[300];
 	int i;
 
-	snprintf(buf, sizeof buf, "%s%scpuhist=", payload, *payload ? " " : "");
+	snprintf(buf, sizeof buf, "%s%s%s=", payload, *payload ? " " : "", name);
 	for (i = 0; i < count; i++)
 		snprintf(buf + strlen(buf), sizeof buf - strlen(buf), "%s%d", i ? "," : "", i == count - 1 ? last : value);
 	return buf;
+}
+
+/* payload with a CPU usage history of count samples, oldest first, all worth value but the last, worth last. */
+static const char *
+with_history(const char *payload, int count, int value, int last)
+{
+	return with_samples(payload, "cpuhist", count, value, last);
 }
 
 /* The columns of the graph in the section drawn for payload: those a full history changes. */
@@ -644,12 +652,57 @@ column_diff(XImage *a, XImage *b, int x, int *bottom)
 	return n;
 }
 
+/* The runs of adjacent columns that differ between a and b, at most max of them: where each starts and how wide it is. */
+static int
+diff_runs(XImage *a, XImage *b, int *at, int *width, int max)
+{
+	int x, bottom, n = 0, in = 0;
+
+	for (x = 0; x < a->width && x < b->width; x++) {
+		if (!column_diff(a, b, x, &bottom)) {
+			in = 0;
+			continue;
+		}
+		if (!in && n++ < max) {
+			at[n - 1] = x;
+			width[n - 1] = 0;
+		}
+		if (n <= max)
+			width[n - 1]++;
+		in = 1;
+	}
+	return n;
+}
+
+/*
+ * Hold the real sampler and check that dwm draws what it published, graphs
+ * included, exactly as it draws the same payload from the stand-in; buf gets
+ * the payload.
+ */
+static int
+drawn_as_published(char *buf, size_t size, const char *what)
+{
+	unsigned long drawn;
+	int ok;
+
+	kill(sampler_pid, SIGSTOP);
+	pump(300);
+	ok = read_value(buf, size);
+	skip_left = 1;
+	skip_right = 0;
+	drawn = steady_hash();
+	CHECK(ok && drawn && reference(buf) == drawn, "dwm did not draw %s (\"%s\") as it draws the same payload",
+	      what, ok ? buf : "");
+	kill(sampler_pid, SIGCONT);
+	return ok;
+}
+
 int
 main(int argc, char *argv[])
 {
 	unsigned long h_off, h_dash, h20, h80, h42, h_two, h_one, h_nofan, h_temp47;
 	Look l_off, l_dash, l20, l80, l_two, l_one, l_nofan, l_temp47;
-	char value[160];
+	char value[300];
 	int samples[GRAPH_BARS + 1], nsamples;
 	char big[4096], medium[64], huge[200], stub[PATH_MAX], res[64];
 	XImage *off_plain, *off_medium, *off_huge, *on_img;
@@ -736,7 +789,7 @@ main(int argc, char *argv[])
 	h42 = reference("cpu=42");
 	CHECK(h20 && h80 && h42 && h20 != h80 && h20 != h42 && h80 != h42 && h20 != h_dash && h42 != h_dash,
 	      "published values do not look distinct on the bar");
-	CHECK(reference("cpu=42 gpu=9 something=else") == h42, "unknown fields in the payload changed the value");
+	CHECK(reference("cpu=42 vram=9 something=else") == h42, "unknown fields in the payload changed the value");
 
 	/*
 	 * The temperature and every fan are shown when they are there, and a
@@ -760,7 +813,7 @@ main(int argc, char *argv[])
 		CHECK(reference("cpu=42 temp=55 fan=1,2,3,4,5") == nofan, "too many fans were not missing");
 		CHECK(reference("cpu=42 temp=55 temp=56 fan=2400,2350") == notemp, "a repeated temperature was not missing");
 		CHECK(reference("cpu=4x2 temp=55 fan=2400,2350") == nocpu, "a malformed CPU usage hid the sensors");
-		CHECK(reference("cpu=42 temp=55 fan=2400,2350 gpu=7") == full, "an unknown field changed the sensors");
+		CHECK(reference("cpu=42 temp=55 fan=2400,2350 vram=7") == full, "an unknown field changed the sensors");
 		responsive("sensor fields");
 	}
 	h_two = reference("cpu=20 temp=48 fan=2100,2050");
@@ -811,11 +864,17 @@ main(int argc, char *argv[])
 		static const char *payloads[] = {
 			"cpu=100 temp=100 fan=9999", "cpu=100 temp=100 fan=9999,9999",
 			"cpu=100 temp=100 fan=9999,9999,9999,9999",
+			"cpu=100 temp=100 fan=9999,9999,9999,9999 gpu=100",
 		};
+		char filled[300];
 		int lastwidth = 0;
 
 		for (i = 0; i < (int)(sizeof payloads / sizeof *payloads); i++) {
-			publish(with_history(payloads[i], GRAPH_BARS, 100, 100));
+			/* full graphs, so the ink spans the whole box */
+			snprintf(filled, sizeof filled, "%s", with_history(payloads[i], GRAPH_BARS, 100, 100));
+			if (strstr(filled, "gpu="))
+				snprintf(filled, sizeof filled, "%s", with_samples(filled, "gpuhist", GRAPH_BARS, 100, 100));
+			publish(filled);
 			set_status("sysmon-base");
 			pump(300);
 			steady_hash();
@@ -927,6 +986,78 @@ main(int argc, char *argv[])
 			XDestroyImage(none);
 
 		/*
+		 * The GPU usage and its graph come last, after the fans: a graph as
+		 * wide as the CPU's, with bars as high on the same row, that leaves the
+		 * CPU's alone. A malformed GPU usage or history is left out on its own.
+		 */
+		{
+			static const char *badgpu[] = {
+				"gpu=", "gpu=101", "gpu=-1", "gpu=4x", "gpu=0042", "gpu=7 gpu=7", "GPU=7", "gpu=7,8",
+			};
+			static const char *badhist[] = {
+				"gpuhist=", "gpuhist=101", "gpuhist=1,,2", "gpuhist=-1", "gpuhist=0042", "gpuhist=1 gpuhist=2",
+				"gpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17",
+			};
+			char gfields[128];
+			XImage *g, *gfull;
+			int ggl = 1, ggr = 0, cgl = 1, cgr = 0, between;
+			unsigned long h_gpu, h_gpu9;
+
+			snprintf(gfields, sizeof gfields, "%s gpu=7", fields);
+			h_gpu = reference(gfields);
+			h_gpu9 = reference("cpu=42 temp=55 fan=2400,2350 gpu=9");
+			CHECK(h_gpu && h_gpu9 && h_gpu != h_fields && h_gpu != h_gpu9, "the GPU usage and its value do not show");
+			for (i = 0; i < (int)(sizeof badgpu / sizeof *badgpu); i++) {
+				snprintf(payload, sizeof payload, "%s %s", fields, badgpu[i]);
+				CHECK(reference(payload) == h_fields, "the malformed GPU usage \"%s\" changed the bar", badgpu[i]);
+			}
+			for (i = 0; i < (int)(sizeof badhist / sizeof *badhist); i++) {
+				snprintf(payload, sizeof payload, "%s %s", gfields, badhist[i]);
+				CHECK(reference(payload) == h_gpu, "the malformed GPU history \"%s\" changed the bar", badhist[i]);
+			}
+			CHECK(reference(with_samples(fields, "gpuhist", 3, 20, 30)) != h_fields,
+			      "a GPU history without its usage drew nothing");
+
+			graph_columns(gfields, &cgl, &cgr);
+			g = look_at(gfields);
+			gfull = look_at(with_samples(gfields, "gpuhist", GRAPH_BARS, 100, 100));
+			n = g && gfull ? diff_extent(g, gfull, &ggl, &ggr) : 0;
+			CHECK(n > 0 && ggr - ggl + 1 == GRAPH_PX, "the GPU graph is %d px wide, not %d", ggr - ggl + 1, GRAPH_PX);
+			for (x = cgr + 1, between = 0; g && x < ggl - 4; x++)
+				between += ink(g, x);
+			CHECK(cgr - cgl + 1 == GRAPH_PX && between > 20,
+			      "the GPU graph (columns %d-%d) does not follow the CPU graph (%d-%d) and the other fields", ggl, ggr, cgl, cgr);
+			for (x = ggl - 4, ok = 1; g && off_plain && x <= ggr + 4; x++)
+				ok = ok && column_diff(g, off_plain, x, &bottom) == 0;
+			CHECK(ok, "text of the section is drawn in or next to the GPU graph's columns %d-%d", ggl, ggr);
+			for (x = ggl, ok = 1; g && gfull && x <= ggr; x++) {
+				h = column_diff(gfull, g, x, &bottom);
+				ok = ok && h == full && bottom == fullbottom;
+			}
+			CHECK(ok, "full GPU bars are not as high as the CPU's (%d px) on the same row", full);
+			for (x = cgl, ok = 1; g && gfull && x <= cgr; x++)
+				ok = ok && column_diff(gfull, g, x, &bottom) == 0;
+			CHECK(ok, "the GPU history changed the CPU graph");
+			if ((img = look_at(with_samples(gfields, "gpuhist", 2, 100, 0)))) {
+				for (x = ggl, ok = 1; g && x <= ggr; x++) {
+					h = column_diff(img, g, x, &bottom);
+					if (x >= ggr - 1)
+						ok = ok && h == 1 && bottom == fullbottom;
+					else if (x >= ggr - 3)
+						ok = ok && h == full && bottom == fullbottom;
+					else
+						ok = ok && h == 0;
+				}
+				CHECK(ok, "a GPU history of 100%% then 0%% is not a full bar left of a line at the right of its graph");
+				XDestroyImage(img);
+			}
+			if (g)
+				XDestroyImage(g);
+			if (gfull)
+				XDestroyImage(gfull);
+		}
+
+		/*
 		 * A status text that takes the graph's room cuts it, oldest bars first,
 		 * before the section is left out, and it is never drawn over: the
 		 * status is a red rectangle of a given width.
@@ -982,6 +1113,73 @@ main(int argc, char *argv[])
 					ok = ok && h == (x >= gr - 1 ? full - 1 : 0);
 				}
 				CHECK(ok, "the cut graph did not keep the newest samples");
+			}
+			if (a)
+				XDestroyImage(a);
+			if (b)
+				XDestroyImage(b);
+		}
+
+		/*
+		 * With a GPU, both graphs give up the same bars, keeping the newest,
+		 * and the GPU graph, last in the section, keeps its gap from the status.
+		 */
+		{
+			char status[96], gfields[128], both[300], lastzero[300];
+			int lo = 100, hi = 1000, mid, runs = -1, at[3], wd[3], red, y, cpu_end, status_at, last;
+			XImage *a = NULL, *b = NULL;
+
+			snprintf(gfields, sizeof gfields, "%s gpu=7", fields);
+			snprintf(both, sizeof both, "%s", with_history(gfields, GRAPH_BARS, 100, 100));
+			snprintf(lastzero, sizeof lastzero, "%s", with_samples(both, "gpuhist", GRAPH_BARS, 100, 0));
+			snprintf(both, sizeof both, "%s", with_samples(both, "gpuhist", GRAPH_BARS, 100, 100));
+			while (lo <= hi) {
+				mid = (lo + hi) / 2;
+				snprintf(status, sizeof status, "^c#ff0000^^r0,0,%d,99^^f%d^", mid, mid);
+				set_status(status);
+				if (a)
+					XDestroyImage(a);
+				if (b)
+					XDestroyImage(b);
+				a = look_at(gfields);
+				b = look_at(both);
+				runs = a && b ? diff_runs(a, b, at, wd, 3) : 0;
+				if (runs == 2 && wd[0] == GRAPH_PX && wd[1] == GRAPH_PX)
+					lo = mid + 1;
+				else if (runs == 0)
+					hi = mid - 1;
+				else
+					break;
+			}
+			CHECK(runs == 2 && wd[0] == wd[1] && wd[0] > 0 && wd[0] < GRAPH_PX && wd[0] % 2 == 0,
+			      "no status width cut both graphs to the same whole bars (%d runs, %d and %d px)",
+			      runs, runs > 0 ? wd[0] : 0, runs > 1 ? wd[1] : 0);
+			if (runs == 2 && b) {
+				for (x = 0, red = 0; x < b->width; x++)
+					for (y = 0; y < b->height; y++)
+						red += XGetPixel(b, x, y) == 0xff0000;
+				CHECK(red == mid * b->height, "the section with cut graphs drew over the status (%d of %d red pixels)",
+				      red, mid * b->height);
+				for (x = at[0] - 1, cpu_end = -1; x >= 0 && cpu_end < 0; x--)
+					if (ink(b, x))
+						cpu_end = x;
+				for (x = at[1], status_at = -1, last = -1; x < b->width && status_at < 0; x++) {
+					if (XGetPixel(b, x, 0) == 0xff0000)
+						status_at = x;
+					else if (ink(b, x))
+						last = x;
+				}
+				CHECK(cpu_end >= 0 && last >= at[1] + wd[1] - 1 && status_at > last && status_at - last >= at[0] - cpu_end,
+				      "the section with cut graphs ends %d px before the status, the graph starts %d px after the CPU usage",
+				      status_at - last, at[0] - cpu_end);
+				if (a)
+					XDestroyImage(a);
+				a = look_at(lastzero);
+				for (x = at[1], ok = 1; a && x < at[1] + wd[1]; x++) {
+					h = column_diff(a, b, x, &bottom);
+					ok = ok && h == (x >= at[1] + wd[1] - 2 ? full - 1 : 0);
+				}
+				CHECK(ok, "the cut GPU graph did not keep the newest samples");
 			}
 			if (a)
 				XDestroyImage(a);
@@ -1096,7 +1294,7 @@ main(int argc, char *argv[])
 	 * usage it publishes, and the graph shows them as the stand-in's would.
 	 */
 	{
-		char raw[160];
+		char raw[300];
 		unsigned long drawn;
 		int first20 = -1, then80 = -1, ok;
 
@@ -1104,7 +1302,7 @@ main(int argc, char *argv[])
 		pump(300);
 		ok = read_value(raw, sizeof raw);
 		snprintf(value, sizeof value, "%s", ok ? raw : "");
-		nsamples = split_history(value, samples);
+		nsamples = split_history(value, "cpuhist=", samples);
 		CHECK(ok && !strcmp(value, "cpu=20") && nsamples >= 3 && nsamples <= GRAPH_BARS && samples[nsamples - 1] == 20,
 		      "dwmsysmon published \"%s\", not 20%% with its history", raw);
 		for (i = 0; i < nsamples; i++) {
@@ -1302,6 +1500,98 @@ main(int argc, char *argv[])
 		CHECK(wait_value("cpu=20 temp=47", VALUE_MS), "the value did not return after the slow sensor read");
 		CHECK(wait_look(l_temp47, 3000), "dwm did not show the value after the slow sensor read");
 		put_sys("devices/hwmon1/temp1_input", "47000\n"); /* a plain file again, before the next read */
+	}
+
+	/*
+	 * A GPU in the fake sysfs tree, an amdgpu card: the sampler publishes its
+	 * usage and history while it is active, and dwm draws them as it draws the
+	 * same payload. Suspended, it is idle, and never read: its usage is then a
+	 * FIFO that would hold up a sampler reading it. When the card goes away,
+	 * so does the GPU usage.
+	 */
+	{
+		char raw[300], fifo[1024];
+		int gsamples[GRAPH_BARS + 1], ng, fd, first37 = -1, then80 = -1;
+
+		/* the slow chip's fans, used by a sampler that looks for sources afresh, would be published too */
+		put_sys("devices/hwmon3/fan1_input", NULL);
+		put_sys("devices/hwmon3/fan2_input", NULL);
+		put_sys("class/drm/card0/device/power/runtime_status", "active\n");
+		put_sys("class/drm/card0/device/gpu_busy_percent", "37\n");
+		put_sys("class/drm/card0-eDP-1/status", "connected\n");
+		set_resources("dwm.showsysmon: 0\n");
+		CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
+		set_resources("dwm.showsysmon: 1\n");
+		CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
+		CHECK(wait_value("cpu=20 temp=47 gpu=37", VALUE_MS), "dwmsysmon did not publish the GPU usage");
+		put_sys("class/drm/card0/device/gpu_busy_percent", "80\n");
+		CHECK(wait_value("cpu=20 temp=47 gpu=80", VALUE_MS), "dwmsysmon did not publish a change of the GPU usage");
+		if (drawn_as_published(raw, sizeof raw, "the GPU usage and its history")) {
+			ng = split_history(raw, "gpuhist=", gsamples);
+			for (i = 0; i < ng; i++) {
+				if (gsamples[i] == 37 && first37 < 0)
+					first37 = i;
+				if (gsamples[i] == 80 && first37 >= 0 && then80 < 0)
+					then80 = i;
+			}
+			CHECK(first37 >= 0 && then80 > first37 && gsamples[ng - 1] == 80,
+			      "the GPU history does not hold 37%% then 80%% up to the usage (%d samples)", ng);
+		}
+		responsive("the GPU usage");
+
+		/* suspended: idle, with the other values going on, and never read */
+		set_resources("dwm.showsysmon: 0\n");
+		CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
+		snprintf(fifo, sizeof fifo, "%s/class/drm/card0/device/gpu_busy_percent", sys_path);
+		put_sys("class/drm/card0/device/power/runtime_status", "suspended\n");
+		unlink(fifo);
+		CHECK(mkfifo(fifo, 0644) == 0, "cannot make a fifo");
+		set_resources("dwm.showsysmon: 1\n");
+		CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
+		CHECK(wait_value("cpu=20 temp=47 gpu=0", VALUE_MS), "a suspended GPU was not published as idle");
+		fixture_busy = 80;
+		CHECK(wait_value("cpu=80 temp=47 gpu=0", VALUE_MS), "the sampler stopped beside a suspended GPU");
+		fixture_busy = 20;
+		CHECK(wait_value("cpu=20 temp=47 gpu=0", VALUE_MS), "the sampler stopped beside a suspended GPU");
+		drawn_as_published(raw, sizeof raw, "a suspended GPU");
+		errno = 0;
+		fd = open(fifo, O_WRONLY | O_NONBLOCK); /* fails while nobody reads it */
+		CHECK(fd < 0 && errno == ENXIO, "the sampler read the usage of a suspended GPU");
+		if (fd >= 0)
+			close(fd);
+		responsive("a suspended GPU");
+
+		/* active again, then gone, as when its driver is unbound: nothing is drawn for it */
+		set_resources("dwm.showsysmon: 0\n");
+		CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
+		unlink(fifo);
+		put_sys("class/drm/card0/device/gpu_busy_percent", "12\n");
+		put_sys("class/drm/card0/device/power/runtime_status", "active\n");
+		/* a read keeps it awake 10 s: it is read only every third sample of 4 s */
+		put_sys("class/drm/card0/device/power/autosuspend_delay_ms", "10000\n");
+		set_resources("dwm.showsysmon: 1\n");
+		CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
+		CHECK(wait_value("cpu=20 temp=47 gpu=12", VALUE_MS), "the GPU usage did not return when it woke up");
+		{
+			int csamples[GRAPH_BARS + 1], nc = 0;
+			long waited;
+
+			ng = 0;
+			for (waited = 0; waited <= 9 * SAMPLE_MS && nc < 7; waited += 100) {
+				if (read_value(raw, sizeof raw)) {
+					nc = split_history(raw, "cpuhist=", csamples);
+					ng = split_history(raw, "gpuhist=", gsamples);
+				}
+				pump(100);
+			}
+			CHECK(nc >= 7 && ng >= 1 && ng <= (nc + 2) / 3,
+			      "a GPU that stays awake 10 s was read %d times in %d samples", ng, nc);
+		}
+		put_sys("class/drm/card0/device/gpu_busy_percent", NULL);
+		put_sys("class/drm/card0/device/power/runtime_status", NULL);
+		CHECK(wait_value("cpu=20 temp=47", VALUE_MS + 3 * SAMPLE_MS), "the usage of a GPU that went away was still published");
+		CHECK(wait_look(l_temp47, 3000), "dwm drew a GPU that went away");
+		responsive("a GPU going away");
 	}
 
 	/* a sampler started by hand takes over from the one dwm started */

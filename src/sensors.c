@@ -200,9 +200,10 @@ cputemp(const char *dir, char *path)
 void
 sensors_init(Sensors *s)
 {
-	s->ntemp = s->nfan = 0;
-	s->found = -1;
-	s->stale = 1;
+	s->ntemp = s->nfan = s->ngpu = 0;
+	s->found = s->gpufound = -1;
+	s->stale = s->gpustale = 1;
+	s->gpuawake = 0;
 }
 
 void
@@ -291,4 +292,111 @@ sensors_delay(long long spent)
 	if (spent > SENSORS_MAXDELAY / 20)
 		return SENSORS_MAXDELAY;
 	return spent * 20 > SENSORS_INTERVAL ? spent * 20 : SENSORS_INTERVAL;
+}
+
+void
+sensors_findgpus(Sensors *s, const char *sys)
+{
+	Chip cards[CHIPS];
+	char dir[SENSORS_PATHLEN], path[SENSORS_PATHLEN];
+	struct dirent *e;
+	DIR *d;
+	Gpu *g;
+	long delay;
+	int n = 0, i;
+
+	s->ngpu = 0;
+	s->gpuawake = 0;
+	if (join(dir, sys, "class/drm") < 0 || !(d = opendir(dir)))
+		return;
+	/* cardN, not its connectors (cardN-DP-1) or render nodes */
+	while (n < CHIPS && (e = readdir(d)))
+		if (entrynum(e->d_name, "card", "") >= 0 && join(cards[n].dir, dir, e->d_name) == 0)
+			n++;
+	closedir(d);
+	qsort(cards, n, sizeof *cards, bydir);
+	/* nothing the driver answers is read here, only what attributes there are and the power settings */
+	for (i = 0; i < n && s->ngpu < SENSORS_GPUS; i++) {
+		g = &s->gpu[s->ngpu];
+		g->max[0] = '\0';
+		/* without its power state it could be asleep: it is never read */
+		if (join(g->status, cards[i].dir, "device/power/runtime_status") < 0 || access(g->status, F_OK) < 0)
+			continue;
+		if (join(g->busy, cards[i].dir, "device/gpu_busy_percent") == 0 && access(g->busy, F_OK) == 0)
+			; /* amdgpu */
+		else if (join(g->busy, cards[i].dir, "gt_act_freq_mhz") == 0 && access(g->busy, F_OK) == 0
+		&& join(g->max, cards[i].dir, "gt_max_freq_mhz") == 0 && access(g->max, F_OK) == 0)
+			; /* i915: no busy share without privileges, but how fast it runs */
+		else
+			continue;
+		/* without autosuspend (EIO) a device suspends as soon as it is idle */
+		if (join(path, cards[i].dir, "device/power/autosuspend_delay_ms") == 0
+		&& readvalue(path, &delay) == 0 && delay > s->gpuawake)
+			s->gpuawake = delay;
+		s->ngpu++;
+	}
+}
+
+/* The usage of a GPU, 0..100, or -1 when it cannot be read; a suspended GPU is idle and left alone. */
+static int
+gpuusage(const Gpu *g)
+{
+	char status[32];
+	long busy, max;
+
+	if (readattr(g->status, status, sizeof status) < 0)
+		return -1;
+	if (!strcmp(status, "suspended") || !strcmp(status, "suspending"))
+		return 0;
+	/* resuming, or in error: not now */
+	if (strcmp(status, "active") && strcmp(status, "unsupported"))
+		return -1;
+	/* one that suspended since fails the read with EBUSY (older kernels wake it, a rare race) */
+	if (readvalue(g->busy, &busy) < 0 || busy < 0)
+		return -1;
+	if (!g->max[0])
+		return busy <= 100 ? (int)busy : -1;
+	if (readvalue(g->max, &max) < 0 || max <= 0)
+		return -1;
+	/* the share of its highest frequency that it runs at */
+	return busy >= max ? 100 : (int)(((long long)busy * 100 + max / 2) / max);
+}
+
+int
+sensors_readgpus(Sensors *s)
+{
+	int i, u, best = -1;
+
+	s->gpustale = !s->ngpu;
+	for (i = 0; i < s->ngpu; i++) {
+		if ((u = gpuusage(&s->gpu[i])) < 0)
+			s->gpustale = 1;
+		else if (u > best)
+			best = u;
+	}
+	return best;
+}
+
+void
+sensors_samplegpus(Sensors *s, const char *sys, long long now, SysmonValues *v)
+{
+	if (s->gpufound < 0 || (s->gpustale && now - s->gpufound >= SENSORS_REFIND)) {
+		sensors_findgpus(s, sys);
+		s->gpufound = now;
+	}
+	sysmon_pushgpu(v, sensors_readgpus(s));
+}
+
+long long
+sensors_gpudelay(const Sensors *s, long interval, long long spent)
+{
+	long long delay = interval;
+
+	/* a read keeps an awake GPU from suspending for its autosuspend delay */
+	if (s->ngpu && s->gpuawake + SENSORS_GPUMARGIN > delay)
+		delay = s->gpuawake + SENSORS_GPUMARGIN;
+	/* and a slow one takes at most 5% of the time */
+	if (spent > SENSORS_MAXDELAY / 20)
+		spent = SENSORS_MAXDELAY / 20;
+	return spent * 20 > delay ? spent * 20 : delay;
 }

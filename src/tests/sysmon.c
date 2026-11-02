@@ -1,12 +1,14 @@
 /*
  * Checks for the sampler/dwm contract: /proc/stat parsing, CPU usage, the
- * property payload, and the sampler's temperature and fan sources in fake
+ * property payload, and the sampler's temperature, fan and GPU sources in fake
  * sysfs trees.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #include "../sensors.h"
@@ -23,6 +25,39 @@ static int failures;
 } while (0)
 
 #define LENGTH(X) (sizeof (X) / sizeof (X)[0])
+
+/*
+ * The sampler's reads go through here: a read of a GPU's usage or frequency,
+ * which is what would wake a suspended GPU, is counted, and while busy names
+ * the attribute it fails with EBUSY, as amdgpu answers for a GPU that is not
+ * awake.
+ */
+static int gpureads;
+static const char *busy;
+
+ssize_t
+read(int fd, void *buf, size_t size)
+{
+	static const char *gpuattrs[] = { "gpu_busy_percent", "gt_act_freq_mhz", "gt_max_freq_mhz" };
+	char link[64], path[1024];
+	const char *name;
+	ssize_t n;
+	size_t i;
+
+	snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
+	if ((n = readlink(link, path, sizeof path - 1)) > 0) {
+		path[n] = '\0';
+		name = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+		for (i = 0; i < LENGTH(gpuattrs); i++)
+			if (!strcmp(name, gpuattrs[i]))
+				gpureads++;
+		if (busy && !strcmp(name, busy)) {
+			errno = EBUSY;
+			return -1;
+		}
+	}
+	return (ssize_t)syscall(SYS_read, fd, buf, size);
+}
 
 static void
 test_parse(void)
@@ -114,7 +149,10 @@ legacy_decode(const char *data, unsigned long len)
 	return -1;
 }
 
-/* "cpu temp fan,fan /sample,sample" with -1 for a missing value, as a decoded payload is compared */
+/*
+ * "cpu temp fan,fan /sample,sample gpu=usage //sample,sample" with -1 for a
+ * missing value, as a decoded payload is compared; the GPU only when it is there
+ */
 static void
 values_text(const SysmonValues *v, char *buf, size_t size)
 {
@@ -125,6 +163,10 @@ values_text(const SysmonValues *v, char *buf, size_t size)
 		snprintf(buf + strlen(buf), size - strlen(buf), "%c%d", i ? ',' : ' ', v->fan[i]);
 	for (i = 0; i < v->nhist; i++)
 		snprintf(buf + strlen(buf), size - strlen(buf), "%s%d", i ? "," : " /", v->hist[i]);
+	if (v->gpu >= 0 || v->ngpuhist)
+		snprintf(buf + strlen(buf), size - strlen(buf), " gpu=%d", v->gpu);
+	for (i = 0; i < v->ngpuhist; i++)
+		snprintf(buf + strlen(buf), size - strlen(buf), "%s%d", i ? "," : " //", v->gpuhist[i]);
 }
 
 static void
@@ -132,17 +174,17 @@ test_payload(void)
 {
 	static const struct { const char *text; const char *want; } cases[] = {
 		{ "cpu=0", "0 -1" }, { "cpu=7", "7 -1" }, { "cpu=42", "42 -1" }, { "cpu=100", "100 -1" },
-		{ "cpu=042", "42 -1" }, { "cpu=5 gpu=9", "5 -1" }, { "gpu=9 cpu=5", "5 -1" }, { "x cpu=5", "5 -1" },
+		{ "cpu=042", "42 -1" }, { "cpu=5 cpu2=9", "5 -1" }, { "cpu2=9 cpu=5", "5 -1" }, { "x cpu=5", "5 -1" },
 		{ "cpu=5  ", "5 -1" }, { " cpu=5", "5 -1" },
 		{ "cpu=42 temp=55 fan=2400,2350", "42 55 2400,2350" },
 		{ "fan=2400 temp=55 cpu=42", "42 55 2400" }, { "temp=0", "-1 0" }, { "temp=150", "-1 150" },
 		{ "fan=0", "-1 -1 0" }, { "fan=30000", "-1 -1 30000" }, { "fan=1,2,3,4", "-1 -1 1,2,3,4" },
-		{ "cpu=42 gpu=9 temp=55 x=y fan=2400", "42 55 2400" },
+		{ "cpu=42 vram=9 temp=55 x=y fan=2400", "42 55 2400" },
 		/* a malformed, out-of-range or repeated field is missing; the others stay */
 		{ "", "-1 -1" }, { "cpu", "-1 -1" }, { "cpu=", "-1 -1" }, { "cpu= 5", "-1 -1" }, { "cpu=101", "-1 -1" },
 		{ "cpu=1000", "-1 -1" }, { "cpu=-5", "-1 -1" }, { "cpu=+5", "-1 -1" }, { "cpu=5x", "-1 -1" },
 		{ "cpu=5.5", "-1 -1" }, { "cpu=abc", "-1 -1" }, { "CPU=5", "-1 -1" }, { "xcpu=5", "-1 -1" },
-		{ "cpu:5", "-1 -1" }, { "gpu=5", "-1 -1" }, { "cpu=5,6", "-1 -1" }, { "cpu=0x10", "-1 -1" },
+		{ "cpu:5", "-1 -1" }, { "vram=5", "-1 -1" }, { "cpu=5,6", "-1 -1" }, { "cpu=0x10", "-1 -1" },
 		{ "\377\377\377", "-1 -1" }, { "cpu=\033[2J", "-1 -1" },
 		{ "cpu=5 cpu=6", "-1 -1" }, { "cpu=5 temp=50 temp=50", "5 -1" }, { "cpu=5 fan=1 fan=1", "5 -1" },
 		{ "cpu=42 temp=151 fan=2400", "42 -1 2400" }, { "cpu=42 temp=1000", "42 -1" },
@@ -167,11 +209,32 @@ test_payload(void)
 		{ "cpu=42 CPUHIST=1", "42 -1" }, { "cpu=42 cpuhist:1", "42 -1" }, { "cpu=42 xcpuhist=1", "42 -1" },
 		{ "cpu=42 cpuhist=1 cpuhist=1", "42 -1" }, { "cpu=42 cpuhist=1 2", "42 -1 /1" },
 		{ "cpu=4x2 temp=55 cpuhist=40,42", "-1 55 /40,42" }, { "cpu=42 temp=55 cpuhist=4,,2", "42 55" },
+		/* the GPU usage and its history, checked as the CPU's, each on its own */
+		{ "gpu=0", "-1 -1 gpu=0" }, { "gpu=7", "-1 -1 gpu=7" }, { "gpu=100", "-1 -1 gpu=100" },
+		{ "gpu=007", "-1 -1 gpu=7" }, { "cpu=5 gpu=9", "5 -1 gpu=9" }, { "gpu=9 cpu=5", "5 -1 gpu=9" },
+		{ "gpu=7 gpuhist=5,7", "-1 -1 gpu=7 //5,7" }, { "gpuhist=5", "-1 -1 gpu=-1 //5" },
+		{ "gpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16", "-1 -1 gpu=-1 //1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16" },
+		{ "cpu=42 temp=55 fan=2400,2350 cpuhist=40,42 gpu=7 gpuhist=5,7", "42 55 2400,2350 /40,42 gpu=7 //5,7" },
+		{ "gpuhist=5,7 cpuhist=40,42 gpu=7 cpu=42", "42 -1 /40,42 gpu=7 //5,7" },
+		{ "cpu=42 gpu=", "42 -1" }, { "cpu=42 gpu", "42 -1" }, { "cpu=42 gpu=101", "42 -1" },
+		{ "cpu=42 gpu=1000", "42 -1" }, { "cpu=42 gpu=-1", "42 -1" }, { "cpu=42 gpu=+1", "42 -1" },
+		{ "cpu=42 gpu=4x", "42 -1" }, { "cpu=42 gpu=4.5", "42 -1" }, { "cpu=42 gpu=4,5", "42 -1" },
+		{ "cpu=42 GPU=4", "42 -1" }, { "cpu=42 gpu:4", "42 -1" }, { "cpu=42 xgpu=4", "42 -1" },
+		{ "cpu=42 gpu=4 gpu=4", "42 -1" }, { "cpu=42 gpu=0x10", "42 -1" }, { "gpu=\033[2J", "-1 -1" },
+		{ "cpu=42 gpu=7 gpuhist=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=", "42 -1 gpu=7" }, { "cpu=42 gpu=7 gpuhist=101", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=0042", "42 -1 gpu=7" }, { "cpu=42 gpu=7 gpuhist=-1", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=1,", "42 -1 gpu=7" }, { "cpu=42 gpu=7 gpuhist=,1", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=1,,2", "42 -1 gpu=7" }, { "cpu=42 gpu=7 gpuhist=1;2", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=4x", "42 -1 gpu=7" }, { "cpu=42 gpu=7 GPUHIST=1", "42 -1 gpu=7" },
+		{ "cpu=42 gpu=7 gpuhist=1 gpuhist=1", "42 -1 gpu=7" }, { "cpu=42 gpu=7 gpuhist=1 2", "42 -1 gpu=7 //1" },
+		{ "cpu=42 gpu=7x gpuhist=5,7", "42 -1 gpu=-1 //5,7" }, { "cpu=42 cpuhist=1,,2 gpu=7 gpuhist=5", "42 -1 gpu=7 //5" },
+		{ "cpu=42 cpuhist=40,42 gpu=7 gpuhist=5,,7", "42 -1 /40,42 gpu=7" },
 	};
-	char buf[SYSMON_MAXLEN + 64], exact[SYSMON_MAXLEN + 64], got[128];
+	char buf[SYSMON_MAXLEN + 64], exact[SYSMON_MAXLEN + 64], got[256];
 	SysmonValues v, back;
 	size_t i;
-	int n, rc, cpu, temp, fans, hist;
+	int n, rc, cpu, temp, fans, hist, gpu, gpuhist;
 
 	for (i = 0; i < LENGTH(cases); i++) {
 		size_t len = strlen(cases[i].text);
@@ -201,25 +264,31 @@ test_payload(void)
 	for (cpu = -1; cpu <= 100; cpu += 101 / 3)
 		for (temp = -1; temp <= SYSMON_MAXTEMP; temp += 38)
 			for (fans = 0; fans <= SYSMON_FANS; fans++)
-				for (hist = 0; hist <= SYSMON_HIST; hist += SYSMON_HIST / 2 - 1) {
-					sysmon_clear(&v);
-					v.cpu = cpu;
-					v.temp = temp;
-					for (v.nfan = 0; v.nfan < fans; v.nfan++)
-						v.fan[v.nfan] = v.nfan * (SYSMON_MAXFAN / 3);
-					for (v.nhist = 0; v.nhist < hist; v.nhist++)
-						v.hist[v.nhist] = v.nhist * 100 / (SYSMON_HIST - 1);
-					n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
-					CHECK(n >= 0 && n <= SYSMON_MAXLEN, "encode of %d/%d/%d fans/%d samples gave %d",
-					      cpu, temp, fans, hist, n);
-					if (n == 0) {
-						CHECK(cpu < 0 && temp < 0 && !fans && !hist, "encode left out values");
-						continue;
-					}
-					CHECK(sysmon_decode(buf, (unsigned long)n, &back) == 0 && !memcmp(&v, &back, sizeof v),
-					      "\"%s\" did not decode to what was encoded", buf);
-				}
-	/* the longest payload fits */
+				for (hist = 0; hist <= SYSMON_HIST; hist += SYSMON_HIST / 2 - 1)
+					for (gpu = -1; gpu <= 100; gpu += 101 / 2)
+						for (gpuhist = 0; gpuhist <= SYSMON_HIST; gpuhist += SYSMON_HIST / 2 - 1) {
+							sysmon_clear(&v);
+							v.cpu = cpu;
+							v.temp = temp;
+							for (v.nfan = 0; v.nfan < fans; v.nfan++)
+								v.fan[v.nfan] = v.nfan * (SYSMON_MAXFAN / 3);
+							for (v.nhist = 0; v.nhist < hist; v.nhist++)
+								v.hist[v.nhist] = v.nhist * 100 / (SYSMON_HIST - 1);
+							v.gpu = gpu;
+							for (v.ngpuhist = 0; v.ngpuhist < gpuhist; v.ngpuhist++)
+								v.gpuhist[v.ngpuhist] = 100 - v.ngpuhist * 100 / (SYSMON_HIST - 1);
+							n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
+							CHECK(n >= 0 && n <= SYSMON_MAXLEN, "encode of %d/%d/%d fans/%d samples/%d/%d samples gave %d",
+							      cpu, temp, fans, hist, gpu, gpuhist, n);
+							if (n == 0) {
+								CHECK(cpu < 0 && temp < 0 && !fans && !hist && gpu < 0 && !gpuhist,
+								      "encode left out values");
+								continue;
+							}
+							CHECK(sysmon_decode(buf, (unsigned long)n, &back) == 0 && !memcmp(&v, &back, sizeof v),
+							      "\"%s\" did not decode to what was encoded", buf);
+						}
+	/* the longest payload fits, and without a GPU it still fits the 128 bytes a dwm from before the GPU reads */
 	sysmon_clear(&v);
 	v.cpu = 100;
 	v.temp = SYSMON_MAXTEMP;
@@ -228,10 +297,21 @@ test_payload(void)
 	for (v.nhist = 0; v.nhist < SYSMON_HIST; v.nhist++)
 		v.hist[v.nhist] = 100;
 	n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
+	CHECK(n > 0 && n <= 128, "the longest payload without a GPU (%d bytes) does not fit an older dwm", n);
+	v.gpu = 100;
+	for (v.ngpuhist = 0; v.ngpuhist < SYSMON_HIST; v.ngpuhist++)
+		v.gpuhist[v.ngpuhist] = 100;
+	n = sysmon_encode(buf, SYSMON_MAXLEN + 1, &v);
 	CHECK(n > 0 && n <= SYSMON_MAXLEN && sysmon_decode(buf, (unsigned long)n, &back) == 0
 	      && !memcmp(&v, &back, sizeof v), "the longest payload (%d bytes) does not fit", n);
 	/* a buffer one byte short of the longest payload overran or left something out */
 	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short of the history");
+	v.ngpuhist = 0;
+	n = sysmon_encode(buf, sizeof buf, &v);
+	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short of the GPU usage");
+	v.gpu = -1;
+	n = sysmon_encode(buf, sizeof buf, &v);
+	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short of the CPU history");
 	v.nhist = 0;
 	n = sysmon_encode(buf, sizeof buf, &v);
 	CHECK(sysmon_encode(buf, (size_t)n, &v) == -1, "encode overran a buffer one byte short");
@@ -268,6 +348,26 @@ test_payload(void)
 	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42"), "encode sent a negative history: \"%s\"", buf);
 	v.nhist = 3;
 	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42"), "encode of a history: \"%s\"", buf);
+	/* the same for the GPU usage and its history, which leave the others alone */
+	v.gpu = 101;
+	v.ngpuhist = 2;
+	v.gpuhist[0] = 5;
+	v.gpuhist[1] = 101;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42"), "encode sent a bad GPU usage: \"%s\"", buf);
+	v.gpuhist[1] = -1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42"), "encode sent a bad GPU history: \"%s\"", buf);
+	v.gpuhist[1] = 7;
+	v.ngpuhist = SYSMON_HIST + 1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42"), "encode sent an overlong GPU history: \"%s\"", buf);
+	v.ngpuhist = 2;
+	v.gpu = 7;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "cpu=42 cpuhist=40,41,42 gpu=7 gpuhist=5,7"),
+	      "encode of the GPU usage: \"%s\"", buf);
+	v.cpu = -1;
+	v.nhist = 0;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "gpu=7 gpuhist=5,7"), "encode of the GPU usage alone: \"%s\"", buf);
+	v.gpu = -1;
+	CHECK(sysmon_encode(buf, sizeof buf, &v) > 0 && !strcmp(buf, "gpuhist=5,7"), "encode of a GPU history alone: \"%s\"", buf);
 
 	/* old and new: a dwm from before temperatures and fans still reads the CPU of a new sampler */
 	sysmon_clear(&v);
@@ -315,6 +415,23 @@ test_push(void)
 	CHECK(v.cpu == -1 && v.nhist == 0, "a reading out of range was kept");
 	sysmon_push(&v, 0);
 	CHECK(v.cpu == 0 && v.nhist == 1 && v.hist[0] == 0, "the history did not start again after a missing reading");
+
+	/* the GPU usage has a history of its own, and the two leave each other alone */
+	sysmon_clear(&v);
+	for (i = 0; i < SYSMON_HIST + 3; i++)
+		sysmon_pushgpu(&v, i);
+	sysmon_push(&v, 50);
+	CHECK(v.gpu == SYSMON_HIST + 2 && v.ngpuhist == SYSMON_HIST && v.gpuhist[0] == 3
+	      && v.gpuhist[SYSMON_HIST - 1] == SYSMON_HIST + 2 && v.cpu == 50 && v.nhist == 1,
+	      "the GPU usage history is not the latest readings, or mixed with the CPU's");
+	sysmon_pushgpu(&v, -1);
+	CHECK(v.gpu == -1 && v.ngpuhist == 0 && v.gpuhist[0] == 0 && v.cpu == 50 && v.nhist == 1,
+	      "a missing GPU reading did not clear the GPU usage and its history alone");
+	sysmon_pushgpu(&v, 101);
+	CHECK(v.gpu == -1 && v.ngpuhist == 0, "a GPU reading out of range was kept");
+	sysmon_push(&v, -1);
+	sysmon_pushgpu(&v, 9);
+	CHECK(v.gpu == 9 && v.ngpuhist == 1 && v.cpu == -1 && v.nhist == 0, "a missing CPU reading cleared the GPU usage");
 }
 
 /* Fake sysfs trees below a scratch directory. */
@@ -697,6 +814,277 @@ test_sensors(void)
 	rmdir(dir);
 }
 
+/* Remove an attribute below sys, as when the kernel does not have it. */
+static void
+drop(const char *rel)
+{
+	char path[512];
+
+	snprintf(path, sizeof path, "%s/%s", sys, rel);
+	unlink(path);
+	rmdir(path);
+}
+
+/* A GPU in the DRM class: card is "cardN", status its runtime power state (NULL: none). */
+static void
+gpu(const char *card, const char *status)
+{
+	char rel[128];
+
+	snprintf(rel, sizeof rel, "class/drm/%s/device/power/runtime_status", card);
+	put(rel, status ? status : "");
+	if (!status)
+		drop(rel);
+}
+
+/* An attribute of a GPU made with gpu(), below its card directory; NULL makes it unreadable. */
+static void
+gpuattr(const char *card, const char *name, const char *text)
+{
+	char rel[128];
+
+	snprintf(rel, sizeof rel, "class/drm/%s/%s", card, name);
+	put(rel, text);
+}
+
+/* Find and read the GPUs of the current tree: the usage, how many reads woke them, and whether they went stale. */
+static int
+gpusample(int *reads, int *stale)
+{
+	Sensors s;
+	int u;
+
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	gpureads = 0;
+	u = sensors_readgpus(&s);
+	*reads = gpureads;
+	*stale = s.gpustale;
+	return u;
+}
+
+#define EXPECTGPU(want, wantreads, wantstale, what) do { \
+	int reads_, stale_, got_ = gpusample(&reads_, &stale_); \
+	CHECK(got_ == (want) && reads_ == (wantreads) && stale_ == (wantstale), \
+	      "%s: %d%% with %d reads (stale %d), want %d%% with %d (stale %d)", \
+	      what, got_, reads_, stale_, want, wantreads, wantstale); \
+} while (0)
+
+/*
+ * The GPU usage: amdgpu's busy share and Intel's frequency, read only while
+ * the GPU is awake, idle without a read while it is suspended, nothing when a
+ * read fails or there is no GPU, and never more often than the GPU takes to
+ * suspend after a read.
+ */
+static void
+test_gpus(void)
+{
+	static const struct { const char *text; int want; } busyreads[] = {
+		{ "0\n", 0 }, { "37\n", 37 }, { "37", 37 }, { "100\n", 100 },
+		{ "101\n", -1 }, { "-1\n", -1 }, { "", -1 }, { "abc\n", -1 }, { "37%\n", -1 }, { "3.5\n", -1 },
+		{ " 37\n", -1 }, { "99999999999999999999\n", -1 },
+	};
+	static const struct { const char *status; int want, reads; } states[] = {
+		{ "active\n", 37, 1 }, { "unsupported\n", 37, 1 }, { "active", 37, 1 },
+		/* asleep: idle, and left alone */
+		{ "suspended\n", 0, 0 }, { "suspending\n", 0, 0 },
+		/* waking up, failed or unknown: not now */
+		{ "resuming\n", -1, 0 }, { "error\n", -1, 0 }, { "", -1, 0 }, { "Active\n", -1, 0 },
+		{ "active and more\n", -1, 0 }, { NULL, -1, 0 },
+	};
+	char dir[] = "/tmp/dwm-gpus-XXXXXX";
+	Sensors s;
+	SysmonValues v;
+	size_t i;
+
+	if (!mkdtemp(dir)) {
+		CHECK(0, "cannot create a scratch directory");
+		return;
+	}
+	snprintf(sys, sizeof sys, "%s/sys", dir);
+
+	/* no GPU, or none with a usage to read without privileges: nothing, and looked for again later */
+	reset();
+	EXPECTGPU(-1, 0, 1, "an empty tree");
+	put("class/drm/version", "drm 1.1.0 20060810\n");
+	put("class/drm/renderD128/device/gpu_busy_percent", "50\n");
+	put("class/drm/card0-DP-1/device/gpu_busy_percent", "50\n");
+	put("class/drm/card0-DP-1/device/power/runtime_status", "active\n");
+	gpu("card0", "active\n"); /* nouveau or NVIDIA's driver */
+	gpuattr("card0", "device/hwmon/hwmon3/temp1_input", "50000\n");
+	EXPECTGPU(-1, 0, 1, "a GPU without a usage, connectors and render nodes");
+	snprintf(sys, sizeof sys, "%s/missing", dir);
+	EXPECTGPU(-1, 0, 1, "a missing tree");
+	snprintf(sys, sizeof sys, "%s/sys", dir);
+
+	/* amdgpu */
+	reset();
+	gpu("card0", "active\n");
+	for (i = 0; i < LENGTH(busyreads); i++) {
+		gpuattr("card0", "device/gpu_busy_percent", busyreads[i].text);
+		EXPECTGPU(busyreads[i].want, 1, busyreads[i].want < 0, busyreads[i].text);
+	}
+	gpuattr("card0", "device/gpu_busy_percent", "37\n");
+	for (i = 0; i < LENGTH(states); i++) {
+		gpu("card0", states[i].status);
+		EXPECTGPU(states[i].want, states[i].reads, states[i].want < 0, states[i].status ? states[i].status : "no status");
+	}
+	/* a GPU that suspended between its status and its usage fails the read with EBUSY: no value */
+	gpu("card0", "active\n");
+	busy = "gpu_busy_percent";
+	EXPECTGPU(-1, 1, 1, "a read that fails with EBUSY");
+	busy = NULL;
+	EXPECTGPU(37, 1, 0, "the read after EBUSY");
+	gpuattr("card0", "device/gpu_busy_percent", NULL);
+	EXPECTGPU(-1, 1, 1, "a usage that cannot be read");
+
+	/* Intel: the share of the highest frequency it runs at, 0 in RC6 */
+	reset();
+	gpu("card1", "active\n");
+	gpuattr("card1", "gt_act_freq_mhz", "650\n");
+	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
+	EXPECTGPU(50, 2, 0, "Intel at half its frequency");
+	gpuattr("card1", "gt_act_freq_mhz", "0\n");
+	EXPECTGPU(0, 2, 0, "Intel in RC6");
+	gpuattr("card1", "gt_act_freq_mhz", "1\n");
+	EXPECTGPU(0, 2, 0, "Intel at its lowest frequency");
+	gpuattr("card1", "gt_act_freq_mhz", "1293\n");
+	EXPECTGPU(99, 2, 0, "Intel just below its highest frequency");
+	gpuattr("card1", "gt_act_freq_mhz", "1500\n");
+	EXPECTGPU(100, 2, 0, "Intel boosting past its highest frequency");
+	gpuattr("card1", "gt_act_freq_mhz", "999999999\n");
+	gpuattr("card1", "gt_max_freq_mhz", "999999998\n");
+	EXPECTGPU(100, 2, 0, "Intel at a frequency of nine digits");
+	gpuattr("card1", "gt_max_freq_mhz", "999999999\n");
+	gpuattr("card1", "gt_act_freq_mhz", "499999999\n");
+	EXPECTGPU(50, 2, 0, "the frequency share overflowed");
+	gpuattr("card1", "gt_act_freq_mhz", "650\n");
+	gpuattr("card1", "gt_max_freq_mhz", "0\n");
+	EXPECTGPU(-1, 2, 1, "Intel without a highest frequency");
+	gpuattr("card1", "gt_max_freq_mhz", "fast\n");
+	EXPECTGPU(-1, 2, 1, "a malformed highest frequency");
+	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
+	gpuattr("card1", "gt_act_freq_mhz", "-650\n");
+	EXPECTGPU(-1, 1, 1, "a negative frequency");
+	gpuattr("card1", "gt_act_freq_mhz", "650\n");
+	gpu("card1", "suspended\n");
+	EXPECTGPU(0, 0, 0, "a suspended Intel GPU");
+	gpu("card1", "active\n");
+	busy = "gt_act_freq_mhz";
+	EXPECTGPU(-1, 1, 1, "an Intel frequency that fails with EBUSY");
+	busy = NULL;
+	drop("class/drm/card1/gt_max_freq_mhz");
+	EXPECTGPU(-1, 0, 1, "Intel without its highest frequency is not a source");
+
+	/* a hybrid laptop: the busiest GPU; the sleeping one is idle and stays asleep */
+	reset();
+	gpu("card0", "active\n");
+	gpuattr("card0", "gt_act_freq_mhz", "390\n");
+	gpuattr("card0", "gt_max_freq_mhz", "1300\n");
+	gpu("card1", "suspended\n");
+	gpuattr("card1", "device/gpu_busy_percent", "80\n");
+	EXPECTGPU(30, 2, 0, "an awake Intel GPU beside a suspended amdgpu");
+	gpu("card1", "active\n");
+	EXPECTGPU(80, 3, 0, "two awake GPUs");
+	busy = "gpu_busy_percent";
+	EXPECTGPU(30, 3, 1, "a GPU failing with EBUSY beside one that is read");
+	busy = NULL;
+	gpu("card0", "suspended\n");
+	gpu("card1", "suspended\n");
+	EXPECTGPU(0, 0, 0, "every GPU suspended");
+
+	/* more cards than are read: the first ones by number */
+	reset();
+	{
+		static const char *cards[] = { "card10", "card2", "card0", "card3", "card1" };
+		char text[16];
+
+		for (i = 0; i < LENGTH(cards); i++) {
+			gpu(cards[i], "active\n");
+			snprintf(text, sizeof text, "%s\n", cards[i] + 4);
+			gpuattr(cards[i], "device/gpu_busy_percent", text);
+		}
+		EXPECTGPU(3, SENSORS_GPUS, 0, "more GPUs than are read");
+	}
+
+	/* a GPU stays awake for its autosuspend delay after a read: it is not read again within it */
+	reset();
+	gpu("card0", "active\n");
+	gpuattr("card0", "device/gpu_busy_percent", "37\n");
+	gpu("card1", "suspended\n");
+	gpuattr("card1", "gt_act_freq_mhz", "0\n");
+	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
+	gpuattr("card0", "device/power/autosuspend_delay_ms", "5000\n");
+	gpuattr("card1", "device/power/autosuspend_delay_ms", "10000\n");
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 2 && s.gpuawake == 10000, "the longest autosuspend delay of two GPUs is %lld", s.gpuawake);
+	CHECK(sensors_gpudelay(&s, 4000, 0) == 11000, "GPUs that stay awake 10 s were read every %lld ms",
+	      sensors_gpudelay(&s, 4000, 0));
+	CHECK(sensors_gpudelay(&s, 30000, 0) == 30000, "GPUs were read more often than the sampler samples");
+	CHECK(sensors_gpudelay(&s, 4000, 1000) == 20000, "a slow GPU read took more than 5%% of the time");
+	CHECK(sensors_gpudelay(&s, 4000, 1LL << 60) == SENSORS_MAXDELAY, "the delay of a huge GPU read overflowed");
+	gpuattr("card1", "device/power/autosuspend_delay_ms", NULL); /* no autosuspend: the read fails (EIO) */
+	sensors_findgpus(&s, sys);
+	CHECK(s.gpuawake == 5000 && sensors_gpudelay(&s, 4000, 0) == 6000, "a GPU that stays awake 5 s was read every %lld ms",
+	      sensors_gpudelay(&s, 4000, 0));
+	gpuattr("card0", "device/power/autosuspend_delay_ms", "-1\n"); /* never suspends */
+	sensors_findgpus(&s, sys);
+	CHECK(s.gpuawake == 0 && sensors_gpudelay(&s, 4000, 0) == 4000, "GPUs that do not autosuspend were not read every sample");
+	CHECK(sensors_gpudelay(&s, 250, 0) == SENSORS_GPUMARGIN, "GPUs were read every 250 ms");
+	gpuattr("card0", "device/power/autosuspend_delay_ms", "999999999\n");
+	sensors_findgpus(&s, sys);
+	CHECK(sensors_gpudelay(&s, 4000, 0) == 999999999LL + SENSORS_GPUMARGIN, "a long autosuspend delay was cut short");
+	reset();
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0 && sensors_gpudelay(&s, 4000, 0) == 4000, "no GPU took a delay");
+
+	/*
+	 * The sampler pushes the usage into its history; GPUs are looked for once,
+	 * and again only when there is none or one failed, at most every
+	 * SENSORS_REFIND ms.
+	 */
+	reset();
+	sysmon_clear(&v);
+	sensors_init(&s);
+	sensors_samplegpus(&s, sys, 1000, &v);
+	CHECK(v.gpu == -1 && v.ngpuhist == 0 && s.gpufound == 1000 && s.gpustale, "a tree without GPUs gave a usage");
+	gpu("card0", "active\n");
+	gpuattr("card0", "device/gpu_busy_percent", "37\n");
+	sensors_samplegpus(&s, sys, 1000 + SENSORS_REFIND - 1, &v);
+	CHECK(v.gpu == -1 && s.gpufound == 1000, "GPUs were looked for again too soon");
+	sensors_samplegpus(&s, sys, 1000 + SENSORS_REFIND, &v);
+	CHECK(v.gpu == 37 && v.ngpuhist == 1 && !s.gpustale, "a GPU that appeared was not found");
+	gpuattr("card0", "device/gpu_busy_percent", "40\n");
+	sensors_samplegpus(&s, sys, 1000 + 5 * SENSORS_REFIND, &v);
+	CHECK(v.gpu == 40 && v.ngpuhist == 2 && v.gpuhist[0] == 37 && s.gpufound == 1000 + SENSORS_REFIND,
+	      "the GPU history is not its readings, or a GPU was looked for again");
+	gpu("card0", "suspended\n");
+	sensors_samplegpus(&s, sys, 1000 + 5 * SENSORS_REFIND + 1, &v);
+	CHECK(v.gpu == 0 && v.ngpuhist == 3 && !s.gpustale, "a suspended GPU did not show as idle");
+	busy = "gpu_busy_percent";
+	gpu("card0", "active\n");
+	sensors_samplegpus(&s, sys, 1000 + 5 * SENSORS_REFIND + 2, &v);
+	busy = NULL;
+	CHECK(v.gpu == -1 && v.ngpuhist == 0 && s.gpustale, "a GPU failing with EBUSY kept its history");
+
+	/* a sysfs root that leaves no room for a GPU's attributes: they are not used cut short */
+	snprintf(sys, sizeof sys, "%s/", dir);
+	while (strlen(sys) < SENSORS_PATHLEN - 32)
+		strcat(sys, strlen(sys) % 50 ? "y" : "/");
+	sys[strlen(sys) - 1] = 'y';
+	reset();
+	gpu("card0", "active\n");
+	gpuattr("card0", "device/gpu_busy_percent", "37\n");
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0, "a GPU was used with its paths cut short");
+
+	snprintf(sys, sizeof sys, "%s", dir);
+	reset();
+	rmdir(dir);
+}
+
 int
 main(void)
 {
@@ -705,6 +1093,7 @@ main(void)
 	test_payload();
 	test_push();
 	test_sensors();
+	test_gpus();
 	if (failures)
 		return EXIT_FAILURE;
 	puts("sysmon regression checks passed");

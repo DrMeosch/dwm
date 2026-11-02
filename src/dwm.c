@@ -75,8 +75,8 @@
 #define SPTAG(i)		((1 << LENGTH(tags)) << (i))
 #define SPTAGMASK		(((1 << LENGTH(scratchpads))-1) << LENGTH(tags))
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
-#define SYSMONBARW              MAX(1, sysmongraph / SYSMON_HIST) /* px of a CPU usage graph bar */
-#define SYSMONGAP               "  " /* as wide as the gap before the CPU usage graph */
+#define SYSMONBARW              MAX(1, sysmongraph / SYSMON_HIST) /* px of a usage graph bar */
+#define SYSMONGAP               "  " /* as wide as the gap before a usage graph */
 #define TRUNC(X,A,B)            (MAX((A), MIN((X), (B))))
 
 /* enums */
@@ -216,7 +216,8 @@ static void drawbar(Monitor *m);
 static int sysmonbars(void);
 static int sysmonbox(Monitor *m, int left, int right, int *mx, int *bars);
 static void sysmondraw(int x, int w, int bars);
-static void sysmontext(char *cpu, char *rest, size_t size, int widest);
+static void sysmonhist(int x, int bars, const int *hist, int n);
+static void sysmontext(char *cpu, char *rest, char *gpu, size_t size, int widest);
 static void drawbars(void);
 static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
@@ -356,7 +357,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 static Atom wmatom[WMLast], netatom[NetLast];
 static Atom baropacityatom;
 static Atom sysmonatom, sysmonenabledatom;
-static SysmonValues sysmonval = { .cpu = -1, .temp = -1 }; /* last published by dwmsysmon; -1, no fans or no samples when unknown */
+static SysmonValues sysmonval = { .cpu = -1, .temp = -1, .gpu = -1 }; /* last published by dwmsysmon; -1, no fans or no samples when unknown */
 static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
 static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
 static int lightbar;
@@ -1127,13 +1128,14 @@ statusblocksig(int x, int evx)
 }
 
 /*
- * The section's text before and after the graph: the CPU usage ("-" when
- * unknown), then the temperature and every fan when the sampler has them. With
- * widest set, the widest text of the same fields, so the section keeps its
- * width while the values change.
+ * The section's text around the graphs: the CPU usage ("-" when unknown)
+ * before the CPU usage graph, the temperature and every fan after it when the
+ * sampler has them, and last the GPU usage, before its own graph, when the
+ * sampler has a GPU (else gpu is empty). With widest set, the widest text of
+ * the same fields, so the section keeps its width while the values change.
  */
 void
-sysmontext(char *cpu, char *rest, size_t size, int widest)
+sysmontext(char *cpu, char *rest, char *gpu, size_t size, int widest)
 {
 	int i, fan;
 
@@ -1152,9 +1154,14 @@ sysmontext(char *cpu, char *rest, size_t size, int widest)
 	}
 	if (sysmonval.nfan)
 		snprintf(rest + strlen(rest), size - strlen(rest), "rpm");
+	gpu[0] = '\0';
+	if (sysmonval.gpu >= 0)
+		snprintf(gpu, size, "  GPU %3d%%", widest ? 100 : sysmonval.gpu);
+	else if (sysmonval.ngpuhist) /* a history without its value, as for the CPU */
+		snprintf(gpu, size, widest ? "  GPU 100%%" : "  GPU   - ");
 }
 
-/* Graph bars at most: one per sample, sysmongraph pixels wide in all. */
+/* Bars of a graph at most: one per sample, sysmongraph pixels wide in all. */
 int
 sysmonbars(void)
 {
@@ -1164,25 +1171,27 @@ sysmonbars(void)
 /*
  * Where the section sits between the layout symbol ending at left and the
  * status starting at right: centred in the bar, as wide as its widest text and
- * the graph beside the CPU usage. When there is not enough room, the graph
- * gives up its oldest bars, down to none, before the section is left out; while
- * it has bars, the section also keeps the graph's gap from the status, so the
- * two never read as one. Returns its width, or 0 when it is off or would crowd
- * the title or reach the status; *bars is how many graph bars it has room for.
+ * the graphs beside the CPU and the GPU usage. When there is not enough room,
+ * the graphs give up their oldest bars, down to none, before the section is
+ * left out; while they have bars, the section also keeps a graph's gap from the
+ * status, so the two never read as one. Returns its width, or 0 when it is off
+ * or would crowd the title or reach the status; *bars is how many bars each
+ * graph has room for.
  */
 int
 sysmonbox(Monitor *m, int left, int right, int *mx, int *bars)
 {
-	char cpu[64], rest[64];
-	int mw, tw, gap;
+	char cpu[64], rest[64], gpu[64];
+	int mw, tw, gap, graphs;
 
 	if (!showsysmon)
 		return 0;
-	sysmontext(cpu, rest, sizeof cpu, 1);
-	tw = TEXTW(cpu) + drw_fontset_getwidth(drw, rest);
+	sysmontext(cpu, rest, gpu, sizeof cpu, 1);
+	tw = TEXTW(cpu) + drw_fontset_getwidth(drw, rest) + drw_fontset_getwidth(drw, gpu);
+	graphs = gpu[0] ? 2 : 1;
 	gap = drw_fontset_getwidth(drw, SYSMONGAP);
 	for (*bars = sysmonbars(); *bars >= 0; --*bars) {
-		mw = tw + (*bars ? gap + *bars * SYSMONBARW : 0);
+		mw = tw + (*bars ? graphs * (gap + *bars * SYSMONBARW) : 0);
 		*mx = (m->ww - mw) / 2;
 		if (*mx - left > bh && *mx + mw + (*bars ? gap : 0) <= right)
 			return mw;
@@ -1192,32 +1201,52 @@ sysmonbox(Monitor *m, int left, int right, int *mx, int *bars)
 }
 
 /*
- * Draw the section at x, w wide: the CPU usage, then a graph of its latest
- * samples with room for bars of them, the newest on the right, then the other
- * fields. A sample is a bar rising from the baseline of the text to at most
- * about the height of its digits, and at least a pixel high, so idle time
- * shows as a line and a missing sample as nothing. Uses the current scheme.
+ * Draw a usage graph at x with room for bars of the n samples in hist, the
+ * newest on the right. A sample is a bar rising from the baseline of the text
+ * to at most about the height of its digits, and at least a pixel high, so idle
+ * time shows as a line and a missing sample as nothing.
+ */
+void
+sysmonhist(int x, int bars, const int *hist, int n)
+{
+	int i, k, base, gh, h;
+
+	base = (bh - drw->fonts->h) / 2 + drw->fonts->xfont->ascent; /* as drw_text places the text */
+	gh = MAX(1, (drw->fonts->xfont->ascent * 4 + 2) / 5); /* digits take about 4/5 of the ascent */
+	k = MIN(bars, n);
+	for (i = 0; i < k; i++) {
+		h = MAX(1, (hist[n - k + i] * gh + 50) / 100);
+		drw_rect(drw, x + (bars - k + i) * SYSMONBARW, base - h, SYSMONBARW, h, 1, 0);
+	}
+}
+
+/*
+ * Draw the section at x, w wide: the CPU usage and a graph of its latest
+ * samples with room for bars of them, the temperature and fans, then the GPU
+ * usage and its graph. Uses the current scheme.
  */
 void
 sysmondraw(int x, int w, int bars)
 {
-	char cpu[64], rest[64];
-	int i, n, gx, rx, base, gh, h;
+	char cpu[64], rest[64], gpu[64];
+	int gap, gx, rx, ux, ugx;
 
-	sysmontext(cpu, rest, sizeof cpu, 1);
-	rx = x + lrpad / 2 + drw_fontset_getwidth(drw, cpu); /* past the widest CPU usage */
-	gx = rx + drw_fontset_getwidth(drw, SYSMONGAP);
+	/* everything is placed by the widest text, so nothing moves while the values change */
+	sysmontext(cpu, rest, gpu, sizeof cpu, 1);
+	gap = drw_fontset_getwidth(drw, SYSMONGAP);
+	rx = x + lrpad / 2 + drw_fontset_getwidth(drw, cpu);
+	gx = rx + gap;
 	if (bars)
 		rx = gx + bars * SYSMONBARW;
-	sysmontext(cpu, rest, sizeof cpu, 0);
+	ux = rx + drw_fontset_getwidth(drw, rest);
+	ugx = ux + drw_fontset_getwidth(drw, gpu) + gap;
+	sysmontext(cpu, rest, gpu, sizeof cpu, 0);
 	drw_text(drw, x, 0, w, bh, lrpad / 2, cpu, 0);
 	drw_text(drw, rx, 0, x + w - rx, bh, 0, rest, 0);
-	base = (bh - drw->fonts->h) / 2 + drw->fonts->xfont->ascent; /* as drw_text places the text */
-	gh = MAX(1, (drw->fonts->xfont->ascent * 4 + 2) / 5); /* digits take about 4/5 of the ascent */
-	n = MIN(bars, sysmonval.nhist);
-	for (i = 0; i < n; i++) {
-		h = MAX(1, (sysmonval.hist[sysmonval.nhist - n + i] * gh + 50) / 100);
-		drw_rect(drw, gx + (bars - n + i) * SYSMONBARW, base - h, SYSMONBARW, h, 1, 0);
+	sysmonhist(gx, bars, sysmonval.hist, sysmonval.nhist);
+	if (gpu[0]) {
+		drw_text(drw, ux, 0, x + w - ux, bh, 0, gpu, 0);
+		sysmonhist(ugx, bars, sysmonval.gpuhist, sysmonval.ngpuhist);
 	}
 }
 
