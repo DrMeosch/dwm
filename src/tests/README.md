@@ -20,7 +20,7 @@ build/configuration/manpage contracts, including the `selfontweight` selected-ta
 font set, the PKGBUILD source and
 dependencies and the LICENSE file shipped by `make dist`, and that `make install`
 and the Arch package's install and upgrade scriptlet give `dwmsysmon` the
-`cap_perfmon=ep` capability with a stub `setcap`, and only print how to set it
+`cap_perfmon=p` (permitted only) capability with a stub `setcap`, and only print how to set it
 when that fails, without failing themselves.
 
 The state and geometry checks are headless and never execute configured desktop
@@ -138,7 +138,8 @@ replaces `read()` in the check, so that every read of a GPU's usage or of an
 Intel GPU's counter (what would wake a suspended GPU) is counted and can fail
 with EBUSY, and `perf_event_open` (through `syscall()`) with a fake i915 PMU
 whose counters are files holding the busy and enabled time, which opens fail
-with a set error as without `CAP_PERFMON`: no GPU, or
+with a set error, or with EPERM unless `CAP_PERFMON` was made effective by a
+`capget`/`capset` pair that is refused when it is not permitted: no GPU, or
 none with a usage (connectors, render nodes and a card without a source are not
 used), amdgpu's `gpu_busy_percent` (malformed and out-of-range readings are no
 value), each `power/runtime_status` (read when `active` or `unsupported`; idle
@@ -163,7 +164,10 @@ not used; a discrete card's PMU named after its PCI device beside the
 integrated one's, and a cpumask range or none),
 a hybrid laptop (the busier GPU, the suspended one idle and not read, one
 failing with EBUSY beside one read, an awake one beside a suspended Intel GPU,
-and a pending Intel GPU beside a suspended one), giving up every capability for
+and a pending Intel GPU beside a suspended one), `CAP_PERFMON` made effective
+once at the start when permitted, and, when it is not (a container, an old
+kernel), the counters not opened, the Intel GPU never shown and an amdgpu beside
+it, with the CPU, still read, giving up every capability for
 good (`capset` asked to clear them all, and `NoNewPrivs` set in
 `/proc/self/status`), more cards than are read, the
 delay between reads (never within the longest autosuspend delay of the GPUs

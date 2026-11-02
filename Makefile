@@ -47,8 +47,8 @@ install: all
 	mkdir -p ${DESTDIR}${PREFIX}/bin
 	install -Dm755 ./dwm ./dwmsysmon ${DESTDIR}${PREFIX}/bin
 	@# the sampler counts Intel GPU busy time in the i915 perf PMU, which takes CAP_PERFMON
-	@setcap cap_perfmon=ep ${DESTDIR}${PREFIX}/bin/dwmsysmon 2>/dev/null || \
-		echo "dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=ep ${PREFIX}/bin/dwmsysmon" >&2
+	@setcap cap_perfmon=p ${DESTDIR}${PREFIX}/bin/dwmsysmon 2>/dev/null || \
+		echo "dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=p ${PREFIX}/bin/dwmsysmon" >&2
 	mkdir -p ${DESTDIR}${MANPREFIX}/man
 	sed "s/VERSION/${VERSION}/g" < src/dwm.1 > ${DESTDIR}${MANPREFIX}/man/dwm.1
 	chmod 644 ${DESTDIR}${MANPREFIX}/man/dwm.1

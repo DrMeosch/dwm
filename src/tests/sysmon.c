@@ -35,14 +35,17 @@ static int failures;
 /*
  * A fake i915 PMU behind perf_event_open: a counter is a file in perfdir named
  * by its event config, holding its busy and enabled time in ns, which a read
- * returns as the kernel does. Opens fail with perferrno when it is set, as
- * without CAP_PERFMON.
+ * returns as the kernel does. Opens fail with perferrno when it is set, and with
+ * EPERM unless CAP_PERFMON is effective, which capset makes it only if it is
+ * permitted (capperm), as the kernel does.
  */
 #define PERFTYPE 42 /* the fake PMU's perf event type */
 #define PERFCPU 3 /* the first CPU of its cpumask */
 static char perfdir[512];
 static int perfopens, perferrno;
 static int capsets, capsetzero; /* capset calls, and whether the last asked for no capability at all */
+static int capperm = 1, capeff; /* whether CAP_PERFMON is permitted and effective in the fake process */
+#define PERFMONBIT (1U << (CAP_PERFMON - 32)) /* in the second 32-bit word of a capability set */
 
 long
 syscall(long number, ...)
@@ -53,6 +56,23 @@ syscall(long number, ...)
 	int pid, cpu, group;
 	va_list ap;
 
+	if (number == SYS_capget) {
+		struct __user_cap_header_struct *head;
+		struct __user_cap_data_struct *data;
+
+		va_start(ap, number);
+		head = va_arg(ap, struct __user_cap_header_struct *);
+		data = va_arg(ap, struct __user_cap_data_struct *);
+		va_end(ap);
+		if (head->version != _LINUX_CAPABILITY_VERSION_3 || head->pid != 0) {
+			errno = EINVAL;
+			return -1;
+		}
+		memset(data, 0, _LINUX_CAPABILITY_U32S_3 * sizeof *data);
+		data[1].permitted = capperm ? PERFMONBIT : 0;
+		data[1].effective = capeff ? PERFMONBIT : 0;
+		return 0;
+	}
 	if (number == SYS_capset) {
 		struct __user_cap_header_struct *head;
 		struct __user_cap_data_struct *data;
@@ -62,7 +82,13 @@ syscall(long number, ...)
 		head = va_arg(ap, struct __user_cap_header_struct *);
 		data = va_arg(ap, struct __user_cap_data_struct *);
 		va_end(ap);
+		if ((data[1].effective & ~data[1].permitted) || (data[1].permitted && !capperm)) {
+			errno = EPERM; /* not permitted, so it cannot be made effective or kept */
+			return -1;
+		}
 		capsets++;
+		capeff = !!(data[1].effective & PERFMONBIT);
+		capperm = !!(data[1].permitted & PERFMONBIT);
 		capsetzero = head->version == _LINUX_CAPABILITY_VERSION_3 && head->pid == 0;
 		for (i = 0; i < _LINUX_CAPABILITY_U32S_3; i++)
 			capsetzero = capsetzero && !data[i].effective && !data[i].permitted && !data[i].inheritable;
@@ -82,6 +108,10 @@ syscall(long number, ...)
 	perfopens++;
 	if (perferrno) {
 		errno = perferrno;
+		return -1;
+	}
+	if (!capeff) {
+		errno = EPERM;
 		return -1;
 	}
 	/* a system-wide counter of the PMU's type on its CPU, with the time it was enabled */
@@ -1270,6 +1300,51 @@ test_gpus(void)
 		perferrno = 0;
 	}
 
+	/* CAP_PERFMON is made effective just to open the counters; where it is not permitted, only the Intel GPU is lost */
+	{
+		int before;
+
+		reset();
+		intel("card0", "active\n");
+		counters(0, 0, 0, 0, 1000);
+		gpu("card1", "active\n");
+		gpuattr("card1", "device/gpu_busy_percent", "80\n");
+		fds = openfds();
+		capperm = 1;
+		capeff = 0;
+		before = capsets;
+		sensors_init(&s);
+		sensors_startgpus(&s, sys, 0);
+		CHECK(capeff && capsets == before + 1 && openfds() == fds + 4,
+		      "a permitted CAP_PERFMON was not made effective for the counters (%d capset calls, %d new descriptors)",
+		      capsets - before, openfds() - fds);
+		EXPECTREAD(&s, 80, 0, 5, "an Intel GPU with counters beside an amdgpu");
+		reset();
+		sensors_findgpus(&s, sys);
+		CHECK(openfds() == fds, "the counters were not closed");
+		intel("card0", "active\n");
+		counters(0, 0, 0, 0, 1000);
+		gpu("card1", "active\n");
+		gpuattr("card1", "device/gpu_busy_percent", "80\n");
+
+		capperm = 0;
+		capeff = 0;
+		before = capsets;
+		sensors_init(&s);
+		sensors_startgpus(&s, sys, 0);
+		CHECK(!capeff && capsets == before && openfds() == fds && s.ngpu == 2,
+		      "a CAP_PERFMON that is not permitted was made effective, or counters were left open");
+		sysmon_clear(&v);
+		sensors_samplegpus(&s, sys, 1000, &v);
+		sensors_samplegpus(&s, sys, 2000, &v);
+		CHECK(v.gpu == 80, "the amdgpu was not shown without CAP_PERFMON (%d%%)", v.gpu);
+		gpu("card1", "suspended\n");
+		sysmon_clear(&v);
+		sensors_samplegpus(&s, sys, 3000, &v);
+		CHECK(v.gpu == 0 && v.ngpuhist == 1, "the suspended amdgpu was not idle without CAP_PERFMON (%d%%)", v.gpu);
+		capperm = 1;
+	}
+
 	/* a reading still pending after the GPU woke up shows no value, and leaves the history going on */
 	reset();
 	intel("card0", "active\n");
@@ -1398,8 +1473,11 @@ test_gpus(void)
 		FILE *fp;
 		int nnp = -1, caps = 0;
 
+		int before = capsets;
+
 		CHECK(sensors_dropcaps() == 0, "dropping the capabilities failed");
-		CHECK(capsets == 1 && capsetzero, "the capabilities were not all cleared (%d capset calls)", capsets);
+		CHECK(capsets == before + 1 && capsetzero && !capeff && !capperm,
+		      "the capabilities were not all cleared (%d capset calls)", capsets - before);
 		if ((fp = fopen("/proc/self/status", "r"))) {
 			while (fgets(line, sizeof line, fp)) {
 				if (!strncmp(line, "NoNewPrivs:", 11))

@@ -183,8 +183,9 @@ main(int argc, char *argv[])
 
 	/*
 	 * Counting Intel GPU busy time takes CAP_PERFMON, which make install
-	 * gives this program: open the counters first, then give up every
-	 * privilege for good, before taking any input or talking to X.
+	 * gives this program as permitted: make it effective and open the
+	 * counters first, then give up every privilege for good, before
+	 * taking any input or talking to X.
 	 */
 	sensors_init(&sensors);
 	sensors_startgpus(&sensors, SYSMON_SYS_PATH, nowms());

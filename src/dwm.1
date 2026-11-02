@@ -350,13 +350,15 @@ capability, which
 .B make install
 gives
 .B dwmsysmon
-(and nothing else; dwm needs no privilege). The sampler uses it only to open
+(and nothing else; dwm needs no privilege) as a permitted capability, so a system
+that does not allow it (a container, or a kernel before 5.8) still runs the
+sampler, only without the Intel GPU. The sampler uses it only to open
 the counters, first thing, before it reads its arguments or connects to X,
 then gives up every capability for good (and sets no_new_privs) and reads them
 through the descriptors it keeps, so an Intel GPU that appears later is shown
 only once the sampler is started again. Where make install cannot give it, it
 says so, and the one step left is to run, as root,
-.BR "setcap cap_perfmon=ep /usr/local/bin/dwmsysmon" ;
+.BR "setcap cap_perfmon=p /usr/local/bin/dwmsysmon" ;
 without it the Intel GPU is not shown. NVIDIA's and the
 .B xe
 driver's GPUs are not shown either, and neither is a GPU without a

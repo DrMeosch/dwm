@@ -6,8 +6,9 @@
  * the GPU usage of the cards in the DRM class: amdgpu's gpu_busy_percent, and
  * for an Intel (i915) GPU the busy time of its engines from its perf PMU.
  * Opening those counters takes CAP_PERFMON (make install gives dwmsysmon that
- * capability), so the sampler opens them first thing and then gives up every
- * privilege; it reads them through the open descriptors from then on. Only the
+ * capability as permitted, and the sampler makes it effective only to open the
+ * counters, first thing, so a system without it just shows no Intel GPU), and
+ * then the sampler gives up every privilege; it reads them through the open descriptors from then on. Only the
  * sampler reads sensors; dwm never does.
  *
  * Reading the usage of a GPU that is runtime-suspended would wake it up (or

@@ -42,11 +42,13 @@ the time its busiest engine is busy (as `intel_gpu_top` and `btop` show it),
 comes from the engine busy counters of the i915 perf PMU, and opening those
 takes the `CAP_PERFMON` capability. `make install`, and the Arch package
 after every install or upgrade, give it to `dwmsysmon` only
-(`setcap cap_perfmon=ep`); dwm itself stays unprivileged and only draws.
+(`setcap cap_perfmon=p`: permitted only, so a system that does not allow it
+still runs the sampler; it makes the capability effective to open the counters
+and then drops it); dwm itself stays unprivileged and only draws.
 Where that fails, it prints the one step left, as root:
 
 ```sh
-setcap cap_perfmon=ep /usr/local/bin/dwmsysmon
+setcap cap_perfmon=p /usr/local/bin/dwmsysmon
 ```
 
 Without it the Intel GPU is not shown; AMD GPUs need nothing.

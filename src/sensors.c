@@ -410,7 +410,7 @@ closecounters(Gpu *g)
 	g->counting = 0;
 }
 
-/* Open an engine's busy counter, counting system-wide; -1 without CAP_PERFMON or an i915 PMU. */
+/* Open an engine's busy counter, counting system-wide; -1 without an effective CAP_PERFMON or an i915 PMU. */
 static int
 opencounter(const Gpu *g, unsigned long long config)
 {
@@ -555,9 +555,31 @@ sensors_findgpus(Sensors *s, const char *sys)
 			closecounters(&old[j]);
 }
 
+#ifndef CAP_PERFMON
+#define CAP_PERFMON 38
+#endif
+
+/* Make a permitted CAP_PERFMON effective; without it the counters just fail to open. */
+static void
+raiseperfmon(void)
+{
+#ifdef __linux__
+	struct __user_cap_header_struct head;
+	struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
+
+	memset(&head, 0, sizeof head);
+	head.version = _LINUX_CAPABILITY_VERSION_3;
+	if (syscall(SYS_capget, &head, data) < 0)
+		return;
+	data[CAP_PERFMON / 32].effective |= 1U << (CAP_PERFMON % 32);
+	(void)syscall(SYS_capset, &head, data);
+#endif
+}
+
 void
 sensors_startgpus(Sensors *s, const char *sys, long long now)
 {
+	raiseperfmon();
 	s->gpuopen = 1;
 	sensors_findgpus(s, sys);
 	s->gpuopen = 0;

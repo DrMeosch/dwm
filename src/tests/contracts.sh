@@ -71,18 +71,18 @@ printf '#!/bin/sh\necho "$*" >> "%s"\n' "$tmp/inst/setcap.log" > "$tmp/inst/stub
 chmod +x "$tmp/inst/stub/setcap"
 (cd "$tmp/inst" && PATH="$tmp/inst/stub:$PATH" make -o all install DESTDIR="$tmp/inst/root" PREFIX=/usr \
 	>/dev/null 2>"$tmp/inst/err")
-[ "$(cat "$tmp/inst/setcap.log")" = "cap_perfmon=ep $tmp/inst/root/usr/bin/dwmsysmon" ]
+[ "$(cat "$tmp/inst/setcap.log")" = "cap_perfmon=p $tmp/inst/root/usr/bin/dwmsysmon" ]
 [ ! -s "$tmp/inst/err" ]
 PATH="$tmp/inst/stub:$PATH" bash -c '. "$1"; post_install; post_upgrade' _ "$root/src/dwm.install" > "$tmp/inst/out"
 [ ! -s "$tmp/inst/out" ]
-[ "$(tail -n 2 "$tmp/inst/setcap.log")" = "cap_perfmon=ep /usr/bin/dwmsysmon
-cap_perfmon=ep /usr/bin/dwmsysmon" ]
+[ "$(tail -n 2 "$tmp/inst/setcap.log")" = "cap_perfmon=p /usr/bin/dwmsysmon
+cap_perfmon=p /usr/bin/dwmsysmon" ]
 printf '#!/bin/sh\nexit 1\n' > "$tmp/inst/stub/setcap"
 (cd "$tmp/inst" && PATH="$tmp/inst/stub:$PATH" make -o all install DESTDIR="$tmp/inst/root" PREFIX=/usr \
 	>/dev/null 2>"$tmp/inst/err")
-grep -qx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=ep /usr/bin/dwmsysmon' "$tmp/inst/err"
+grep -qx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=p /usr/bin/dwmsysmon' "$tmp/inst/err"
 PATH="$tmp/inst/stub:$PATH" bash -c '. "$1"; post_install && post_upgrade' _ "$root/src/dwm.install" > "$tmp/inst/out"
-[ "$(grep -cx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=ep /usr/bin/dwmsysmon' "$tmp/inst/out")" = 2 ]
+[ "$(grep -cx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=p /usr/bin/dwmsysmon' "$tmp/inst/out")" = 2 ]
 
 # The selected tag is drawn with a heavier font set built from the configured fonts.
 grep -q '^static const char \*selfontweight' "$root/src/config.h"
