@@ -37,7 +37,7 @@ dist: clean
 	cp -R src/README.md src/config.mk src/config.h src/PKGBUILD\
 		src/dwm.1 src/drw.h src/util.h src/dwm.c src/drw.c src/util.c\
 		src/borderwidth.c src/borderwidth.h src/selborder.c src/selborder.h src/sigusr2.c src/sigusr2.h\
-		src/sysmon.c src/sysmon.h src/sensors.c src/sensors.h src/dwmsysmon.c\
+		src/sysmon.c src/sysmon.h src/sensors.c src/sensors.h src/dwmsysmon.c src/dwm.install\
 		src/shiftview.c src/vanitygaps.c src/transient.c src/tests dwm-${VERSION}/src
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
@@ -46,6 +46,9 @@ dist: clean
 install: all
 	mkdir -p ${DESTDIR}${PREFIX}/bin
 	install -Dm755 ./dwm ./dwmsysmon ${DESTDIR}${PREFIX}/bin
+	@# the sampler counts Intel GPU busy time in the i915 perf PMU, which takes CAP_PERFMON
+	@setcap cap_perfmon=p ${DESTDIR}${PREFIX}/bin/dwmsysmon 2>/dev/null || \
+		echo "dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=p ${PREFIX}/bin/dwmsysmon" >&2
 	mkdir -p ${DESTDIR}${MANPREFIX}/man
 	sed "s/VERSION/${VERSION}/g" < src/dwm.1 > ${DESTDIR}${MANPREFIX}/man/dwm.1
 	chmod 644 ${DESTDIR}${MANPREFIX}/man/dwm.1

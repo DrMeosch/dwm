@@ -736,6 +736,12 @@ test_buttonpress_sysmon(void)
 	CHECK(barclick(&m, 533, &arg) == ClkWinTitle, "a click left of the section with its graph was not a title click");
 	CHECK(barclick(&m, 534, &arg) == ClkLast && barclick(&m, 640, &arg) == ClkLast
 	      && barclick(&m, 665, &arg) == ClkLast, "a click on the section with its graph was a title click");
+	/* and so is the GPU usage with its graph: [518,682) */
+	sysmonval.gpu = 7;
+	CHECK(barclick(&m, 517, &arg) == ClkWinTitle, "a click left of the section with a GPU was not a title click");
+	CHECK(barclick(&m, 518, &arg) == ClkLast && barclick(&m, 681, &arg) == ClkLast,
+	      "a click on the section with a GPU was a title click");
+	sysmon_clear(&sysmonval);
 
 	showsysmon = saved_show;
 	sysmongraph = saved_graph;
@@ -818,6 +824,32 @@ test_sysmon_box(void)
 	CHECK(sysmonbars() == 0 && sysmonbox(&m, 100, 1198, &mx, &bars) == 100 && bars == 0, "a negative graph width took room");
 	sysmongraph = 0;
 	CHECK(sysmonbars() == 0, "a graph of no width has bars");
+
+	/*
+	 * With a GPU, its usage and graph come last: the section is wider by a
+	 * second graph, still centred, and both graphs give up the same bars when
+	 * room runs short, before the section is left out.
+	 */
+	sysmongraph = 32;
+	sysmonval.gpu = 7;
+	m.ww = 1200;
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 164 && mx == 518 && bars == 16,
+	      "a wide bar did not centre the section with two graphs (x=%d, %d bars)", mx, bars);
+	CHECK(sysmonbox(&m, 100, 682, &mx, &bars) == 164 && bars == 16, "the graphs were cut although they end where the status begins");
+	CHECK(sysmonbox(&m, 100, 681, &mx, &bars) == 160 && mx == 520 && bars == 15,
+	      "the graphs reached the first pixel of the status (x=%d, %d bars)", mx, bars);
+	CHECK(sysmonbox(&m, 100, 650, &mx, &bars) == 100 && bars == 0, "a status near the centre did not leave both graphs out");
+	CHECK(sysmonbox(&m, 100, 649, &mx, &bars) == 0, "the section was drawn over the status for want of its graphs");
+	m.ww = 360;
+	CHECK(sysmonbox(&m, 100, 358, &mx, &bars) == 116 && mx == 122 && bars == 4,
+	      "a narrow bar did not shrink both graphs to what fits (x=%d, %d bars)", mx, bars);
+	m.ww = 1200;
+	sysmonval.gpu = -1;
+	sysmonval.ngpuhist = 2; /* a GPU history without its value still has its graph */
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 164 && bars == 16, "a GPU history alone took no room");
+	sysmonval.ngpuhist = 0;
+	CHECK(sysmonbox(&m, 100, 1198, &mx, &bars) == 132 && bars == 16, "a section without a GPU took room for its graph");
+	sysmon_clear(&sysmonval);
 
 	showsysmon = saved_show;
 	sysmongraph = saved_graph;
@@ -951,16 +983,20 @@ test_sysmon_expiry(void)
 	sysmonval.nhist = 2;
 	sysmonval.hist[0] = 38;
 	sysmonval.hist[1] = 40;
+	sysmonval.gpu = 7;
+	sysmonval.ngpuhist = 1;
+	sysmonval.gpuhist[0] = 7;
 	sysmonexpire = nowms() + 5000;
 	t = sysmontimeout();
 	CHECK(t > 4000 && t <= 5000, "poll timeout %d does not match the time left", t);
 	checksysmon();
-	CHECK(sysmonval.cpu == 40 && sysmonval.temp == 55 && sysmonval.nfan == 2 && sysmonval.nhist == 2 && sysmonexpire,
-	      "a fresh value was dropped");
+	CHECK(sysmonval.cpu == 40 && sysmonval.temp == 55 && sysmonval.nfan == 2 && sysmonval.nhist == 2
+	      && sysmonval.gpu == 7 && sysmonval.ngpuhist == 1 && sysmonexpire, "a fresh value was dropped");
 	sysmonexpire = nowms() - 1;
 	CHECK(sysmontimeout() == 0, "an overdue value does not wake poll at once");
 	checksysmon();
 	CHECK(sysmonval.cpu == -1 && sysmonval.temp == -1 && sysmonval.nfan == 0 && sysmonval.nhist == 0
+	      && sysmonval.gpu == -1 && sysmonval.ngpuhist == 0
 	      && sysmonexpire == 0 && sysmontimeout() == -1, "a stale value was not dropped and the timer disarmed");
 	checksysmon();
 	CHECK(sysmonval.cpu == -1, "checksysmon revived a dropped value");
@@ -970,21 +1006,27 @@ test_sysmon_expiry(void)
 static void
 test_sysmon_text(void)
 {
-	static const struct { int cpu, temp, nfan, fan[SYSMON_FANS]; const char *text, *widest; } cases[] = {
-		{ -1, -1, 0, { 0 }, "CPU   - ", "CPU 100%" },
-		{ 7, -1, 0, { 0 }, "CPU   7%", "CPU 100%" },
-		{ 100, -1, 0, { 0 }, "CPU 100%", "CPU 100%" },
-		{ 42, 55, 0, { 0 }, "CPU  42%  55°C", "CPU 100% 100°C" },
-		{ -1, 55, 0, { 0 }, "CPU   -   55°C", "CPU 100% 100°C" },
-		{ 42, 150, 0, { 0 }, "CPU  42% 150°C", "CPU 100% 100°C" },
-		{ 42, 55, 1, { 2400 }, "CPU  42%  55°C  2400rpm", "CPU 100% 100°C  9999rpm" },
-		{ 42, 55, 2, { 2400, 0 }, "CPU  42%  55°C  2400/0rpm", "CPU 100% 100°C  9999/9999rpm" },
-		{ 42, -1, 2, { 2400, 2350 }, "CPU  42%  2400/2350rpm", "CPU 100%  9999/9999rpm" },
-		{ 42, 55, 2, { 12000, 800 }, "CPU  42%  55°C  12000/800rpm", "CPU 100% 100°C  99999/9999rpm" },
-		{ 100, 150, 4, { 30000, 30000, 30000, 30000 }, "CPU 100% 150°C  30000/30000/30000/30000rpm",
+	static const struct { int cpu, temp, nfan, fan[SYSMON_FANS], gpu, ngpuhist; const char *text, *widest; } cases[] = {
+		{ -1, -1, 0, { 0 }, -1, 0, "CPU   - ", "CPU 100%" },
+		{ 7, -1, 0, { 0 }, -1, 0, "CPU   7%", "CPU 100%" },
+		{ 100, -1, 0, { 0 }, -1, 0, "CPU 100%", "CPU 100%" },
+		{ 42, 55, 0, { 0 }, -1, 0, "CPU  42%  55°C", "CPU 100% 100°C" },
+		{ -1, 55, 0, { 0 }, -1, 0, "CPU   -   55°C", "CPU 100% 100°C" },
+		{ 42, 150, 0, { 0 }, -1, 0, "CPU  42% 150°C", "CPU 100% 100°C" },
+		{ 42, 55, 1, { 2400 }, -1, 0, "CPU  42%  55°C  2400rpm", "CPU 100% 100°C  9999rpm" },
+		{ 42, 55, 2, { 2400, 0 }, -1, 0, "CPU  42%  55°C  2400/0rpm", "CPU 100% 100°C  9999/9999rpm" },
+		{ 42, -1, 2, { 2400, 2350 }, -1, 0, "CPU  42%  2400/2350rpm", "CPU 100%  9999/9999rpm" },
+		{ 42, 55, 2, { 12000, 800 }, -1, 0, "CPU  42%  55°C  12000/800rpm", "CPU 100% 100°C  99999/9999rpm" },
+		{ 100, 150, 4, { 30000, 30000, 30000, 30000 }, -1, 0, "CPU 100% 150°C  30000/30000/30000/30000rpm",
 		  "CPU 100% 100°C  99999/99999/99999/99999rpm" },
+		/* the GPU usage comes last, before its graph */
+		{ 42, 55, 2, { 2400, 2350 }, 7, 2, "CPU  42%  55°C  2400/2350rpm  GPU   7%",
+		  "CPU 100% 100°C  9999/9999rpm  GPU 100%" },
+		{ 42, -1, 0, { 0 }, 100, 1, "CPU  42%  GPU 100%", "CPU 100%  GPU 100%" },
+		{ -1, -1, 0, { 0 }, 0, 0, "CPU   -   GPU   0%", "CPU 100%  GPU 100%" },
+		{ 42, 55, 0, { 0 }, -1, 3, "CPU  42%  55°C  GPU   - ", "CPU 100% 100°C  GPU 100%" },
 	};
-	char text[128], widest[128], cpu[64], rest[64];
+	char cpu[64], rest[64], gpu[64], text[3 * 64], widest[3 * 64];
 	size_t i;
 
 	for (i = 0; i < LENGTH(cases); i++) {
@@ -992,12 +1034,15 @@ test_sysmon_text(void)
 		sysmonval.temp = cases[i].temp;
 		sysmonval.nfan = cases[i].nfan;
 		memcpy(sysmonval.fan, cases[i].fan, sizeof sysmonval.fan);
-		/* the graph goes between the CPU usage and the rest */
-		sysmontext(cpu, rest, sizeof cpu, 0);
+		sysmonval.gpu = cases[i].gpu;
+		sysmonval.ngpuhist = cases[i].ngpuhist;
+		/* the CPU usage graph goes between the CPU usage and the rest, the GPU's after the GPU usage */
+		sysmontext(cpu, rest, gpu, sizeof cpu, 0);
 		CHECK(strlen(cpu) == 8, "the CPU usage \"%s\" is not as long as \"CPU 100%%\"", cpu);
-		snprintf(text, sizeof text, "%s%s", cpu, rest);
-		sysmontext(cpu, rest, sizeof cpu, 1);
-		snprintf(widest, sizeof widest, "%s%s", cpu, rest);
+		CHECK(!gpu[0] || strlen(gpu) == 10, "the GPU usage \"%s\" is not as long as \"  GPU 100%%\"", gpu);
+		snprintf(text, sizeof text, "%s%s%s", cpu, rest, gpu);
+		sysmontext(cpu, rest, gpu, sizeof cpu, 1);
+		snprintf(widest, sizeof widest, "%s%s%s", cpu, rest, gpu);
 		CHECK(!strcmp(text, cases[i].text), "the section reads \"%s\", expected \"%s\"", text, cases[i].text);
 		CHECK(!strcmp(widest, cases[i].widest), "the section is as wide as \"%s\", expected \"%s\"",
 		      widest, cases[i].widest);
@@ -1006,10 +1051,13 @@ test_sysmon_text(void)
 	/* a small buffer is never overrun */
 	sysmonval.temp = 100;
 	sysmonval.nfan = 1;
+	sysmonval.gpu = 100;
 	memset(cpu, 'z', sizeof cpu);
 	memset(rest, 'z', sizeof rest);
-	sysmontext(cpu, rest, 6, 1);
-	CHECK(cpu[5] == '\0' && cpu[6] == 'z' && rest[5] == '\0' && rest[6] == 'z', "the section text overran its buffer");
+	memset(gpu, 'z', sizeof gpu);
+	sysmontext(cpu, rest, gpu, 6, 1);
+	CHECK(cpu[5] == '\0' && cpu[6] == 'z' && rest[5] == '\0' && rest[6] == 'z' && gpu[5] == '\0' && gpu[6] == 'z',
+	      "the section text overran its buffer");
 	sysmon_clear(&sysmonval);
 }
 

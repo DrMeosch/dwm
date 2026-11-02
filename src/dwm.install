@@ -1,0 +1,11 @@
+# The system monitor's sampler counts Intel GPU busy time in the i915 perf PMU,
+# which takes CAP_PERFMON; an upgrade replaces the file and drops it.
+post_install() {
+	setcap cap_perfmon=p /usr/bin/dwmsysmon 2>/dev/null ||
+		echo "dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=p /usr/bin/dwmsysmon"
+	return 0
+}
+
+post_upgrade() {
+	post_install
+}

@@ -221,19 +221,22 @@ Toggles focused window between floating and tiled state.
 Resize focused window while dragging. Tiled windows will be toggled to the floating state.
 .SS System monitor
 An optional section in the middle of the bar shows the CPU
-usage, a small graph of its recent samples, and the CPU temperature and the
-speed of every fan where the machine has them, as
+usage, a small graph of its recent samples, the CPU temperature and the
+speed of every fan where the machine has them, and the GPU usage with a graph
+of its own where the machine has a GPU whose usage can be read, as
 .B "CPU  42%"
-followed by the graph and
-.BR "55\(deC  2400/2350rpm" .
-The graph has a bar for each of the last 16 samples, the newest on the right,
+followed by the graph,
+.B "55\(deC  2400/2350rpm  GPU   7%"
+and the GPU graph.
+A graph has a bar for each of the last 16 samples, the newest on the right,
 rising from the baseline of the text to about the height of its digits; an
-idle sample is a line, and a sample not taken yet is left empty. Its width is
+idle sample is a line, and a sample not taken yet is left empty. The width of
+each graph is
 .B sysmongraph
 in
 .I config.h
-(32 pixels: 2 for each bar; 0 leaves the graph out).
-A temperature or fan the machine does not report is not shown at all.
+(32 pixels: 2 for each bar; 0 leaves the graphs out).
+A temperature, fan or GPU the machine does not report is not shown at all.
 It is off by default. Super\-Shift\-b toggles it, and the Xresources
 .B dwm.showsysmon
 (0 or 1) sets it at start\-up and on every SIGUSR2 reload; a key press is kept
@@ -250,11 +253,11 @@ and the sensors below
 and publishes the latest values as a short string in the root window property
 .B _DWM_SYSMON
 (for example
-.BR "cpu=42 temp=55 fan=2400,2350 cpuhist=40,38,42" ).
+.BR "cpu=42 temp=55 fan=2400,2350 cpuhist=40,38,42 gpu=7 gpuhist=5,7" ).
 dwm only draws what it last received. The section shows
 .B CPU \-
 when there is no CPU value: the sampler is not running, hung or cannot read its data,
-the property is malformed (anything but a string of at most 128 bytes with
+the property is malformed (anything but a string of at most 256 bytes with
 .B cpu=
 and an integer from 0 to 100), or no new value arrived for
 .B dwm.sysmonstale
@@ -264,11 +267,17 @@ The temperature
 .RB ( temp= ,
 0 to 150 degrees Celsius), the fans
 .RB ( fan= ,
-up to four comma separated speeds from 0 to 30000 RPM) and the graph's samples
+up to four comma separated speeds from 0 to 30000 RPM), the graph's samples
 .RB ( cpuhist= ,
-up to 16 comma separated CPU usages from 0 to 100, oldest first) are left out
+up to 16 comma separated CPU usages from 0 to 100, oldest first), the GPU usage
+.RB ( gpu= ,
+0 to 100) and its graph's samples
+.RB ( gpuhist= ,
+as for the CPU) are left out
 in the same cases, and each one also when only it is malformed or given twice;
-the graph is then empty. A
+a graph is then empty, and the GPU usage shows as
+.B GPU \-
+beside a graph that has samples. A
 missing, crashed or stuck sampler never blocks or crashes dwm, and dwm has no timer
 while there is no value to expire. The section is centred horizontally in the bar,
 whatever the tags and layout symbol on the left and the status text on the right take,
@@ -276,9 +285,9 @@ and as wide as the fields it has and the graph can get, so it does not move whil
 their values change.
 It never overlaps them: when the centre is short of room, because a long status
 text reaches it or the title would be left with less than a bar height, the
-graph gives up its oldest bars first, keeping the section as far from the status
-as the graph is from the CPU usage. Only when the section does not fit even
-without its graph is it left out, until there is room again.
+graphs give up their oldest bars first, both the same, keeping the section as far
+from the status as a graph is from its usage. Only when the section does not fit
+even without its graphs is it left out, until there is room again.
 .PP
 .B dwmsysmon
 takes no options and samples the CPU every 4000 ms. The interval is
@@ -288,10 +297,12 @@ in
 (250 to 60000 ms); dwm passes it to the sampler in
 .BR _DWM_SYSMON_ENABLED ,
 and the default staleness limit follows it. The sampler keeps its last 16
-CPU usage samples for the graph, and starts over after a reading that fails.
+CPU and GPU usage samples for the graphs, and starts over after a reading that fails.
 A dwm from before the graph shows
 .B CPU \-
-for a sampler that sends the samples until it is restarted. The temperature is that of the
+for a sampler that sends the samples until it is restarted, and so does a dwm
+from before the GPU usage for a payload longer than 128 bytes, which only one
+with a GPU can be. The temperature is that of the
 .BR coretemp ,
 .BR k10temp ,
 .B zenpower
@@ -311,7 +322,74 @@ which reports the same fans as
 .B dell_ddv )
 is only used when no other chip has fans. Sensors are read with a CPU sample at most every 6 seconds,
 and less often, up to once a minute, when a read takes long; a missing, failing
-or malformed sensor is left out and looked for again at most once a minute. When dwm hides the
+or malformed sensor is left out and looked for again at most once a minute.
+.PP
+The GPU usage is that of the busiest of the first four
+.B card*
+devices below
+.I /sys/class/drm
+whose usage the sampler can read: the
+.B gpu_busy_percent
+of an
+.B amdgpu
+device, or for an Intel GPU driven by
+.B i915
+the share of the time its busiest engine was busy since the last reading, as
+.B intel_gpu_top
+and
+.B btop
+show it, from the engine busy counters of its perf PMU (the
+.B *\-busy
+events of
+.I /sys/bus/event_source/devices/i915
+or, for a discrete card,
+.BR i915_<PCI\ address> ).
+Counting those takes the
+.B CAP_PERFMON
+capability, which
+.B make install
+gives
+.B dwmsysmon
+(and nothing else; dwm needs no privilege) as a permitted capability, so a system
+that does not allow it (a container, or a kernel before 5.8) still runs the
+sampler, only without the Intel GPU. The sampler uses it only to open
+the counters, first thing, before it reads its arguments or connects to X,
+then gives up every capability for good (and sets no_new_privs) and reads them
+through the descriptors it keeps, so an Intel GPU that appears later is shown
+only once the sampler is started again. Where make install cannot give it, it
+says so, and the one step left is to run, as root,
+.BR "setcap cap_perfmon=p /usr/local/bin/dwmsysmon" ;
+without it the Intel GPU is not shown. NVIDIA's and the
+.B xe
+driver's GPUs are not shown either, and neither is a GPU without a
+.B power/runtime_status
+of its device. Reading the usage of a GPU that is
+runtime\-suspended would wake it up, and a read of one that is awake can keep it
+awake for its
+.BR power/autosuspend_delay_ms .
+So the sampler reads a GPU, or an Intel GPU's counters, only while its
+.B runtime_status
+is
+.B active
+or
+.BR unsupported ,
+counts it as idle (0%) without reading it while it is
+.B suspended
+or
+.B suspending
+(an Intel GPU only when its counters are open, so one they cannot be opened for
+is never shown); the first reading of an Intel GPU after it wakes up has no
+value yet, so the section shows
+.B GPU \-
+and its graph goes on without a bar for it rather than with one that averages
+over the time it slept. Opening the counters, even of a suspended GPU, and
+keeping them open do not wake it or keep it awake, as the kernel counts engine
+busy time in software and samples only engines that are already awake. The
+sampler
+has no value for it otherwise or when the read fails (as with EBUSY, from a GPU
+that has just suspended), and reads the GPUs with a CPU sample, but only once
+their longest autosuspend delay and a second have passed since the last read.
+Missing GPUs are looked for again at most once a minute. When dwm hides the
 section (property
 .BR _DWM_SYSMON_ENABLED ,
 set by dwm) the sampler removes its value and exits, so no sampler runs while

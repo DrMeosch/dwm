@@ -18,7 +18,10 @@ tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
-dependencies and the LICENSE file shipped by `make dist`.
+dependencies and the LICENSE file shipped by `make dist`, and that `make install`
+and the Arch package's install and upgrade scriptlet give `dwmsysmon` the
+`cap_perfmon=p` (permitted only) capability with a stub `setcap`, and only print how to set it
+when that fails, without failing themselves.
 
 The state and geometry checks are headless and never execute configured desktop
 commands. If Xvfb, `xdpyinfo`, `xrdb`, and `pkg-config` are available, `run.sh`
@@ -105,19 +108,21 @@ The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,
 overflowing and otherwise malformed lines are no reading), the usage between two
 readings (counters that stand still, go backwards or exceed the elapsed time are
-no value), the sampler's history (the latest 16 readings, oldest first, the
+no value), the sampler's histories (the latest 16 readings, oldest first, the
 oldest dropped when it is full, and cleared by a missing or out-of-range
-reading), and the property payload (`cpu=<0-100>`, `temp=<0-150>`,
-`fan=<rpm>[,<rpm>...]` with up to four fans of 0-30000 and
-`cpuhist=<0-100>[,<0-100>...]` with up to 16 samples, in at most 128 bytes;
+reading; the CPU and the GPU usage each have their own), and the property
+payload (`cpu=<0-100>`, `temp=<0-150>`, `fan=<rpm>[,<rpm>...]` with up to four
+fans of 0-30000, `cpuhist=<0-100>[,<0-100>...]` with up to 16 samples, and
+`gpu=<0-100>` and `gpuhist=` like `cpuhist=`, in at most 256 bytes;
 oversized, empty and NUL-containing payloads are no value, and a malformed,
 out-of-range or repeated field, such as a history with an empty, signed,
 four-digit or out-of-range sample or a 17th one, is missing while the others
 stay; every combination of values and history lengths survives encoding and
-decoding, the longest payload fits, encoding leaves out a history with a sample
-out of range or too many samples rather than sending part of it, a buffer one
-byte short of the longest payload is no payload, and the decoder dwm had before
-temperatures and fans still reads the CPU usage of a new sampler). It
+decoding, the longest payload fits, and without a GPU still fits the 128 bytes a
+dwm from before the GPU usage reads, encoding leaves out a usage or history with
+a sample out of range or too many samples rather than sending part of it, a
+buffer one byte short of the longest payload is no payload, and the decoder dwm
+had before temperatures and fans still reads the CPU usage of a new sampler). It
 also builds fake sysfs trees in a scratch directory for the sampler's sensor
 sources: none at all, a Dell-like laptop (sparse `coretemp` inputs, the same two
 fans on the fast `dell_ddv` and the slow `dell_smm` chip, a `dell_smm` label
@@ -128,18 +133,61 @@ used), two fans, one and none, labels that pick the package or die sensor
 packages, unreadable and malformed or implausible readings (missing, and the
 read reports the failure), more chips and fans than are used, attributes and
 roots too long for the buffers, when sources are looked for again, and the
-slower cadence for slow reads. `core.c` also checks the section's text with and
-without each field, split where the graph goes, that its width follows the
+slower cadence for slow reads. For the GPU usage it builds fake DRM trees and
+replaces `read()` in the check, so that every read of a GPU's usage or of an
+Intel GPU's counter (what would wake a suspended GPU) is counted and can fail
+with EBUSY, and `perf_event_open` (through `syscall()`) with a fake i915 PMU
+whose counters are files holding the busy and enabled time, which opens fail
+with a set error, or with EPERM unless `CAP_PERFMON` was made effective by a
+`capget`/`capset` pair that is refused when it is not permitted: no GPU, or
+none with a usage (connectors, render nodes and a card without a source are not
+used), amdgpu's `gpu_busy_percent` (malformed and out-of-range readings are no
+value), each `power/runtime_status` (read when `active` or `unsupported`; idle
+with no read when `suspended` or `suspending`; no value and no read when
+resuming, in error, malformed or missing), a read failing with EBUSY or a usage
+that cannot be read (no value, and looked for again), an Intel GPU's engines
+(the `*-busy` events of its PMU with an engine config, other events and
+malformed configs left out, at most 16 in order of class and instance; its
+counters opened system-wide on the first CPU of the PMU's cpumask, with the
+enabled time, only at the start, even while it is suspended, without a read,
+and never by a later look for GPUs; no counters, never shown, asleep or
+awake; the busiest engine's share of the enabled time, rounded, at most 100%;
+asleep idle with no read, and the first reading since it woke up, like the
+very first, pending; counters kept open when the GPUs are looked for again and
+closed, without new ones, when the engines change or the GPU goes away;
+counters that stop or go backwards no value, counting again from there,
+counters that cannot be read closed for good, and counters that cannot all be
+opened at the start none left open; EACCES, EPERM and other open errors never
+showing the GPU; a pending reading publishing no usage while the history goes
+on; xe, a missing driver, a PMU without a type or of type 0 or without engines
+not used; a discrete card's PMU named after its PCI device beside the
+integrated one's, and a cpumask range or none),
+a hybrid laptop (the busier GPU, the suspended one idle and not read, one
+failing with EBUSY beside one read, an awake one beside a suspended Intel GPU,
+a pending Intel GPU beside a suspended one, and an awake amdgpu listed before
+an Intel GPU that just woke up, whose pending reading hides nothing), `CAP_PERFMON` made effective
+once at the start when permitted, and, when it is not (a container, an old
+kernel), the counters not opened, the Intel GPU never shown and an amdgpu beside
+it, with the CPU, still read, giving up every capability for
+good (`capset` asked to clear them all, and `NoNewPrivs` set in
+`/proc/self/status`), more cards than are read, the
+delay between reads (never within the longest autosuspend delay of the GPUs
+plus a second, a delay that cannot be read or is negative, the sampler's
+interval at least, 5% of the time for slow reads, no overflow), the history and
+when GPUs are looked for again, and paths cut short. `core.c` also checks the section's text with and
+without each field, split where the graphs go (the GPU usage last, `-` for a
+GPU history without its usage), that its width follows the
 fields present but not their values, and that it is centred and left out, never
 overlapping the layout symbol or the status, on wide and narrow bars and at the
 exact boundaries; with the graph (16 bars of `sysmongraph` / 16 px, 1 px at
 least, none for a width of 0 or below) the section is wider by the graph, and
-when room runs short the graph loses bars one at a time down to none before the
+by a second one with a GPU usage or history, and
+when room runs short the graphs lose the same bars one at a time down to none before the
 section is left out, at the exact pixel where the status begins and where the
 title would keep only a bar height. It checks that a held value, history
 included, expires on time and that dwm sets no poll timeout without one, and that
 a click on the section, its
-graph or the gap up to the status is neither a title, layout symbol nor status
+graphs (the GPU's included) or the gap up to the status is neither a title, layout symbol nor status
 click, while a click on the title left of it, on the status, or with the section
 off or left out for lack of room keeps its usual meaning.
 
@@ -163,14 +211,22 @@ that a history goes stale with its value; and, with the status a red rectangle
 of a width searched for, that a status taking the graph's room cuts it to whole
 bars, keeping the newest, while every pixel of the status stays red and the
 section keeps at least as far from the status as the graph is from the CPU
-usage. The test dwm finds `dwmsysmon` through a
+usage. With a GPU usage it checks that the usage shows and its value changes the
+bar, that a malformed usage or history is left out on its own, that a GPU
+history without its usage still draws, that the GPU graph is 32 px wide after
+the CPU graph and the other fields, with no text in or next to it, its full bars
+as high and on the same row as the CPU's, a history of 100% then 0% a full bar
+left of a line, and the CPU graph untouched by it; and that a status taking
+the room cuts both graphs to the same whole bars, the GPU's keeping its newest
+and its gap from the status, which stays red. The test dwm finds `dwmsysmon` through a
 symbolic link first on its `PATH`, which the check points at a stub that exits
 at once while it stands in for the sampler, and at the fixture build of the real
 sampler otherwise; samplers are counted by their executable and `DISPLAY` in
 `/proc`, so an installed `dwmsysmon` is never started or counted. It also checks that the section is centred
 in the bar with a short and with a long status text, and is left out, without
 overlapping anything, when a very long status text reaches the centre, with
-the CPU usage alone and with the temperature and one, two or four fans. It first
+the CPU usage alone, with the temperature and one, two or four fans, and with a
+GPU usage after them. It first
 checks that dwm, running with the section off by default, started no sampler.
 It then shows the section so that dwm starts the real `dwmsysmon`, built with `SYSMON_STAT_PATH` pointing at a fixture
 instead of `/proc/stat` and `SYSMON_SYS_PATH` at a fake sysfs tree instead of
@@ -187,11 +243,20 @@ above 60000 ms, a stopped (hung) sampler, a malformed and a missing stat file
 and showing the section again starts a new one whose value comes back), a
 sampler stopped with SIGSTOP while the section is hidden (dwm hides the section
 and stays responsive, and when the section is shown again the sampler dwm
-starts retires the stopped one once it continues), sensors appearing in the fake tree (the temperature
+starts retires the stopped one once it continues), the sampler dwm starts holding no capability and unable to gain
+any (`/proc/<pid>/status`), sensors appearing in the fake tree (the temperature
 and both fans of a Dell-like laptop, then one fan, none, and a malformed
 temperature, each published and drawn), a sensor read that hangs (a FIFO as the
 temperature input: dwm stays responsive and lets the value go stale, and the
-value returns once the read completes), a sampler started by hand taking over
+value returns once the read completes), an amdgpu card in the fake tree (its
+usage published and changing, its history holding the readings in order, and
+dwm drawing the sampler's payload exactly as the stand-in's; while
+`runtime_status` is `suspended`, published as idle while the CPU usage goes on,
+with `gpu_busy_percent` a FIFO nobody ever opens; then active again with an
+`autosuspend_delay_ms` of 10000, read at most every third 4000 ms sample so the
+reads never keep it awake, and gone, after which no GPU is published or drawn;
+then an i915 card with a PMU whose counters the sampler cannot open, as without
+`CAP_PERFMON`, never published or drawn, awake or asleep), a sampler started by hand taking over
 from the one dwm started, and a clean exit on SIGTERM. With XTEST available it
 also toggles the section with Super+Shift+b, which must stop the sampler and
 remove its value, then start a new one whose value is shown. The test dwm is

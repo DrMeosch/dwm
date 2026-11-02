@@ -16,10 +16,10 @@ static unsigned int gappov    = 30;       /* vert outer gap between windows and 
 static int swallowfloating    = 0;        /* 1 means swallow floating windows by default */
 static int smartgaps          = 0;        /* 1 means no outer gap when there is only one window */
 static int showbar            = 1;        /* 0 means no bar */
-static int showsysmon         = 0;        /* 1 shows the CPU usage (and its graph), temperature and fan section published by dwmsysmon */
+static int showsysmon         = 0;        /* 1 shows the CPU usage (and its graph), temperature, fan and GPU usage (and its graph) section published by dwmsysmon */
 #define SYSMONINTERVAL 4000                /* ms between dwmsysmon samples, 250 to 60000 */
 static int sysmonstale        = 3 * SYSMONINTERVAL; /* ms without a new value before the section shows "-"; keep above SYSMONINTERVAL */
-static int sysmongraph        = 32;       /* px of the CPU usage graph beside the number, one bar per recent sample (16 of them); 0 for none */
+static int sysmongraph        = 32;       /* px of the CPU and of the GPU usage graph beside each number, one bar per recent sample (16 of them); 0 for none */
 static int topbar             = 1;        /* 0 means bottom bar */
 static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize=10:antialias=true:autohint=true"  };
 static const char *selfontweight = "semibold"; /* fontconfig weight of the selected tag; NULL or "" (or a fonts[] entry that sets weight=, or style= naming a face the family really has) keeps the normal font */

@@ -3,29 +3,31 @@
 /*
  * Contract between dwm and the dwmsysmon sampler, which are separate processes.
  * The sampler publishes the latest values as a short ASCII string of space
- * separated fields ("cpu=42 temp=55 fan=2400,2350 cpuhist=40,38,42") in the
- * SYSMON_ATOM property of the root window; a field whose source is missing is
- * left out, and unknown fields are skipped. cpuhist holds the latest CPU usage
- * samples, oldest first, the last one being the cpu value. dwm publishes whether
+ * separated fields ("cpu=42 temp=55 fan=2400,2350 cpuhist=40,38,42 gpu=7
+ * gpuhist=5,7") in the SYSMON_ATOM property of the root window; a field whose
+ * source is missing is left out, and unknown fields are skipped. cpuhist holds
+ * the latest CPU usage samples, oldest first, the last one being the cpu value,
+ * and gpuhist the same for the GPU usage. dwm publishes whether
  * the section is shown as a CARDINAL (0 or 1), followed by a window that exists
  * as long as dwm does and the ms between samples, in SYSMON_ENABLED_ATOM: the
  * sampler exits when the section is hidden or that window is gone, and dwm
  * starts a new one when the section is shown. A dwm from before the history
- * cannot read a payload that holds it, and shows "-" until it is restarted.
+ * cannot read a payload that holds it, and one from before the GPU usage a
+ * payload longer than 128 bytes; it shows "-" until it is restarted.
  */
 #include <stddef.h>
 
 #define SYSMON_ATOM "_DWM_SYSMON"
 #define SYSMON_ENABLED_ATOM "_DWM_SYSMON_ENABLED"
 #define SYSMON_OWNER_ATOM "_DWM_SYSMON_OWNER" /* selection: the sampler of a display */
-#define SYSMON_MAXLEN 128 /* bytes dwm reads; multiple of 4 */
+#define SYSMON_MAXLEN 256 /* bytes dwm reads; multiple of 4 */
 #define SYSMON_INTERVAL 4000 /* ms between samples when dwm names none, or one out of range */
 #define SYSMON_MININTERVAL 250 /* ms */
 #define SYSMON_MAXINTERVAL 60000 /* ms */
 #define SYSMON_MAXTEMP 150 /* degrees Celsius */
 #define SYSMON_MAXFAN 30000 /* RPM */
 #define SYSMON_FANS 4 /* fans in one payload */
-#define SYSMON_HIST 16 /* CPU usage samples in one payload */
+#define SYSMON_HIST 16 /* CPU or GPU usage samples in one payload */
 
 /* Cumulative CPU time counters in clock ticks; idle includes iowait. */
 typedef struct {
@@ -40,6 +42,9 @@ typedef struct {
 	int fan[SYSMON_FANS]; /* RPM, 0..SYSMON_MAXFAN */
 	int nhist; /* CPU usage samples in hist[], 0..SYSMON_HIST */
 	int hist[SYSMON_HIST]; /* the latest CPU usage samples, oldest first, 0..100 */
+	int gpu;  /* percent, 0..100 */
+	int ngpuhist; /* GPU usage samples in gpuhist[], 0..SYSMON_HIST */
+	int gpuhist[SYSMON_HIST]; /* the latest GPU usage samples, oldest first, 0..100 */
 } SysmonValues;
 
 /* Parse the aggregate "cpu" line of /proc/stat; 0 on success, -1 if malformed. */
@@ -54,6 +59,8 @@ void sysmon_clear(SysmonValues *v);
  * reading clears the history, so it never spans a gap.
  */
 void sysmon_push(SysmonValues *v, int cpu);
+/* The same for a GPU usage reading and its history. */
+void sysmon_pushgpu(SysmonValues *v, int gpu);
 /*
  * Write the property payload with the values that are in range; returns its
  * length, 0 when there is none, or -1 if it does not fit.

@@ -1,13 +1,16 @@
 /* See LICENSE file for copyright and license details. */
 /*
- * dwmsysmon: samples system load, the CPU temperature and the fans outside the
- * window manager and publishes the latest values, with the last SYSMON_HIST CPU
- * usage samples for the graph, in the root window property read by dwm (see
- * sysmon.h). It only ever writes one short property, never blocks dwm, and
- * exits with the X connection. dwm starts it when the system
- * monitor is shown, and it exits by itself as soon as dwm hides the section.
- * Sensors are read less often than the CPU, and even less often when they are
- * slow to answer (see sensors.h).
+ * dwmsysmon: samples system load, the CPU temperature, the fans and the GPU
+ * usage outside the window manager and publishes the latest values, with the
+ * last SYSMON_HIST CPU and GPU usage samples for the graphs, in the root window
+ * property read by dwm (see sysmon.h). It only ever writes one short property,
+ * never blocks dwm, and exits with the X connection. dwm starts it when the
+ * system monitor is shown, and it exits by itself as soon as dwm hides the
+ * section. Sensors are read less often than the CPU, and even less often when
+ * they are slow to answer; GPUs are read no more often than they take to
+ * suspend after a read, and not at all while suspended (see sensors.h). The
+ * only privilege it may have, CAP_PERFMON for Intel GPU counters, it uses to
+ * open them as it starts and then gives up for good.
  *
  * Each X display has at most one sampler: a new one takes the
  * SYSMON_OWNER_ATOM selection and the previous one, which may be stuck in
@@ -175,9 +178,21 @@ main(int argc, char *argv[])
 	SysmonValues val;
 	Sensors sensors;
 	XEvent ev;
-	long long next, sensornext, t;
+	long long next, sensornext, gpunext, t;
 	int have, timeout, stop = 0;
 
+	/*
+	 * Counting Intel GPU busy time takes CAP_PERFMON, which make install
+	 * gives this program as permitted: make it effective and open the
+	 * counters first, then give up every privilege for good, before
+	 * taking any input or talking to X.
+	 */
+	sensors_init(&sensors);
+	sensors_startgpus(&sensors, SYSMON_SYS_PATH, nowms());
+	if (sensors_dropcaps() < 0) {
+		perror("dwmsysmon: cannot drop privileges");
+		return 1;
+	}
 	(void)argv;
 	if (argc != 1)
 		usage();
@@ -210,12 +225,11 @@ main(int argc, char *argv[])
 	fds[0].events = fds[1].events = POLLIN;
 
 	sysmon_clear(&val);
-	sensors_init(&sensors);
 	/* hidden, or a dwm that is gone left its property behind */
 	if (enabled() <= 0)
 		stop = 1;
 	have = readcpu(SYSMON_STAT_PATH, &prev) == 0;
-	next = sensornext = nowms() + FIRST_TICK;
+	next = sensornext = gpunext = nowms() + FIRST_TICK;
 	while (!stop) {
 		while (!stop && XPending(dpy)) {
 			XNextEvent(dpy, &ev);
@@ -237,6 +251,10 @@ main(int argc, char *argv[])
 			} else {
 				sysmon_push(&val, -1);
 				have = 0;
+			}
+			if (t >= gpunext) {
+				sensors_samplegpus(&sensors, SYSMON_SYS_PATH, t, &val);
+				gpunext = t + sensors_gpudelay(&sensors, interval, nowms() - t);
 			}
 			if (t >= sensornext) {
 				sensors_sample(&sensors, SYSMON_SYS_PATH, t, &val);

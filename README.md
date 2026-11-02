@@ -6,7 +6,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 
 - Luke's build patches: clickable status bar (statuscmd), scratchpad, bstack/fibonacci/deck/centered-master layouts, vanitygaps, sticky windows, hide-vacant-tags, stacker, shiftview, swallow, true fullscreen. See [`src/README.md`](src/README.md) and [`src/config.h`](src/config.h) for bindings.
 - Colored status bar segments ([status2d](https://dwm.suckless.org/patches/status2d/), reimplemented with bounds-checked parsing): `^c#rrggbb^`/`^b#rrggbb^` truecolor codes and `^C<0-15>^`/`^B<0-15>^` codes that follow `dwm.color0`..`dwm.color15`. Clickable status regions (statuscmd) stay aligned. Grammar in [`src/dwm.1`](src/dwm.1).
-- Optional system monitor section centred in the bar (CPU usage with a small graph of its recent samples, plus the CPU temperature and every fan's RPM where the machine reports them; when a long status text leaves it little room the graph shrinks first, and the section is left out when there is none), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, runs only while the section is shown: dwm starts it when the section is turned on and it exits when the section is turned off. It reads the sensors and publishes the values in a root window property, so dwm only draws them and stays responsive when the sampler or a sensor is missing, slow, stuck or sends garbage (the CPU then shows `-` with an empty graph, and a missing temperature or fan is not shown). See [`src/dwm.1`](src/dwm.1).
+- Optional system monitor section centred in the bar (CPU usage with a small graph of its recent samples, plus the CPU temperature and every fan's RPM where the machine reports them, and the GPU usage with its own graph on AMD and Intel GPUs, read without ever waking a sleeping GPU (Intel's needs a capability, see [Intel GPU usage](#intel-gpu-usage)); when a long status text leaves it little room the graphs shrink first, and the section is left out when there is none), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, runs only while the section is shown: dwm starts it when the section is turned on and it exits when the section is turned off. It reads the sensors and publishes the values in a root window property, so dwm only draws them and stays responsive when the sampler or a sensor is missing, slow, stuck or sends garbage (the CPU then shows `-` with an empty graph, and a missing temperature or fan is not shown). See [`src/dwm.1`](src/dwm.1).
 - Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
 - Live theme reload: `SIGUSR2` makes dwm re-read Xresources (`src/sigusr2.c`). `SIGUSR1` stays reserved for dwmblocks.
 - Configurable border width (1 or 2 px) and selected-border color (`src/borderwidth.c`, `src/selborder.c`).
@@ -18,7 +18,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 | `src/` | dwm sources, `config.h`, `config.mk`, man page, `PKGBUILD` |
 | `src/tests/` | Regression checks (see [`src/tests/README.md`](src/tests/README.md)) |
 | `docs/dwm-dark.sh`, `docs/dwm-light.sh` | Switch GTK/xfconf theme, merge Xresources (`dwm.*` plus `dmenu.color0`/`dmenu.color4`), then `pkill -USR2 -x dwm` |
-| `src/dwmsysmon.c`, `src/sensors.c`, `src/sysmon.c` | System monitor sampler, its temperature and fan sources, and the shared value format |
+| `src/dwmsysmon.c`, `src/sensors.c`, `src/sysmon.c` | System monitor sampler, its temperature, fan and GPU sources, and the shared value format |
 | `Makefile` | Top-level build, test, install, and dist targets |
 | `treehouse.toml` | Worktree pool config |
 | `.github/workflows/ci.yml` | CI: `make test`, then `make` |
@@ -34,6 +34,35 @@ make test            # regression checks
 ```
 
 On Arch, `src/PKGBUILD` can be used with `makepkg -si`.
+
+### Intel GPU usage
+
+An Intel GPU has no busy percentage in sysfs. Its real usage, the share of
+the time its busiest engine is busy (as `intel_gpu_top` and `btop` show it),
+comes from the engine busy counters of the i915 perf PMU, and opening those
+takes the `CAP_PERFMON` capability. `make install`, and the Arch package
+after every install or upgrade, give it to `dwmsysmon` only
+(`setcap cap_perfmon=p`: permitted only, so a system that does not allow it
+still runs the sampler; it makes the capability effective to open the counters
+and then drops it); dwm itself stays unprivileged and only draws.
+Where that fails, it prints the one step left, as root:
+
+```sh
+setcap cap_perfmon=p /usr/local/bin/dwmsysmon
+```
+
+Without it the Intel GPU is not shown; AMD GPUs need nothing.
+
+`dwmsysmon` uses the capability only to open the counters: it does so first
+thing, before it reads its arguments or connects to X, then gives up every
+capability for good (it clears the effective, permitted, inheritable and
+ambient sets and sets `no_new_privs`) and reads the counters through the
+descriptors it keeps open. So whatever it later parses, the X server's
+replies or sysfs files, runs without any privilege, and an Intel GPU that
+appears later is only shown after the sampler is started again (as toggling
+the section does). Opening the counters, even of a suspended GPU, and keeping
+them open do not wake it or keep it awake: the kernel counts engine busy time
+in software and samples only engines that are already awake.
 
 Source: <https://github.com/DrMeosch/dwm>.
 
