@@ -18,7 +18,10 @@ tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
-dependencies and the LICENSE file shipped by `make dist`.
+dependencies and the LICENSE file shipped by `make dist`, and that `make install`
+and the Arch package's install and upgrade scriptlet give `dwmsysmon` the
+`cap_perfmon=ep` capability with a stub `setcap`, and only print how to set it
+when that fails, without failing themselves.
 
 The state and geometry checks are headless and never execute configured desktop
 commands. If Xvfb, `xdpyinfo`, `xrdb`, and `pkg-config` are available, `run.sh`
@@ -131,18 +134,32 @@ packages, unreadable and malformed or implausible readings (missing, and the
 read reports the failure), more chips and fans than are used, attributes and
 roots too long for the buffers, when sources are looked for again, and the
 slower cadence for slow reads. For the GPU usage it builds fake DRM trees and
-replaces `read()` in the check, so that every read of a GPU's usage or frequency
-(what would wake a suspended GPU) is counted and can fail with EBUSY: no GPU, or
+replaces `read()` in the check, so that every read of a GPU's usage or of an
+Intel GPU's counter (what would wake a suspended GPU) is counted and can fail
+with EBUSY, and `perf_event_open` (through `syscall()`) with a fake i915 PMU
+whose counters are files holding the busy and enabled time, which opens fail
+with a set error as without `CAP_PERFMON`: no GPU, or
 none with a usage (connectors, render nodes and a card without a source are not
 used), amdgpu's `gpu_busy_percent` (malformed and out-of-range readings are no
 value), each `power/runtime_status` (read when `active` or `unsupported`; idle
 with no read when `suspended` or `suspending`; no value and no read when
 resuming, in error, malformed or missing), a read failing with EBUSY or a usage
-that cannot be read (no value, and looked for again), Intel's frequency share
-(half, none in RC6, rounding, boost past the highest frequency, nine-digit
-frequencies, a missing or zero highest frequency, and a suspended Intel GPU,
-never read), a hybrid laptop (the busier GPU, the suspended one idle and not
-read, one failing with EBUSY beside one read), more cards than are read, the
+that cannot be read (no value, and looked for again), an Intel GPU's engines
+(the `*-busy` events of its PMU with an engine config, other events and
+malformed configs left out; its counters opened system-wide on the first CPU
+of the PMU's cpumask, with the enabled time, only once it is awake, the first
+reading without a value; the busiest engine's share of the enabled time,
+rounded, at most 100%; asleep from the start no value and no open or read,
+asleep after counting idle with no read, and the reading after it covering the
+whole time; counters kept open when the GPUs are looked for again and closed
+when the engines change or the GPU goes away; counters that stop, go backwards,
+cannot be read or cannot all be opened closed with no descriptor left, and
+opened again; EACCES, EPERM and other open errors never showing the GPU, awake
+or asleep; xe, a missing driver, a PMU without a type or of type 0 or without
+engines not used; a discrete card's PMU named after its PCI device beside the
+integrated one's, and a cpumask range or none; more engines than are counted),
+a hybrid laptop (the busier GPU, the suspended one idle and not read, one
+failing with EBUSY beside one read), more cards than are read, the
 delay between reads (never within the longest autosuspend delay of the GPUs
 plus a second, a delay that cannot be read or is negative, the sampler's
 interval at least, 5% of the time for slow reads, no overflow), the history and
@@ -225,7 +242,9 @@ dwm drawing the sampler's payload exactly as the stand-in's; while
 `runtime_status` is `suspended`, published as idle while the CPU usage goes on,
 with `gpu_busy_percent` a FIFO nobody ever opens; then active again with an
 `autosuspend_delay_ms` of 10000, read at most every third 4000 ms sample so the
-reads never keep it awake, and gone, after which no GPU is published or drawn), a sampler started by hand taking over
+reads never keep it awake, and gone, after which no GPU is published or drawn;
+then an i915 card with a PMU whose counters the sampler cannot open, as without
+`CAP_PERFMON`, never published or drawn, awake or asleep), a sampler started by hand taking over
 from the one dwm started, and a clean exit on SIGTERM. With XTEST available it
 also toggles the section with Super+Shift+b, which must stop the sampler and
 remove its value, then start a new one whose value is shown. The test dwm is

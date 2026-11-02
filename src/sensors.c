@@ -1,10 +1,16 @@
 /* See LICENSE file for copyright and license details. */
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef __linux__
+#include <linux/perf_event.h>
+#include <sys/syscall.h>
+#endif
 
 #include "sensors.h"
 
@@ -25,6 +31,7 @@ static const char *gpuchips[] = { "amdgpu", "radeon", "nouveau", "i915", "xe" };
 static const char *slowchips[] = { "dell_smm" };
 
 #define LENGTH(X) (sizeof (X) / sizeof (X)[0])
+#define MIN(A, B) ((A) < (B) ? (A) : (B))
 
 static int
 oneof(const char *s, const char **list, size_t n)
@@ -294,72 +301,263 @@ sensors_delay(long long spent)
 	return spent * 20 > SENSORS_INTERVAL ? spent * 20 : SENSORS_INTERVAL;
 }
 
+/* The name of the directory a sysfs link leads to, or -1. */
+static int
+target(const char *link, char *name, size_t size)
+{
+	char path[PATH_MAX], *p;
+
+	if (!realpath(link, path))
+		return -1;
+	p = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+	if (strlen(p) >= size)
+		return -1;
+	strcpy(name, p);
+	return 0;
+}
+
+static int
+byconfig(const void *a, const void *b)
+{
+	unsigned long long x = *(const unsigned long long *)a, y = *(const unsigned long long *)b;
+
+	return x < y ? -1 : x > y;
+}
+
+/* The busy event of an engine: "config=<n>" below 2^20 with sample 0, as the i915 PMU names them. */
+static int
+busyconfig(const char *path, unsigned long long *config)
+{
+	char buf[64], *end;
+
+	if (readattr(path, buf, sizeof buf) < 0 || strncmp(buf, "config=", 7)
+	|| buf[7] < '0' || buf[7] > '9')
+		return -1;
+	errno = 0;
+	*config = strtoull(buf + 7, &end, 0);
+	return !errno && !*end && *config < 0x100000 && !(*config & 0xf) ? 0 : -1;
+}
+
+/*
+ * An i915 card's PMU: its perf event type, the CPU its events are counted on
+ * and the busy event of every engine. i915 names it after the PCI device for a
+ * discrete card, and "i915" for the integrated one. Only sysfs attributes of
+ * the PMU are read, never anything the GPU answers.
+ */
+static int
+intelpmu(const char *sys, const char *card, Gpu *g)
+{
+	char path[SENSORS_PATHLEN], dir[SENSORS_PATHLEN], name[64], buf[32];
+	unsigned long long config[4 * SENSORS_ENGINES];
+	struct dirent *e;
+	DIR *d;
+	long v;
+	size_t i, n;
+	int nconfig = 0;
+
+	if (join(path, card, "device/driver") < 0 || target(path, name, sizeof name) < 0 || strcmp(name, "i915"))
+		return -1;
+	strcpy(name, "i915_");
+	if (join(path, card, "device") < 0 || target(path, name + 5, sizeof name - 5) < 0)
+		name[4] = '\0';
+	for (i = 5; name[i]; i++)
+		if (name[i] == ':')
+			name[i] = '_';
+	if (snprintf(dir, sizeof dir, "%s/bus/event_source/devices/%s", sys, name) >= (int)sizeof dir
+	|| access(dir, F_OK) < 0) {
+		name[4] = '\0';
+		if (snprintf(dir, sizeof dir, "%s/bus/event_source/devices/%s", sys, name) >= (int)sizeof dir)
+			return -1;
+	}
+	if (join(path, dir, "type") < 0 || readvalue(path, &v) < 0 || v <= 0)
+		return -1;
+	g->pmutype = (unsigned int)v;
+	/* the first CPU of its cpumask ("0", "0-3" or "0,2") */
+	g->cpu = 0;
+	if (join(path, dir, "cpumask") == 0 && readattr(path, buf, sizeof buf) == 0)
+		g->cpu = atoi(buf);
+	if (join(path, dir, "events") < 0 || !(d = opendir(path)))
+		return -1;
+	while (nconfig < (int)LENGTH(config) && (e = readdir(d))) {
+		n = strlen(e->d_name);
+		if (n <= 5 || strcmp(e->d_name + n - 5, "-busy"))
+			continue;
+		if (snprintf(dir, sizeof dir, "%s/%s", path, e->d_name) < (int)sizeof dir
+		&& busyconfig(dir, &config[nconfig]) == 0)
+			nconfig++;
+	}
+	closedir(d);
+	/* the first engines by class and instance */
+	qsort(config, nconfig, sizeof *config, byconfig);
+	g->nengine = MIN(nconfig, SENSORS_ENGINES);
+	memcpy(g->config, config, g->nengine * sizeof *config);
+	return g->nengine ? 0 : -1;
+}
+
+static void
+closecounters(Gpu *g)
+{
+	int i;
+
+	for (i = 0; i < SENSORS_ENGINES; i++) {
+		if (g->fd[i] >= 0)
+			close(g->fd[i]);
+		g->fd[i] = -1;
+	}
+	g->counting = 0;
+}
+
+/* Open an engine's busy counter, counting system-wide; -1 without CAP_PERFMON or an i915 PMU. */
+static int
+opencounter(const Gpu *g, unsigned long long config)
+{
+#ifdef __linux__
+	struct perf_event_attr attr;
+
+	memset(&attr, 0, sizeof attr);
+	attr.type = g->pmutype;
+	attr.size = sizeof attr;
+	attr.config = config;
+	attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED;
+	return (int)syscall(SYS_perf_event_open, &attr, -1, g->cpu, -1, PERF_FLAG_FD_CLOEXEC);
+#else
+	(void)g;
+	(void)config;
+	return -1;
+#endif
+}
+
+/* A counter's busy and enabled time in ns; -1 if it cannot be read. */
+static int
+readcounter(int fd, unsigned long long *busy, unsigned long long *enabled)
+{
+	unsigned long long v[2];
+
+	if (read(fd, v, sizeof v) != (ssize_t)sizeof v)
+		return -1;
+	*busy = v[0];
+	*enabled = v[1];
+	return 0;
+}
+
+/*
+ * The usage of an awake Intel GPU since the last reading: the share of the
+ * time its busiest engine was busy, as intel_gpu_top and btop show it. The
+ * counters are opened at the first reading, which has no value yet; -1 when
+ * they cannot be opened or read.
+ */
+static int
+intelusage(Gpu *g)
+{
+	unsigned long long busy, enabled;
+	int i, u, best = 0;
+
+	if (!g->counting) {
+		for (i = 0; i < g->nengine; i++)
+			if ((g->fd[i] = opencounter(g, g->config[i])) < 0
+			|| readcounter(g->fd[i], &g->busyns[i], &g->enabledns[i]) < 0) {
+				closecounters(g);
+				return -1;
+			}
+		g->counting = 1;
+		return -1;
+	}
+	for (i = 0; i < g->nengine; i++) {
+		if (readcounter(g->fd[i], &busy, &enabled) < 0 || busy < g->busyns[i] || enabled <= g->enabledns[i]) {
+			closecounters(g);
+			return -1;
+		}
+		u = busy - g->busyns[i] >= enabled - g->enabledns[i] ? 100
+		  : (int)((200 * (busy - g->busyns[i]) / (enabled - g->enabledns[i]) + 1) / 2);
+		if (u > best)
+			best = u;
+		g->busyns[i] = busy;
+		g->enabledns[i] = enabled;
+	}
+	return best;
+}
+
 void
 sensors_findgpus(Sensors *s, const char *sys)
 {
 	Chip cards[CHIPS];
+	Gpu old[SENSORS_GPUS];
 	char dir[SENSORS_PATHLEN], path[SENSORS_PATHLEN];
 	struct dirent *e;
 	DIR *d;
 	Gpu *g;
 	long delay;
-	int n = 0, i;
+	int n = 0, i, j, nold = s->ngpu;
 
+	memcpy(old, s->gpu, nold * sizeof *old);
 	s->ngpu = 0;
 	s->gpuawake = 0;
-	if (join(dir, sys, "class/drm") < 0 || !(d = opendir(dir)))
-		return;
-	/* cardN, not its connectors (cardN-DP-1) or render nodes */
-	while (n < CHIPS && (e = readdir(d)))
-		if (entrynum(e->d_name, "card", "") >= 0 && join(cards[n].dir, dir, e->d_name) == 0)
-			n++;
-	closedir(d);
+	if (join(dir, sys, "class/drm") == 0 && (d = opendir(dir))) {
+		/* cardN, not its connectors (cardN-DP-1) or render nodes */
+		while (n < CHIPS && (e = readdir(d)))
+			if (entrynum(e->d_name, "card", "") >= 0 && join(cards[n].dir, dir, e->d_name) == 0)
+				n++;
+		closedir(d);
+	}
 	qsort(cards, n, sizeof *cards, bydir);
 	/* nothing the driver answers is read here, only what attributes there are and the power settings */
 	for (i = 0; i < n && s->ngpu < SENSORS_GPUS; i++) {
 		g = &s->gpu[s->ngpu];
-		g->max[0] = '\0';
+		memset(g, 0, sizeof *g);
+		for (j = 0; j < SENSORS_ENGINES; j++)
+			g->fd[j] = -1;
 		/* without its power state it could be asleep: it is never read */
 		if (join(g->status, cards[i].dir, "device/power/runtime_status") < 0 || access(g->status, F_OK) < 0)
 			continue;
 		if (join(g->busy, cards[i].dir, "device/gpu_busy_percent") == 0 && access(g->busy, F_OK) == 0)
 			; /* amdgpu */
-		else if (join(g->busy, cards[i].dir, "gt_act_freq_mhz") == 0 && access(g->busy, F_OK) == 0
-		&& join(g->max, cards[i].dir, "gt_max_freq_mhz") == 0 && access(g->max, F_OK) == 0)
-			; /* i915: no busy share without privileges, but how fast it runs */
-		else
+		else if ((g->busy[0] = '\0', intelpmu(sys, cards[i].dir, g)) < 0)
 			continue;
 		/* without autosuspend (EIO) a device suspends as soon as it is idle */
 		if (join(path, cards[i].dir, "device/power/autosuspend_delay_ms") == 0
 		&& readvalue(path, &delay) == 0 && delay > s->gpuawake)
 			s->gpuawake = delay;
+		/* counters of the same GPU and engines keep counting */
+		for (j = 0; j < nold; j++)
+			if (old[j].counting && !strcmp(old[j].status, g->status) && old[j].pmutype == g->pmutype
+			&& old[j].cpu == g->cpu && old[j].nengine == g->nengine
+			&& !memcmp(old[j].config, g->config, g->nengine * sizeof *g->config)) {
+				*g = old[j];
+				old[j].counting = 0;
+				break;
+			}
 		s->ngpu++;
 	}
+	for (j = 0; j < nold; j++)
+		if (old[j].counting)
+			closecounters(&old[j]);
 }
 
-/* The usage of a GPU, 0..100, or -1 when it cannot be read; a suspended GPU is idle and left alone. */
+/*
+ * The usage of a GPU, 0..100, or -1 when it cannot be read; a suspended GPU
+ * is idle and left alone. An Intel GPU whose counters were never opened has
+ * no usage while it sleeps, so one whose counters cannot be opened is never
+ * shown.
+ */
 static int
-gpuusage(const Gpu *g)
+gpuusage(Gpu *g)
 {
 	char status[32];
-	long busy, max;
+	long busy;
 
 	if (readattr(g->status, status, sizeof status) < 0)
 		return -1;
 	if (!strcmp(status, "suspended") || !strcmp(status, "suspending"))
-		return 0;
+		return g->busy[0] || g->counting ? 0 : -1;
 	/* resuming, or in error: not now */
 	if (strcmp(status, "active") && strcmp(status, "unsupported"))
 		return -1;
+	if (!g->busy[0])
+		return intelusage(g);
 	/* one that suspended since fails the read with EBUSY (older kernels wake it, a rare race) */
-	if (readvalue(g->busy, &busy) < 0 || busy < 0)
+	if (readvalue(g->busy, &busy) < 0 || busy < 0 || busy > 100)
 		return -1;
-	if (!g->max[0])
-		return busy <= 100 ? (int)busy : -1;
-	if (readvalue(g->max, &max) < 0 || max <= 0)
-		return -1;
-	/* the share of its highest frequency that it runs at */
-	return busy >= max ? 100 : (int)(((long long)busy * 100 + max / 2) / max);
+	return (int)busy;
 }
 
 int

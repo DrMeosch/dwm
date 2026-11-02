@@ -1592,6 +1592,38 @@ main(int argc, char *argv[])
 		CHECK(wait_value("cpu=20 temp=47", VALUE_MS + 3 * SAMPLE_MS), "the usage of a GPU that went away was still published");
 		CHECK(wait_look(l_temp47, 3000), "dwm drew a GPU that went away");
 		responsive("a GPU going away");
+
+		/*
+		 * An awake Intel GPU whose PMU counters the sampler cannot open, as
+		 * without CAP_PERFMON (here the fake PMU is not the kernel's): it is
+		 * never published, awake or asleep.
+		 */
+		set_resources("dwm.showsysmon: 0\n");
+		CHECK(wait_samplers(0, 3000, NULL), "the sampler kept running while the section is hidden");
+		put_sys("class/drm/card1/device/power/runtime_status", "active\n");
+		put_sys("bus/pci/drivers/i915/.keep", "");
+		snprintf(fifo, sizeof fifo, "%s/class/drm/card1/device/driver", sys_path);
+		CHECK(symlink("../../../../bus/pci/drivers/i915", fifo) == 0, "cannot link %s", fifo);
+		put_sys("bus/event_source/devices/i915/type", "4242\n");
+		put_sys("bus/event_source/devices/i915/cpumask", "0\n");
+		put_sys("bus/event_source/devices/i915/events/rcs0-busy", "config=0x0\n");
+		set_resources("dwm.showsysmon: 1\n");
+		CHECK(wait_samplers(1, 3000, &sampler_pid), "showing the section did not start the sampler");
+		CHECK(wait_value("cpu=20 temp=47", VALUE_MS), "the sampler did not publish beside an Intel GPU");
+		for (i = 0; i < 2 * SAMPLE_MS / 100; i++) {
+			if (read_value(raw, sizeof raw) && strstr(raw, "gpu"))
+				break;
+			pump(100);
+		}
+		CHECK(!strstr(raw, "gpu"), "an Intel GPU whose counters cannot be opened was published: \"%s\"", raw);
+		put_sys("class/drm/card1/device/power/runtime_status", "suspended\n");
+		for (i = 0; i < 2 * SAMPLE_MS / 100; i++) {
+			if (read_value(raw, sizeof raw) && strstr(raw, "gpu"))
+				break;
+			pump(100);
+		}
+		CHECK(!strstr(raw, "gpu"), "a suspended Intel GPU whose counters were never opened was published: \"%s\"", raw);
+		CHECK(wait_look(l_temp47, 3000), "dwm drew an Intel GPU whose counters cannot be opened");
 	}
 
 	/* a sampler started by hand takes over from the one dwm started */

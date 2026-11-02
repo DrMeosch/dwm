@@ -22,6 +22,7 @@ bash -c '
 	[ "$url" = https://github.com/drmeosch/dwm ]
 	[ "${source[0]}" = git+https://github.com/drmeosch/dwm.git ]
 	case " ${depends[*]} " in *" libxinerama "*) ;; *) exit 1 ;; esac
+	[ "$install" = dwm.install ] && [ -f "$(dirname "$1")/$install" ]
 	[ "$(type -t build)" = function ]
 	[ "$(type -t package)" = function ]
 ' _ "$root/src/PKGBUILD"
@@ -50,13 +51,38 @@ cp -R "$root"/src/. "$tmp/dist/src/"
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/LICENSE"
 tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/config.mk"
 # the sampler and its shared module must ship with dwm, and install must install the sampler
-for f in sysmon.c sysmon.h sensors.c sensors.h dwmsysmon.c; do
+for f in sysmon.c sysmon.h sensors.c sensors.h dwmsysmon.c dwm.install; do
 	tar -tzf "$tmp/dist/dwm-$version.tar.gz" | grep -qx "dwm-$version/src/$f"
 done
 (cd "$tmp/dist" && make -n install DESTDIR="$tmp/inst" | grep -q 'install -Dm755 \./dwm \./dwmsysmon ')
 [ ! -e "$tmp/dist/dwm-$version" ]
 [ ! -e "$root/dwm-$version.tar.gz" ]
 [ -s "$root/LICENSE" ]
+
+# make install gives the sampler CAP_PERFMON, which the Intel GPU usage takes, and says
+# how to give it when that fails; the Arch package does the same after installing or
+# upgrading, which drops it. setcap is a stub that logs its arguments or fails.
+mkdir -p "$tmp/inst/src" "$tmp/inst/stub"
+cp "$root/Makefile" "$tmp/inst/"
+cp "$root/src/config.mk" "$root/src/dwm.1" "$tmp/inst/src/"
+: > "$tmp/inst/dwm"
+: > "$tmp/inst/dwmsysmon"
+printf '#!/bin/sh\necho "$*" >> "%s"\n' "$tmp/inst/setcap.log" > "$tmp/inst/stub/setcap"
+chmod +x "$tmp/inst/stub/setcap"
+(cd "$tmp/inst" && PATH="$tmp/inst/stub:$PATH" make -o all install DESTDIR="$tmp/inst/root" PREFIX=/usr \
+	>/dev/null 2>"$tmp/inst/err")
+[ "$(cat "$tmp/inst/setcap.log")" = "cap_perfmon=ep $tmp/inst/root/usr/bin/dwmsysmon" ]
+[ ! -s "$tmp/inst/err" ]
+PATH="$tmp/inst/stub:$PATH" bash -c '. "$1"; post_install; post_upgrade' _ "$root/src/dwm.install" > "$tmp/inst/out"
+[ ! -s "$tmp/inst/out" ]
+[ "$(tail -n 2 "$tmp/inst/setcap.log")" = "cap_perfmon=ep /usr/bin/dwmsysmon
+cap_perfmon=ep /usr/bin/dwmsysmon" ]
+printf '#!/bin/sh\nexit 1\n' > "$tmp/inst/stub/setcap"
+(cd "$tmp/inst" && PATH="$tmp/inst/stub:$PATH" make -o all install DESTDIR="$tmp/inst/root" PREFIX=/usr \
+	>/dev/null 2>"$tmp/inst/err")
+grep -qx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=ep /usr/bin/dwmsysmon' "$tmp/inst/err"
+PATH="$tmp/inst/stub:$PATH" bash -c '. "$1"; post_install && post_upgrade' _ "$root/src/dwm.install" > "$tmp/inst/out"
+[ "$(grep -cx 'dwmsysmon: to show the Intel GPU usage, run as root: setcap cap_perfmon=ep /usr/bin/dwmsysmon' "$tmp/inst/out")" = 2 ]
 
 # The selected tag is drawn with a heavier font set built from the configured fonts.
 grep -q '^static const char \*selfontweight' "$root/src/config.h"

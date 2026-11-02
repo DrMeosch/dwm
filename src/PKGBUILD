@@ -13,6 +13,7 @@ optdepends=(
 	'st: terminal emulator')
 provides=($_pkgname)
 conflicts=($_pkgname)
+install=dwm.install
 source=(git+https://github.com/drmeosch/dwm.git)
 sha256sums=('SKIP')
 

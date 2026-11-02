@@ -3,12 +3,17 @@
  * property payload, and the sampler's temperature, fan and GPU sources in fake
  * sysfs trees.
  */
+#include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/perf_event.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 #include "../sensors.h"
@@ -27,10 +32,85 @@ static int failures;
 #define LENGTH(X) (sizeof (X) / sizeof (X)[0])
 
 /*
- * The sampler's reads go through here: a read of a GPU's usage or frequency,
- * which is what would wake a suspended GPU, is counted, and while busy names
- * the attribute it fails with EBUSY, as amdgpu answers for a GPU that is not
- * awake.
+ * A fake i915 PMU behind perf_event_open: a counter is a file in perfdir named
+ * by its event config, holding its busy and enabled time in ns, which a read
+ * returns as the kernel does. Opens fail with perferrno when it is set, as
+ * without CAP_PERFMON.
+ */
+#define PERFTYPE 42 /* the fake PMU's perf event type */
+#define PERFCPU 3 /* the first CPU of its cpumask */
+static char perfdir[512];
+static int perfopens, perferrno;
+
+long
+syscall(long number, ...)
+{
+	struct perf_event_attr *attr;
+	char path[600];
+	unsigned long flags;
+	int pid, cpu, group;
+	va_list ap;
+
+	if (number != SYS_perf_event_open) {
+		errno = ENOSYS;
+		return -1;
+	}
+	va_start(ap, number);
+	attr = va_arg(ap, struct perf_event_attr *);
+	pid = va_arg(ap, int);
+	cpu = va_arg(ap, int);
+	group = va_arg(ap, int);
+	flags = va_arg(ap, unsigned long);
+	va_end(ap);
+	perfopens++;
+	if (perferrno) {
+		errno = perferrno;
+		return -1;
+	}
+	/* a system-wide counter of the PMU's type on its CPU, with the time it was enabled */
+	if (attr->type != PERFTYPE || attr->size != sizeof *attr || pid != -1 || cpu != PERFCPU || group != -1
+	|| attr->read_format != PERF_FORMAT_TOTAL_TIME_ENABLED || !(flags & PERF_FLAG_FD_CLOEXEC)) {
+		errno = EINVAL;
+		return -1;
+	}
+	snprintf(path, sizeof path, "%s/%llx", perfdir, (unsigned long long)attr->config);
+	return open(path, O_RDONLY | O_CLOEXEC);
+}
+
+/* Set a fake counter's busy and enabled time; its open descriptors see the change. */
+static void
+counter(unsigned long long config, unsigned long long busy, unsigned long long enabled)
+{
+	char path[600];
+	FILE *fp;
+
+	snprintf(path, sizeof path, "%s/%llx", perfdir, config);
+	if ((fp = fopen(path, "w"))) {
+		fprintf(fp, "%llu %llu", busy, enabled);
+		fclose(fp);
+	}
+}
+
+/* Open descriptors of this process. */
+static int
+openfds(void)
+{
+	struct dirent *e;
+	DIR *d;
+	int n = 0;
+
+	if (!(d = opendir("/proc/self/fd")))
+		return -1;
+	while ((e = readdir(d)))
+		n += e->d_name[0] != '.';
+	closedir(d);
+	return n - 1; /* the directory's own */
+}
+
+/*
+ * The sampler's reads go through here: a read of a GPU's usage, or of an Intel
+ * GPU's counter, is counted, and while busy names the attribute it fails with
+ * EBUSY, as amdgpu answers for a GPU that is not awake.
  */
 static int gpureads;
 static const char *busy;
@@ -38,25 +118,37 @@ static const char *busy;
 ssize_t
 read(int fd, void *buf, size_t size)
 {
-	static const char *gpuattrs[] = { "gpu_busy_percent", "gt_act_freq_mhz", "gt_max_freq_mhz" };
-	char link[64], path[1024];
+	char link[64], path[1024], text[64];
+	unsigned long long v[2];
 	const char *name;
+	struct iovec iov;
 	ssize_t n;
-	size_t i;
 
 	snprintf(link, sizeof link, "/proc/self/fd/%d", fd);
 	if ((n = readlink(link, path, sizeof path - 1)) > 0) {
 		path[n] = '\0';
 		name = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
-		for (i = 0; i < LENGTH(gpuattrs); i++)
-			if (!strcmp(name, gpuattrs[i]))
-				gpureads++;
+		if (perfdir[0] && !strncmp(path, perfdir, strlen(perfdir)) && path[strlen(perfdir)] == '/') {
+			gpureads++;
+			n = pread(fd, text, sizeof text - 1, 0);
+			text[n > 0 ? n : 0] = '\0';
+			if (size < sizeof v || sscanf(text, "%llu %llu", &v[0], &v[1]) != 2) {
+				errno = EIO;
+				return -1;
+			}
+			memcpy(buf, v, sizeof v);
+			return sizeof v;
+		}
+		if (!strcmp(name, "gpu_busy_percent"))
+			gpureads++;
 		if (busy && !strcmp(name, busy)) {
 			errno = EBUSY;
 			return -1;
 		}
 	}
-	return (ssize_t)syscall(SYS_read, fd, buf, size);
+	iov.iov_base = buf;
+	iov.iov_len = size;
+	return readv(fd, &iov, 1);
 }
 
 static void
@@ -847,6 +939,93 @@ gpuattr(const char *card, const char *name, const char *text)
 	put(rel, text);
 }
 
+/* Link below sys: rel points at the directory to, which is made. */
+static void
+link_dir(const char *rel, const char *to)
+{
+	char path[512], dest[512];
+
+	snprintf(dest, sizeof dest, "%s/%s/.keep", sys, to);
+	mkparents(dest);
+	snprintf(dest, sizeof dest, "%s/%s", sys, to);
+	mkdir(dest, 0755);
+	snprintf(path, sizeof path, "%s/%s", sys, rel);
+	mkparents(path);
+	unlink(path);
+	if (symlink(dest, path) < 0)
+		CHECK(0, "cannot link %s", path);
+}
+
+/* The engines of the fake Intel GPU: render, copy, video and video enhance, by their busy event config */
+static const unsigned long long engines[] = { 0x0, 0x1000, 0x2000, 0x3000 };
+
+/* The i915 PMU of an integrated Intel GPU, named pmu, with the four engines and events that are not theirs. */
+static void
+intelpmu(const char *pmu, const char *type)
+{
+	static const struct { const char *name, *text; } events[] = {
+		{ "rcs0-busy", "config=0x0\n" }, { "bcs0-busy", "config=0x1000\n" }, { "vcs0-busy", "config=0x2000\n" },
+		{ "vecs0-busy", "config=0x3000\n" }, { "rcs0-busy.unit", "ns\n" }, { "rcs0-wait", "config=0x1\n" },
+		{ "actual-frequency", "config=0x100000\n" }, { "gt0-busy", "config=0x100000\n" },
+		{ "xcs0-busy", "config=0x4001\n" }, { "ycs0-busy", "garbage\n" }, { "zcs0-busy", "config=\n" },
+		{ "wcs0-busy", "config=0x5000x\n" },
+	};
+	char rel[256];
+	size_t i;
+
+	snprintf(rel, sizeof rel, "bus/event_source/devices/%s/type", pmu);
+	put(rel, type);
+	snprintf(rel, sizeof rel, "bus/event_source/devices/%s/cpumask", pmu);
+	put(rel, "3\n");
+	for (i = 0; i < LENGTH(events); i++) {
+		snprintf(rel, sizeof rel, "bus/event_source/devices/%s/events/%s", pmu, events[i].name);
+		put(rel, events[i].text);
+	}
+}
+
+/* An Intel GPU driven by i915, with the PMU "i915". */
+static void
+intel(const char *card, const char *status)
+{
+	char rel[128];
+
+	gpu(card, status);
+	snprintf(rel, sizeof rel, "class/drm/%s/device/driver", card);
+	link_dir(rel, "bus/pci/drivers/i915");
+	intelpmu("i915", "42\n");
+}
+
+/* The counters of the four engines: each one's busy time, and the time they were enabled, in ns */
+static void
+counters(unsigned long long rcs, unsigned long long bcs, unsigned long long vcs, unsigned long long vecs,
+         unsigned long long enabled)
+{
+	counter(engines[0], rcs, enabled);
+	counter(engines[1], bcs, enabled);
+	counter(engines[2], vcs, enabled);
+	counter(engines[3], vecs, enabled);
+}
+
+/* Read the GPUs of s as the sampler does: the usage, with how many counters were opened and reads made. */
+static int
+readgpus(Sensors *s, int *opens, int *reads)
+{
+	int u;
+
+	perfopens = gpureads = 0;
+	u = sensors_readgpus(s);
+	*opens = perfopens;
+	*reads = gpureads;
+	return u;
+}
+
+#define EXPECTREAD(s, want, wantopens, wantreads, what) do { \
+	int opens_, reads_, got_ = readgpus((s), &opens_, &reads_); \
+	CHECK(got_ == (want) && opens_ == (wantopens) && reads_ == (wantreads), \
+	      "%s: %d%% with %d opens and %d reads, want %d%% with %d and %d", \
+	      what, got_, opens_, reads_, want, wantopens, wantreads); \
+} while (0)
+
 /* Find and read the GPUs of the current tree: the usage, how many reads woke them, and whether they went stale. */
 static int
 gpusample(int *reads, int *stale)
@@ -892,10 +1071,11 @@ test_gpus(void)
 		{ "resuming\n", -1, 0 }, { "error\n", -1, 0 }, { "", -1, 0 }, { "Active\n", -1, 0 },
 		{ "active and more\n", -1, 0 }, { NULL, -1, 0 },
 	};
-	char dir[] = "/tmp/dwm-gpus-XXXXXX";
+	char dir[] = "/tmp/dwm-gpus-XXXXXX", rel[600];
 	Sensors s;
 	SysmonValues v;
 	size_t i;
+	int fds;
 
 	if (!mkdtemp(dir)) {
 		CHECK(0, "cannot create a scratch directory");
@@ -938,60 +1118,206 @@ test_gpus(void)
 	gpuattr("card0", "device/gpu_busy_percent", NULL);
 	EXPECTGPU(-1, 1, 1, "a usage that cannot be read");
 
-	/* Intel: the share of the highest frequency it runs at, 0 in RC6 */
+	/*
+	 * Intel: the busy time of its engines in the i915 PMU, over the time the
+	 * counters were enabled, of the busiest engine. The counters are opened
+	 * only once it is awake, and the first reading has no value yet; one
+	 * asleep is idle without a read, but only once its counters could be
+	 * opened.
+	 */
 	reset();
-	gpu("card1", "active\n");
-	gpuattr("card1", "gt_act_freq_mhz", "650\n");
-	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
-	EXPECTGPU(50, 2, 0, "Intel at half its frequency");
-	gpuattr("card1", "gt_act_freq_mhz", "0\n");
-	EXPECTGPU(0, 2, 0, "Intel in RC6");
-	gpuattr("card1", "gt_act_freq_mhz", "1\n");
-	EXPECTGPU(0, 2, 0, "Intel at its lowest frequency");
-	gpuattr("card1", "gt_act_freq_mhz", "1293\n");
-	EXPECTGPU(99, 2, 0, "Intel just below its highest frequency");
-	gpuattr("card1", "gt_act_freq_mhz", "1500\n");
-	EXPECTGPU(100, 2, 0, "Intel boosting past its highest frequency");
-	gpuattr("card1", "gt_act_freq_mhz", "999999999\n");
-	gpuattr("card1", "gt_max_freq_mhz", "999999998\n");
-	EXPECTGPU(100, 2, 0, "Intel at a frequency of nine digits");
-	gpuattr("card1", "gt_max_freq_mhz", "999999999\n");
-	gpuattr("card1", "gt_act_freq_mhz", "499999999\n");
-	EXPECTGPU(50, 2, 0, "the frequency share overflowed");
-	gpuattr("card1", "gt_act_freq_mhz", "650\n");
-	gpuattr("card1", "gt_max_freq_mhz", "0\n");
-	EXPECTGPU(-1, 2, 1, "Intel without a highest frequency");
-	gpuattr("card1", "gt_max_freq_mhz", "fast\n");
-	EXPECTGPU(-1, 2, 1, "a malformed highest frequency");
-	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
-	gpuattr("card1", "gt_act_freq_mhz", "-650\n");
-	EXPECTGPU(-1, 1, 1, "a negative frequency");
-	gpuattr("card1", "gt_act_freq_mhz", "650\n");
-	gpu("card1", "suspended\n");
-	EXPECTGPU(0, 0, 0, "a suspended Intel GPU");
-	gpu("card1", "active\n");
-	busy = "gt_act_freq_mhz";
-	EXPECTGPU(-1, 1, 1, "an Intel frequency that fails with EBUSY");
-	busy = NULL;
-	drop("class/drm/card1/gt_max_freq_mhz");
-	EXPECTGPU(-1, 0, 1, "Intel without its highest frequency is not a source");
+	snprintf(perfdir, sizeof perfdir, "%s/perf", dir);
+	mkdir(perfdir, 0755);
+	intel("card0", "suspended\n");
+	counters(0, 0, 0, 0, 1000);
+	fds = openfds();
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 1 && s.gpu[0].nengine == 4 && s.gpu[0].pmutype == PERFTYPE && s.gpu[0].cpu == PERFCPU
+	      && !s.gpu[0].busy[0], "the Intel GPU and its four engines were not found (%d GPUs)", s.ngpu);
+	EXPECTREAD(&s, -1, 0, 0, "an Intel GPU asleep since the start");
+	CHECK(s.gpustale, "an Intel GPU without a usage was not looked for again");
+	gpu("card0", "active\n");
+	EXPECTREAD(&s, -1, 4, 4, "the first reading of an Intel GPU");
+	counters(500000000, 100000000, 0, 0, 1000000000 + 1000);
+	EXPECTREAD(&s, 50, 0, 4, "the render engine busy half the time");
+	counters(510000000, 1000000000, 0, 0, 2000000000 + 1000);
+	EXPECTREAD(&s, 90, 0, 4, "the copy engine busy 90% of the time");
+	counters(510000000, 1000000000, 4949, 0, 2000010000 + 1000);
+	EXPECTREAD(&s, 49, 0, 4, "49.49%");
+	counters(510000000, 1000000000, 4949 + 4950, 0, 2000020000 + 1000);
+	EXPECTREAD(&s, 50, 0, 4, "49.5%");
+	counters(510000000, 1000000000, 4949 + 4950, 0, 2000030000 + 1000);
+	EXPECTREAD(&s, 0, 0, 4, "idle engines");
+	counters(510000000, 1000000000, 4949 + 4950, 50000, 2000040000 + 1000);
+	EXPECTREAD(&s, 100, 0, 4, "an engine busier than the time counted");
+	/* asleep after counting: idle and left alone, then the reading covers the time since the last */
+	gpu("card0", "suspending\n");
+	EXPECTREAD(&s, 0, 0, 0, "an Intel GPU going to sleep");
+	gpu("card0", "suspended\n");
+	EXPECTREAD(&s, 0, 0, 0, "a suspended Intel GPU");
+	gpu("card0", "active\n");
+	counters(510000000 + 2500, 1000000000, 4949 + 4950, 50000, 2000050000 + 1000);
+	EXPECTREAD(&s, 25, 0, 4, "the reading after a suspend");
+	CHECK(!s.gpustale && openfds() == fds + 4, "the counting Intel GPU was stale or holds %d descriptors", openfds() - fds);
+	/* looking for the GPUs again keeps the same counters counting */
+	sensors_findgpus(&s, sys);
+	counters(510000000 + 5000, 1000000000, 4949 + 4950, 50000, 2000060000 + 1000);
+	EXPECTREAD(&s, 25, 0, 4, "a reading after the GPUs were looked for again");
+	CHECK(openfds() == fds + 4, "looking for the GPUs again leaked or closed counters");
+	/* counters that stop or cannot be read are closed, and opened again at the next reading */
+	EXPECTREAD(&s, -1, 0, 1, "counters whose time did not advance");
+	CHECK(s.gpustale && openfds() == fds, "counters that stopped were not closed");
+	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
+	counters(510000000 + 5000, 1000000000, 0, 50000, 2000070000);
+	EXPECTREAD(&s, -1, 0, 3, "a counter that went backwards");
+	CHECK(openfds() == fds, "a counter that went backwards left counters open");
+	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
+	counters(510000000 + 5000, 1000000000, 0, 50000, 2000080000);
+	{
+		char path[600];
+		FILE *fp;
+
+		snprintf(path, sizeof path, "%s/%llx", perfdir, engines[1]);
+		if ((fp = fopen(path, "w"))) {
+			fputs("garbage", fp);
+			fclose(fp);
+		}
+	}
+	EXPECTREAD(&s, -1, 0, 2, "a counter that cannot be read");
+	CHECK(openfds() == fds, "a counter that cannot be read left counters open");
+	/* an engine whose counter cannot be opened: none is left open */
+	counters(0, 0, 0, 0, 1000);
+	snprintf(rel, sizeof rel, "%s/%llx", perfdir, engines[3]);
+	unlink(rel);
+	EXPECTREAD(&s, -1, 4, 3, "an engine without a counter");
+	CHECK(openfds() == fds, "counters were left open when one could not be opened");
+	/* another set of engines after the GPUs are looked for again: the old counters are closed */
+	counters(0, 0, 0, 0, 1000);
+	EXPECTREAD(&s, -1, 4, 4, "the counters opened again");
+	put("bus/event_source/devices/i915/events/ccs0-busy", "config=0x4000\n");
+	counter(0x4000, 0, 1000);
+	sensors_findgpus(&s, sys);
+	CHECK(s.gpu[0].nengine == 5 && openfds() == fds, "the counters of the old engines stayed open");
+	EXPECTREAD(&s, -1, 5, 5, "the counters of five engines");
+	/* a GPU that went away: its counters are closed */
+	reset();
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0 && openfds() == fds, "the counters of a GPU that went away stayed open");
+	intel("card0", "active\n");
+
+	/* without CAP_PERFMON the counters cannot be opened: the Intel GPU is never shown, awake or asleep */
+	{
+		static const int denied[] = { EACCES, EPERM, ENOENT, ENODEV, EINVAL };
+
+		for (i = 0; i < LENGTH(denied); i++) {
+			perferrno = denied[i];
+			fds = openfds();
+			sysmon_clear(&v);
+			sensors_init(&s);
+			gpu("card0", "active\n");
+			sensors_samplegpus(&s, sys, 1000, &v);
+			sensors_samplegpus(&s, sys, 2000, &v);
+			gpu("card0", "suspended\n");
+			sensors_samplegpus(&s, sys, 3000, &v);
+			CHECK(v.gpu == -1 && v.ngpuhist == 0 && s.gpustale && openfds() == fds,
+			      "an Intel GPU whose counters fail with %s was shown (%d) or left descriptors", strerror(denied[i]), v.gpu);
+		}
+		perferrno = 0;
+	}
+
+	/* not an Intel GPU this source can read */
+	reset();
+	intel("card0", "active\n");
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 1, "an Intel GPU was not found");
+	link_dir("class/drm/card0/device/driver", "bus/pci/drivers/xe");
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0, "a GPU driven by xe was taken for i915");
+	link_dir("class/drm/card0/device/driver", "bus/pci/drivers/i915");
+	drop("bus/event_source/devices/i915/type");
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0, "an i915 PMU without a type was used");
+	put("bus/event_source/devices/i915/type", "0\n");
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 0, "an i915 PMU of type 0 was used");
+	put("bus/event_source/devices/i915/type", "42\n");
+	{
+		static const char *events[] = { "rcs0-busy", "bcs0-busy", "vcs0-busy", "vecs0-busy" };
+
+		for (i = 0; i < LENGTH(events); i++) {
+			snprintf(rel, sizeof rel, "bus/event_source/devices/i915/events/%s", events[i]);
+			drop(rel);
+		}
+	}
+	EXPECTGPU(-1, 0, 1, "an i915 PMU without engines");
+	reset();
+	gpu("card0", "active\n");
+	intelpmu("i915", "42\n");
+	EXPECTGPU(-1, 0, 1, "a card without a driver");
+
+	/* the PMU of a discrete card is named after its PCI device, the integrated one's is not */
+	reset();
+	put("devices/pci0000:00/0000:03:00.0/power/runtime_status", "suspended\n");
+	link_dir("class/drm/card1/device", "devices/pci0000:00/0000:03:00.0");
+	link_dir("devices/pci0000:00/0000:03:00.0/driver", "bus/pci/drivers/i915");
+	intelpmu("i915_0000_03_00.0", "43\n");
+	intel("card0", "suspended\n");
+	put("bus/event_source/devices/i915/cpumask", "0-3\n");
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 2 && s.gpu[0].pmutype == 42 && s.gpu[0].cpu == 0 && s.gpu[1].pmutype == 43 && s.gpu[1].cpu == 3,
+	      "the PMUs of an integrated and a discrete Intel GPU were not told apart (%d GPUs)", s.ngpu);
+	drop("bus/event_source/devices/i915/cpumask");
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 2 && s.gpu[0].cpu == 0, "a PMU without a cpumask was not counted on CPU 0");
+
+	/* more engines than are counted: the first SENSORS_ENGINES */
+	reset();
+	intel("card0", "active\n");
+	for (i = SENSORS_ENGINES + 4; i-- > 0;) { /* made last first, as a directory may list them in any order */
+		char text[32];
+
+		snprintf(rel, sizeof rel, "bus/event_source/devices/i915/events/ccs%zu-busy", i);
+		snprintf(text, sizeof text, "config=0x%zx\n", 0x4000 + (i << 4));
+		put(rel, text);
+	}
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	CHECK(s.ngpu == 1 && s.gpu[0].nengine == SENSORS_ENGINES && s.gpu[0].config[0] == engines[0]
+	      && s.gpu[0].config[SENSORS_ENGINES - 1] == 0x4000 + ((SENSORS_ENGINES - 5) << 4),
+	      "%d engines were counted, or not the first ones", s.ngpu ? s.gpu[0].nengine : 0);
+	for (i = 1; s.ngpu && i < (size_t)s.gpu[0].nengine; i++)
+		CHECK(s.gpu[0].config[i - 1] < s.gpu[0].config[i], "engine %zu is not in order of class and instance", i);
 
 	/* a hybrid laptop: the busiest GPU; the sleeping one is idle and stays asleep */
 	reset();
-	gpu("card0", "active\n");
-	gpuattr("card0", "gt_act_freq_mhz", "390\n");
-	gpuattr("card0", "gt_max_freq_mhz", "1300\n");
+	intel("card0", "active\n");
+	counters(0, 0, 0, 0, 1000);
 	gpu("card1", "suspended\n");
 	gpuattr("card1", "device/gpu_busy_percent", "80\n");
-	EXPECTGPU(30, 2, 0, "an awake Intel GPU beside a suspended amdgpu");
+	fds = openfds();
+	sensors_init(&s);
+	sensors_findgpus(&s, sys);
+	EXPECTREAD(&s, 0, 4, 4, "an awake Intel GPU's first reading beside a suspended amdgpu");
+	counters(300, 0, 0, 0, 2000);
+	EXPECTREAD(&s, 30, 0, 4, "an awake Intel GPU beside a suspended amdgpu");
 	gpu("card1", "active\n");
-	EXPECTGPU(80, 3, 0, "two awake GPUs");
+	counters(600, 0, 0, 0, 3000);
+	EXPECTREAD(&s, 80, 0, 5, "two awake GPUs");
 	busy = "gpu_busy_percent";
-	EXPECTGPU(30, 3, 1, "a GPU failing with EBUSY beside one that is read");
+	counters(900, 0, 0, 0, 4000);
+	EXPECTREAD(&s, 30, 0, 5, "a GPU failing with EBUSY beside one that is read");
+	CHECK(s.gpustale, "a GPU failing with EBUSY was not looked for again");
 	busy = NULL;
 	gpu("card0", "suspended\n");
 	gpu("card1", "suspended\n");
-	EXPECTGPU(0, 0, 0, "every GPU suspended");
+	EXPECTREAD(&s, 0, 0, 0, "every GPU suspended");
+	reset();
+	sensors_findgpus(&s, sys);
+	CHECK(openfds() == fds, "the hybrid laptop's counters were not closed");
+	perfdir[0] = '\0';
 
 	/* more cards than are read: the first ones by number */
 	reset();
@@ -1011,9 +1337,7 @@ test_gpus(void)
 	reset();
 	gpu("card0", "active\n");
 	gpuattr("card0", "device/gpu_busy_percent", "37\n");
-	gpu("card1", "suspended\n");
-	gpuattr("card1", "gt_act_freq_mhz", "0\n");
-	gpuattr("card1", "gt_max_freq_mhz", "1300\n");
+	intel("card1", "suspended\n");
 	gpuattr("card0", "device/power/autosuspend_delay_ms", "5000\n");
 	gpuattr("card1", "device/power/autosuspend_delay_ms", "10000\n");
 	sensors_init(&s);
