@@ -1026,7 +1026,7 @@ test_sysmon_text(void)
 		{ -1, -1, 0, { 0 }, 0, 0, "CPU   -   GPU   0%", "CPU 100%  GPU 100%" },
 		{ 42, 55, 0, { 0 }, -1, 3, "CPU  42%  55°C  GPU   - ", "CPU 100% 100°C  GPU 100%" },
 	};
-	char text[128], widest[128], cpu[64], rest[64], gpu[64];
+	char cpu[64], rest[64], gpu[64], text[3 * 64], widest[3 * 64];
 	size_t i;
 
 	for (i = 0; i < LENGTH(cases); i++) {

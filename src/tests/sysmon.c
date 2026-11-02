@@ -1097,7 +1097,7 @@ gpusample(int *reads, int *stale)
 } while (0)
 
 /*
- * The GPU usage: amdgpu's busy share and Intel's frequency, read only while
+ * The GPU usage: amdgpu's busy share and Intel's engine busy counters, read only while
  * the GPU is awake, idle without a read while it is suspended, nothing when a
  * read fails or there is no GPU, and never more often than the GPU takes to
  * suspend after a read.
@@ -1465,6 +1465,19 @@ test_gpus(void)
 	reset();
 	sensors_findgpus(&s, sys);
 	CHECK(openfds() == fds, "the hybrid laptop's counters were not closed");
+	/* the other way round: an Intel GPU that just woke up, listed after an awake amdgpu, hides nothing */
+	gpu("card0", "active\n");
+	gpuattr("card0", "device/gpu_busy_percent", "80\n");
+	intel("card1", "suspended\n");
+	counters(0, 0, 0, 0, 1000);
+	sensors_init(&s);
+	sensors_startgpus(&s, sys, 0);
+	EXPECTREAD(&s, 80, 0, 1, "an awake amdgpu beside a suspended Intel GPU after it");
+	gpu("card1", "active\n");
+	EXPECTREAD(&s, 80, 0, 5, "an awake amdgpu beside an Intel GPU after it that just woke up");
+	reset();
+	sensors_findgpus(&s, sys);
+	CHECK(openfds() == fds, "the counters of the Intel GPU after the amdgpu were not closed");
 	perfdir[0] = '\0';
 
 	/* the sampler gives up every capability for good once its counters are open */

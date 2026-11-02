@@ -164,7 +164,8 @@ not used; a discrete card's PMU named after its PCI device beside the
 integrated one's, and a cpumask range or none),
 a hybrid laptop (the busier GPU, the suspended one idle and not read, one
 failing with EBUSY beside one read, an awake one beside a suspended Intel GPU,
-and a pending Intel GPU beside a suspended one), `CAP_PERFMON` made effective
+a pending Intel GPU beside a suspended one, and an awake amdgpu listed before
+an Intel GPU that just woke up, whose pending reading hides nothing), `CAP_PERFMON` made effective
 once at the start when permitted, and, when it is not (a container, an old
 kernel), the counters not opened, the Intel GPU never shown and an amdgpu beside
 it, with the CPU, still read, giving up every capability for
