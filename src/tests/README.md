@@ -60,13 +60,6 @@ size, which any client can send, must leave the bar as it was.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 
-To also have AddressSanitizer check that dwm never reads past such a property,
-run the X11 checks with an instrumented build:
-
-```sh
-CC='cc -fsanitize=address' ASAN_OPTIONS=detect_leaks=0 sh src/tests/x11.sh "$PWD"
-```
-
 The Xlib client waits for the production `transient.c` window to be managed
 before it creates its tiled window; this order is deliberate, so the tiled
 window is always the newest, selected client for the bar checks.
