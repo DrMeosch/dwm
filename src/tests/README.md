@@ -5,7 +5,9 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
-refusing scratchpad-only tag views, rejecting Xresources strings that exceed
+refusing scratchpad-only tag views, reading the parent of a process from
+`/proc/<pid>/stat` for swallowing when the process names itself with spaces
+and parentheses, rejecting Xresources strings that exceed
 their buffer, keeping the selected-tag font set disabled for an empty or NULL
 `selfontweight`, parsing, measuring and click mapping of status2d codes with
 every truncated, malformed or out-of-range form falling back to plain text,
@@ -46,8 +48,21 @@ beyond 16-bit X11 coordinates are not drawn, and that the status background
 still covers the bar), a `dwm.color<n>` palette change
 followed by SIGUSR2 and a malformed palette value keeping its default,
 MapRequest, tiled and floating ConfigureRequest handling, ConfigureNotify
-delivery, and transient-window placement. Autostart is disabled
-only in the `dwm` test build, so no configured desktop command is launched.
+delivery, transient-window placement, and `_NET_WM_STATE` read only as a
+32-bit ATOM: a 32-bit `_NET_WM_STATE_FULLSCREEN` makes a window fullscreen,
+while 8-bit data holding the bytes of that atom, or a single byte, does not.
+Negative size hints (minimum, maximum, increment and zero aspect) must leave a
+floating window at its requested size, and a root ConfigureNotify without a
+size, which any client can send, must leave the bar as it was.
+Autostart is disabled only in the `dwm` test build, so no configured desktop
+command is launched.
+
+To also have AddressSanitizer check that dwm never reads past such a property,
+run the X11 checks with an instrumented build:
+
+```sh
+CC='cc -fsanitize=address' ASAN_OPTIONS=detect_leaks=0 sh src/tests/x11.sh "$PWD"
+```
 
 The Xlib client waits for the production `transient.c` window to be managed
 before it creates its tiled window; this order is deliberate, so the tiled
@@ -169,8 +184,8 @@ an Intel GPU that just woke up, whose pending reading hides nothing), `CAP_PERFM
 once at the start when permitted, and, when it is not (a container, an old
 kernel), the counters not opened, the Intel GPU never shown and an amdgpu beside
 it, with the CPU, still read, giving up every capability for
-good (`capset` asked to clear them all, and `NoNewPrivs` set in
-`/proc/self/status`), more cards than are read, the
+good (`capset` asked to clear them all, and `NoNewPrivs` set and no ambient
+capability left in `/proc/self/status`, also when the check runs as root), more cards than are read, the
 delay between reads (never within the longest autosuspend delay of the GPUs
 plus a second, a delay that cannot be read or is negative, the sampler's
 interval at least, 5% of the time for slow reads, no overflow), the history and
