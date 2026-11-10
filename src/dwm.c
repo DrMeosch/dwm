@@ -1676,7 +1676,7 @@ manage(Window w, XWindowAttributes *wa)
 				if (*data & TAGMASK)
 					c->tags = *data & TAGMASK;
 				for (m = mons; m; m = m->next) {
-					if (m->num == *(data+1)) {
+					if ((unsigned long)m->num == *(data+1)) {
 						c->mon = m;
 						break;
 					}
