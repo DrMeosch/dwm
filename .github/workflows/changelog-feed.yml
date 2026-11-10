@@ -9,11 +9,6 @@ on:
 
 permissions: {}
 
-# one post at a time, so two merges close together cannot both create the issue
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 jobs:
   post:
     if: github.event.pull_request.merged == true

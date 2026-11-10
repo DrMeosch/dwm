@@ -156,7 +156,7 @@ fi
 "$tmp/transient" >"$tmp/transient.log" 2>&1 &
 transient_pid=$!
 "$tmp/x11"
-# a format-8 _NET_WM_STATE is never read as an atom, nor past its end
+# a format-8 _NET_WM_STATE or _NET_CLIENT_INFO is never read as 32-bit data, nor past its end
 "$tmp/x11" atom-format
 # negative size hints and a sizeless root ConfigureNotify must not break dwm
 "$tmp/x11" malformed-geometry

@@ -1671,17 +1671,20 @@ manage(Window w, XWindowAttributes *wa)
 		Monitor *m;
 		Atom atom;
 		if (XGetWindowProperty(dpy, c->win, netatom[NetClientInfo], 0L, 2L, False, XA_CARDINAL,
-				&atom, &format, &n, &extra, (unsigned char **)&data) == Success && n == 2) {
-			c->tags = *data;
-			for (m = mons; m; m = m->next) {
-				if (m->num == *(data+1)) {
-					c->mon = m;
-					break;
+				&atom, &format, &n, &extra, (unsigned char **)&data) == Success) {
+			if (format == 32 && n == 2) {
+				if (*data & TAGMASK)
+					c->tags = *data & TAGMASK;
+				for (m = mons; m; m = m->next) {
+					if (m->num == *(data+1)) {
+						c->mon = m;
+						break;
+					}
 				}
 			}
+			if (data)
+				XFree(data);
 		}
-		if (n > 0)
-			XFree(data);
 	}
 	setclienttagprop(c);
 

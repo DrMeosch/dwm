@@ -51,6 +51,9 @@ MapRequest, tiled and floating ConfigureRequest handling, ConfigureNotify
 delivery, transient-window placement, and `_NET_WM_STATE` read only as a
 32-bit ATOM: a 32-bit `_NET_WM_STATE_FULLSCREEN` makes a window fullscreen,
 while 8-bit data holding the bytes of that atom, or a single byte, does not.
+`_NET_CLIENT_INFO` set before a window maps is likewise read only as two
+32-bit CARDINALs: 8-bit data leaves the window shown on the current tags, tags
+outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.

@@ -556,6 +556,75 @@ check_atom_format(Display *dpy, Window root)
 }
 
 /*
+ * Map a window whose _NET_CLIENT_INFO is set with the given format and data,
+ * and return the tags dwm wrote back when it managed the window, or 0 when it
+ * did not write them back as two 32-bit CARDINALs. dwm keeps windows on hidden
+ * tags mapped but off the left edge, so shown means on the screen.
+ */
+static unsigned long
+mapped_client_tags(Display *dpy, Window root, const char *name, int format,
+                   const unsigned char *data, int n, int *shown)
+{
+	Atom info = XInternAtom(dpy, "_NET_CLIENT_INFO", False), type;
+	XWindowAttributes wa;
+	Window win;
+	unsigned long nitems, after, tags = 0;
+	unsigned char *p = NULL;
+	int actual = 0, i;
+
+	win = XCreateSimpleWindow(dpy, root, 40, 40, 300, 200, 0, 0, 0);
+	XStoreName(dpy, win, name);
+	XChangeProperty(dpy, win, info, XA_CARDINAL, format, PropModeReplace, data, n);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	/* dwm writes the tags back before it maps the window */
+	CHECK(wait_viewable(dpy, win, 40), "MapRequest was not dispatched for %s", name);
+	if (XGetWindowProperty(dpy, win, info, 0, 2, False, XA_CARDINAL, &type, &actual,
+	                       &nitems, &after, &p) == Success && p) {
+		if (actual == 32 && nitems == 2)
+			tags = ((unsigned long *)p)[0];
+		XFree(p);
+	}
+	*shown = 0;
+	for (i = 0; i < 20 && !*shown; i++) {
+		*shown = XGetWindowAttributes(dpy, win, &wa) && wa.x >= 0
+		      && wa.x < DisplayWidth(dpy, DefaultScreen(dpy));
+		if (!*shown)
+			pause_millis(25);
+	}
+	XDestroyWindow(dpy, win);
+	XSync(dpy, False);
+	return tags;
+}
+
+/*
+ * dwm restores tags and monitor from _NET_CLIENT_INFO, which a client may set
+ * before it maps: only two 32-bit CARDINALs are read, and tags outside the
+ * tag mask are dropped, so the window still lands on a tag.
+ */
+static void
+check_client_info(Display *dpy, Window root)
+{
+	unsigned char bytes[2] = { 0, 0 };
+	long outside[2] = { 1L << 20, 0 }, second[2] = { 1L << 1, 0 };
+	unsigned long tags;
+	int shown;
+
+	tags = mapped_client_tags(dpy, root, "client-info-8", 8, bytes, 2, &shown);
+	CHECK(shown && tags, "an 8-bit _NET_CLIENT_INFO left the window on tags %#lx%s",
+	      tags, shown ? "" : ", not shown");
+	tags = mapped_client_tags(dpy, root, "client-info-outside", 32,
+	                          (unsigned char *)outside, 2, &shown);
+	CHECK(shown && tags && !(tags & outside[0]),
+	      "_NET_CLIENT_INFO tags outside the tag mask left the window on tags %#lx%s",
+	      tags, shown ? "" : ", not shown");
+	tags = mapped_client_tags(dpy, root, "client-info-32", 32,
+	                          (unsigned char *)second, 2, &shown);
+	CHECK(tags == (unsigned long)second[0],
+	      "a 32-bit _NET_CLIENT_INFO on tag 2 was restored as tags %#lx", tags);
+}
+
+/*
  * Geometry a client controls must not break dwm: negative size hints on a
  * floating window are no limit, and a ConfigureNotify for the root window
  * with no size, which any client can send, is ignored.
@@ -649,9 +718,10 @@ main(int argc, char *argv[])
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
-	/* x11 atom-format: _NET_WM_STATE is used only as a 32-bit ATOM */
+	/* x11 atom-format: _NET_WM_STATE and _NET_CLIENT_INFO are read only as 32-bit data */
 	if (argc == 2 && !strcmp(argv[1], "atom-format")) {
 		check_atom_format(dpy, root);
+		check_client_info(dpy, root);
 		XCloseDisplay(dpy);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
