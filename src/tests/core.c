@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -551,6 +554,37 @@ test_process_helpers(void)
 	      "isdescprocess accepted an ancestor in the wrong direction");
 	CHECK(getparentprocess((pid_t)-1) == 0,
 	      "getparentprocess accepted an invalid pid");
+#ifdef __linux__
+	/* a process names itself: spaces and parentheses in its name, which
+	 * /proc/<pid>/stat shows in parentheses, must not move the fields after it */
+	{
+		int ready[2];
+		pid_t child = -1;
+		char c;
+
+		if (pipe(ready) == 0) {
+			if ((child = fork()) == 0) {
+				prctl(PR_SET_NAME, "x) R 1 (y", 0, 0, 0);
+				if (write(ready[1], "", 1) == 1)
+					pause();
+				_exit(0);
+			}
+			if (child > 0 && read(ready[0], &c, 1) == 1)
+				CHECK(getparentprocess(child) == getpid(),
+				      "a name with spaces and parentheses gave parent %d (expected %d)",
+				      (int)getparentprocess(child), (int)getpid());
+			else
+				CHECK(0, "the named child did not start");
+			if (child > 0) {
+				kill(child, SIGKILL);
+				waitpid(child, NULL, 0);
+			}
+			close(ready[0]);
+			close(ready[1]);
+		} else
+			CHECK(0, "could not create the pipe for the named child");
+	}
+#endif
 }
 
 static void

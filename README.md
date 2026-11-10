@@ -1,6 +1,6 @@
 # dwm (DrMeosch's build)
 
-DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm), with Xresources-driven theming and live dark/light reload. Security fixes from versions 6.6-6.8 are backported.
+DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm), with Xresources-driven theming and live dark/light reload. Security fixes from versions 6.6-6.8, and later upstream robustness fixes, are backported.
 
 ## Features
 

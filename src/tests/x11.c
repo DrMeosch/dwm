@@ -1,3 +1,4 @@
+#include <X11/Xatom.h>
 #include <X11/Xlib.h>
 #include <X11/Xft/Xft.h>
 #include <X11/Xutil.h>
@@ -498,6 +499,178 @@ check_status_colors(Display *dpy, Window root)
 	      "the palette status was not drawn");
 }
 
+/*
+ * Map a window whose _NET_WM_STATE is set with the given format and data, and
+ * report whether dwm made it fullscreen: it covers the screen, and dwm wrote
+ * the state back as a 32-bit ATOM.
+ */
+static int
+mapped_fullscreen(Display *dpy, Window root, const char *name, int format,
+                  const unsigned char *data, int n)
+{
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False), type;
+	XWindowAttributes wa;
+	Window win;
+	unsigned long nitems, after;
+	unsigned char *p = NULL;
+	int actual = 0, full;
+
+	win = XCreateSimpleWindow(dpy, root, 40, 40, 300, 200, 0, 0, 0);
+	XStoreName(dpy, win, name);
+	XChangeProperty(dpy, win, state, XA_ATOM, format, PropModeReplace, data, n);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	/* dwm reads the state before it maps the window */
+	CHECK(wait_viewable(dpy, win, 40), "MapRequest was not dispatched for %s", name);
+	full = XGetWindowAttributes(dpy, win, &wa)
+	    && wa.x == 0 && wa.y == 0 && wa.border_width == 0
+	    && wa.width == DisplayWidth(dpy, DefaultScreen(dpy))
+	    && wa.height == DisplayHeight(dpy, DefaultScreen(dpy));
+	if (XGetWindowProperty(dpy, win, state, 0, 1, False, XA_ATOM, &type, &actual,
+	                       &nitems, &after, &p) == Success && p)
+		XFree(p);
+	XDestroyWindow(dpy, win);
+	XSync(dpy, False);
+	return full && actual == 32;
+}
+
+/*
+ * dwm reads _NET_WM_STATE and _NET_WM_WINDOW_TYPE as one 32-bit ATOM, which a
+ * client may set with another format: 8-bit data holding the bytes of an atom
+ * must not be taken for it, and a single byte must not be read past.
+ */
+static void
+check_atom_format(Display *dpy, Window root)
+{
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	unsigned char bytes[sizeof fullscreen], one = 0;
+
+	CHECK(mapped_fullscreen(dpy, root, "atom-format-32", 32,
+	                        (unsigned char *)&fullscreen, 1),
+	      "a 32-bit _NET_WM_STATE_FULLSCREEN did not make the window fullscreen");
+	memcpy(bytes, &fullscreen, sizeof bytes);
+	CHECK(!mapped_fullscreen(dpy, root, "atom-format-8", 8, bytes, sizeof bytes),
+	      "the bytes of _NET_WM_STATE_FULLSCREEN in 8-bit data were taken for the atom");
+	CHECK(!mapped_fullscreen(dpy, root, "atom-format-8-short", 8, &one, 1),
+	      "a one-byte 8-bit _NET_WM_STATE made the window fullscreen");
+}
+
+/*
+ * Map a window whose _NET_CLIENT_INFO is set with the given format and data,
+ * and return the tags dwm wrote back when it managed the window, or 0 when it
+ * did not write them back as two 32-bit CARDINALs. dwm keeps windows on hidden
+ * tags mapped but off the left edge, so shown means on the screen.
+ */
+static unsigned long
+mapped_client_tags(Display *dpy, Window root, const char *name, int format,
+                   const unsigned char *data, int n, int *shown)
+{
+	Atom info = XInternAtom(dpy, "_NET_CLIENT_INFO", False), type;
+	XWindowAttributes wa;
+	Window win;
+	unsigned long nitems, after, tags = 0;
+	unsigned char *p = NULL;
+	int actual = 0, i;
+
+	win = XCreateSimpleWindow(dpy, root, 40, 40, 300, 200, 0, 0, 0);
+	XStoreName(dpy, win, name);
+	XChangeProperty(dpy, win, info, XA_CARDINAL, format, PropModeReplace, data, n);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	/* dwm writes the tags back before it maps the window */
+	CHECK(wait_viewable(dpy, win, 40), "MapRequest was not dispatched for %s", name);
+	if (XGetWindowProperty(dpy, win, info, 0, 2, False, XA_CARDINAL, &type, &actual,
+	                       &nitems, &after, &p) == Success && p) {
+		if (actual == 32 && nitems == 2)
+			tags = ((unsigned long *)p)[0];
+		XFree(p);
+	}
+	*shown = 0;
+	for (i = 0; i < 20 && !*shown; i++) {
+		*shown = XGetWindowAttributes(dpy, win, &wa) && wa.x >= 0
+		      && wa.x < DisplayWidth(dpy, DefaultScreen(dpy));
+		if (!*shown)
+			pause_millis(25);
+	}
+	XDestroyWindow(dpy, win);
+	XSync(dpy, False);
+	return tags;
+}
+
+/*
+ * dwm restores tags and monitor from _NET_CLIENT_INFO, which a client may set
+ * before it maps: only two 32-bit CARDINALs are read, and tags outside the
+ * tag mask are dropped, so the window still lands on a tag.
+ */
+static void
+check_client_info(Display *dpy, Window root)
+{
+	unsigned char bytes[2] = { 0, 0 };
+	long outside[2] = { 1L << 20, 0 }, second[2] = { 1L << 1, 0 };
+	unsigned long tags;
+	int shown;
+
+	tags = mapped_client_tags(dpy, root, "client-info-8", 8, bytes, 2, &shown);
+	CHECK(shown && tags, "an 8-bit _NET_CLIENT_INFO left the window on tags %#lx%s",
+	      tags, shown ? "" : ", not shown");
+	tags = mapped_client_tags(dpy, root, "client-info-outside", 32,
+	                          (unsigned char *)outside, 2, &shown);
+	CHECK(shown && tags && !(tags & outside[0]),
+	      "_NET_CLIENT_INFO tags outside the tag mask left the window on tags %#lx%s",
+	      tags, shown ? "" : ", not shown");
+	tags = mapped_client_tags(dpy, root, "client-info-32", 32,
+	                          (unsigned char *)second, 2, &shown);
+	CHECK(tags == (unsigned long)second[0],
+	      "a 32-bit _NET_CLIENT_INFO on tag 2 was restored as tags %#lx", tags);
+}
+
+/*
+ * Geometry a client controls must not break dwm: negative size hints on a
+ * floating window are no limit, and a ConfigureNotify for the root window
+ * with no size, which any client can send, is ignored.
+ */
+static void
+check_malformed_geometry(Display *dpy, Window root)
+{
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	XSizeHints *hints = XAllocSizeHints();
+	XWindowAttributes wa = {0}, bar;
+	XEvent ev;
+	Window win;
+
+	win = XCreateSimpleWindow(dpy, root, 40, 40, 300, 200, 0, 0, 0);
+	XStoreName(dpy, win, "negative-size-hints");
+	XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+	                (unsigned char *)&dialog, 1);
+	if (hints) {
+		hints->flags = PMinSize | PMaxSize | PResizeInc | PAspect;
+		hints->min_width = hints->min_height = -40;
+		hints->max_width = hints->max_height = -5;
+		hints->width_inc = hints->height_inc = -3;
+		hints->min_aspect.x = hints->min_aspect.y = 0;
+		hints->max_aspect.x = hints->max_aspect.y = 0;
+		XSetWMNormalHints(dpy, win, hints);
+		XFree(hints);
+	}
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	CHECK(wait_viewable(dpy, win, 40), "a window with negative size hints was not managed");
+	CHECK(XGetWindowAttributes(dpy, win, &wa) && wa.width == 300 && wa.height == 200,
+	      "negative size hints resized a floating window to %dx%d", wa.width, wa.height);
+	XDestroyWindow(dpy, win);
+	XSync(dpy, False);
+
+	memset(&ev, 0, sizeof ev);
+	ev.xconfigure.type = ConfigureNotify;
+	ev.xconfigure.event = ev.xconfigure.window = root;
+	XSendEvent(dpy, root, False, StructureNotifyMask, &ev);
+	XSync(dpy, False);
+	pause_millis(200);
+	CHECK(find_bar(dpy, root, &bar) != None,
+	      "a root ConfigureNotify without a size changed the bar");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -541,6 +714,21 @@ main(int argc, char *argv[])
 		                                    DisplayWidth(dpy, DefaultScreen(dpy)) - 400, want, NULL);
 
 		CHECK(count == want, "the bar shows %u pixels of %s (expected %u)", count, argv[2], want);
+		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 atom-format: _NET_WM_STATE and _NET_CLIENT_INFO are read only as 32-bit data */
+	if (argc == 2 && !strcmp(argv[1], "atom-format")) {
+		check_atom_format(dpy, root);
+		check_client_info(dpy, root);
+		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 malformed-geometry: client-set sizes are checked before dwm uses them */
+	if (argc == 2 && !strcmp(argv[1], "malformed-geometry")) {
+		check_malformed_geometry(dpy, root);
 		XCloseDisplay(dpy);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}

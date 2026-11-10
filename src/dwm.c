@@ -41,7 +41,6 @@
 #include <X11/Xproto.h>
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
-#include <X11/Xresource.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
@@ -766,6 +765,9 @@ configurenotify(XEvent *e)
 
 	/* TODO: updategeom handling sucks, needs to be simplified */
 	if (ev->window == root) {
+		if (ev->width <= 0 || ev->height <= 0)
+			return;
+
 		dirty = (sw != ev->width || sh != ev->height);
 		sw = ev->width;
 		sh = ev->height;
@@ -1263,13 +1265,11 @@ drawbar(Monitor *m)
 	if(!m->showbar)
 		return;
 
-	/* draw status first so it can be overdrawn by tags later */
-	if (m == selmon || 1) { /* status is only drawn on selected monitor */
-		tw = drawstatus(stext, strlen(stext), 0, 0) + 2; /* 2px right padding */
-		drw_setscheme(drw, scheme[SchemeStatus]);
-		drw_rect(drw, MAX(0, m->ww - tw), 0, MIN(tw, m->ww), bh, 1, 1); /* X11 coordinates are 16-bit */
-		drawstatus(stext, strlen(stext), m->ww - tw, 1);
-	}
+	/* draw status first so it can be overdrawn by tags later; every monitor shows it */
+	tw = drawstatus(stext, strlen(stext), 0, 0) + 2; /* 2px right padding */
+	drw_setscheme(drw, scheme[SchemeStatus]);
+	drw_rect(drw, MAX(0, m->ww - tw), 0, MIN(tw, m->ww), bh, 1, 1); /* X11 coordinates are 16-bit */
+	drawstatus(stext, strlen(stext), m->ww - tw, 1);
 
 	for (c = m->clients; c; c = c->next) {
 		occ |= c->tags == 255 ? 0 : c->tags;
@@ -1439,15 +1439,15 @@ focusstack(const Arg *arg)
 Atom
 getatomprop(Client *c, Atom prop)
 {
-	int di;
+	int format;
 	unsigned long nitems, dl;
 	unsigned char *p = NULL;
 	Atom da, atom = None;
 
 	if (XGetWindowProperty(dpy, c->win, prop, 0L, sizeof atom, False, XA_ATOM,
-		&da, &di, &nitems, &dl, &p) == Success && p) {
-		if (nitems > 0)
-			atom = *(Atom *)p;
+		&da, &format, &nitems, &dl, &p) == Success && p) {
+		if (nitems > 0 && format == 32)
+			atom = *(long *)p;
 		XFree(p);
 	}
 	return atom;
@@ -1492,10 +1492,10 @@ getstate(Window w)
 	Atom real;
 
 	if (XGetWindowProperty(dpy, w, wmatom[WMState], 0L, 2L, False, wmatom[WMState],
-		&real, &format, &n, &extra, (unsigned char **)&p) != Success)
+		&real, &format, &n, &extra, &p) != Success)
 		return -1;
-	if (n != 0)
-		result = *p;
+	if (n != 0 && format == 32)
+		result = *(long *)p;
 	XFree(p);
 	return result;
 }
@@ -1671,17 +1671,20 @@ manage(Window w, XWindowAttributes *wa)
 		Monitor *m;
 		Atom atom;
 		if (XGetWindowProperty(dpy, c->win, netatom[NetClientInfo], 0L, 2L, False, XA_CARDINAL,
-				&atom, &format, &n, &extra, (unsigned char **)&data) == Success && n == 2) {
-			c->tags = *data;
-			for (m = mons; m; m = m->next) {
-				if (m->num == *(data+1)) {
-					c->mon = m;
-					break;
+				&atom, &format, &n, &extra, (unsigned char **)&data) == Success) {
+			if (format == 32 && n == 2) {
+				if (*data & TAGMASK)
+					c->tags = *data & TAGMASK;
+				for (m = mons; m; m = m->next) {
+					if ((unsigned long)m->num == *(data+1)) {
+						c->mon = m;
+						break;
+					}
 				}
 			}
+			if (data)
+				XFree(data);
 		}
-		if (n > 0)
-			XFree(data);
 	}
 	setclienttagprop(c);
 
@@ -2552,7 +2555,7 @@ toggleview(const Arg *arg)
 		}
 
 		/* test if the user did not select the same tag */
-		if (!(newtagset & 1 << (selmon->pertag->curtag - 1))) {
+		if (!selmon->pertag->curtag || !(newtagset & 1 << (selmon->pertag->curtag - 1))) {
 			selmon->pertag->prevtag = selmon->pertag->curtag;
 			for (i = 0; !(newtagset & 1 << i); i++) ;
 			selmon->pertag->curtag = i + 1;
@@ -2778,7 +2781,8 @@ updatenumlockmask(void)
 	XModifierKeymap *modmap;
 
 	numlockmask = 0;
-	modmap = XGetModifierMapping(dpy);
+	if (!(modmap = XGetModifierMapping(dpy)))
+		return;
 	for (i = 0; i < 8; i++)
 		for (j = 0; j < modmap->max_keypermod; j++)
 			if (modmap->modifiermap[i * modmap->max_keypermod + j]
@@ -2797,37 +2801,38 @@ updatesizehints(Client *c)
 		/* size is uninitialized, ensure that size.flags aren't used */
 		size.flags = PSize;
 	if (size.flags & PBaseSize) {
-		c->basew = size.base_width;
-		c->baseh = size.base_height;
+		c->basew = MAX(0, size.base_width);
+		c->baseh = MAX(0, size.base_height);
 	} else if (size.flags & PMinSize) {
-		c->basew = size.min_width;
-		c->baseh = size.min_height;
+		c->basew = MAX(0, size.min_width);
+		c->baseh = MAX(0, size.min_height);
 	} else
 		c->basew = c->baseh = 0;
 	if (size.flags & PResizeInc) {
-		c->incw = size.width_inc;
-		c->inch = size.height_inc;
+		c->incw = MAX(0, size.width_inc);
+		c->inch = MAX(0, size.height_inc);
 	} else
 		c->incw = c->inch = 0;
 	if (size.flags & PMaxSize) {
-		c->maxw = size.max_width;
-		c->maxh = size.max_height;
+		c->maxw = MAX(0, size.max_width);
+		c->maxh = MAX(0, size.max_height);
 	} else
 		c->maxw = c->maxh = 0;
 	if (size.flags & PMinSize) {
-		c->minw = size.min_width;
-		c->minh = size.min_height;
+		c->minw = MAX(0, size.min_width);
+		c->minh = MAX(0, size.min_height);
 	} else if (size.flags & PBaseSize) {
-		c->minw = size.base_width;
-		c->minh = size.base_height;
+		c->minw = MAX(0, size.base_width);
+		c->minh = MAX(0, size.base_height);
 	} else
 		c->minw = c->minh = 0;
-	if (size.flags & PAspect) {
+	if ((size.flags & PAspect) && size.min_aspect.x > 0 && size.max_aspect.y > 0) {
 		c->mina = (float)size.min_aspect.y / size.min_aspect.x;
 		c->maxa = (float)size.max_aspect.x / size.max_aspect.y;
 	} else
 		c->maxa = c->mina = 0.0;
 	c->isfixed = (c->maxw && c->maxh && c->maxw == c->minw && c->maxh == c->minh);
+	c->hintsvalid = 1;
 }
 
 void
@@ -3059,14 +3064,16 @@ getparentprocess(pid_t p)
 
 #if defined(__linux__)
 	FILE *f;
-	char buf[256];
+	char buf[256], *s;
 	snprintf(buf, sizeof(buf) - 1, "/proc/%u/stat", (unsigned)p);
 
 	if (!(f = fopen(buf, "r")))
 		return (pid_t)0;
 
-	if (fscanf(f, "%*u %*s %*c %u", (unsigned *)&v) != 1)
-		v = (pid_t)0;
+	/* the name in parentheses may hold spaces and ')': read after the last one */
+	if (!fgets(buf, sizeof buf, f) || !(s = strrchr(buf, ')'))
+	|| sscanf(s + 1, " %*c %u", &v) != 1)
+		v = 0;
 	fclose(f);
 #elif defined(__FreeBSD__)
 	struct kinfo_proc *proc = kinfo_getproc(p);
