@@ -1484,24 +1484,28 @@ test_gpus(void)
 	{
 		char line[128];
 		FILE *fp;
-		int nnp = -1, caps = 0;
+		int nnp = -1, amb = 0; /* older kernels have no ambient set */
 
 		int before = capsets;
 
 		CHECK(sensors_dropcaps() == 0, "dropping the capabilities failed");
 		CHECK(capsets == before + 1 && capsetzero && !capeff && !capperm,
 		      "the capabilities were not all cleared (%d capset calls)", capsets - before);
+		/*
+		 * capset is the fake one, so the inheritable, permitted and effective
+		 * sets of this process are whatever it started with (all of them when
+		 * run as root); the ambient set and NoNewPrivs are really changed.
+		 */
 		if ((fp = fopen("/proc/self/status", "r"))) {
 			while (fgets(line, sizeof line, fp)) {
 				if (!strncmp(line, "NoNewPrivs:", 11))
 					nnp = atoi(line + 11);
-				if (!strncmp(line, "CapInh:", 7) || !strncmp(line, "CapPrm:", 7) || !strncmp(line, "CapEff:", 7)
-				|| !strncmp(line, "CapAmb:", 7))
-					caps += strtoull(line + 7, NULL, 16) != 0;
+				if (!strncmp(line, "CapAmb:", 7))
+					amb = strtoull(line + 7, NULL, 16) != 0;
 			}
 			fclose(fp);
 		}
-		CHECK(nnp == 1 && caps == 0, "the process can still gain privileges (NoNewPrivs %d) or holds %d capability sets", nnp, caps);
+		CHECK(nnp == 1 && amb == 0, "the process can still gain privileges (NoNewPrivs %d) or holds ambient capabilities (%d)", nnp, amb);
 	}
 
 	/* more cards than are read: the first ones by number */
