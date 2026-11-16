@@ -2531,13 +2531,16 @@ toggletag(const Arg *arg)
 static void
 applypertag(void)
 {
-	selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag];
-	selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag];
-	selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
-	selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
-	selmon->lt[selmon->sellt^1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt^1];
+	Pertag *p = selmon->pertag;
+	unsigned int tag = p->curtag;
 
-	if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
+	selmon->nmaster = p->nmasters[tag];
+	selmon->mfact = p->mfacts[tag];
+	selmon->sellt = p->sellts[tag];
+	selmon->lt[0] = p->ltidxs[tag][0];
+	selmon->lt[1] = p->ltidxs[tag][1];
+
+	if (selmon->showbar != p->showbars[tag])
 		togglebar(NULL);
 
 	focus(NULL);

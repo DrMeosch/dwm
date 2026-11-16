@@ -11,7 +11,8 @@ stack positions for previous selection, increments with wrapping, hidden and sti
 clients, missing selections and empty lists; monitor traversal in both directions
 and wrapping with one, two and three monitors,
 showing all monitors before arranging them, and restacking only when arranging
-one monitor, refusing scratchpad-only tag views, spawning a missing scratchpad
+one monitor, restoring both per-tag layout slots and master settings with either
+layout selected, refusing scratchpad-only tag views, spawning a missing scratchpad
 with empty or unrelated client lists using a spawn stub, reading the parent of a process from
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces
 and parentheses, rejecting Xresources strings that exceed

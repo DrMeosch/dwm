@@ -45,6 +45,8 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #define XChangeProperty record_changeproperty
 #define XSync record_sync
 #define XMoveWindow record_movewindow
+#define XSetInputFocus record_setinputfocus
+#define XDeleteProperty record_deleteproperty
 #define XConfigureWindow record_configurewindow
 #define XCheckMaskEvent record_checkmaskevent
 #define popen pidof_popen
@@ -59,6 +61,8 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #undef XCheckMaskEvent
 #undef XConfigureWindow
 #undef XMoveWindow
+#undef XSetInputFocus
+#undef XDeleteProperty
 #undef XSync
 #undef XChangeProperty
 #undef posix_spawnp
@@ -116,6 +120,20 @@ record_movewindow(Display *d, Window w, int x, int y)
 }
 
 int
+record_setinputfocus(Display *d, Window w, int revert, Time time)
+{
+	(void)d; (void)w; (void)revert; (void)time;
+	return 1;
+}
+
+int
+record_deleteproperty(Display *d, Window w, Atom property)
+{
+	(void)d; (void)w; (void)property;
+	return 1;
+}
+
+int
 record_configurewindow(Display *d, Window w, unsigned int mask, XWindowChanges *changes)
 {
 	(void)d; (void)mask; (void)changes;
@@ -156,6 +174,41 @@ free_monitor(Monitor *m)
 {
 	free(m->pertag);
 	free(m);
+}
+
+static void
+test_pertag_layout_slots(void)
+{
+	Monitor *m = createmon(), *saved_selmon = selmon, *saved_mons = mons;
+	Fnt font = {0};
+	Drw drawing = {.fonts = &font}, *saved_drw = drw;
+	unsigned int slot;
+
+	drw = &drawing;
+	selmon = m;
+	mons = NULL;
+	m->showbar = m->pertag->showbars[2] = 0;
+	m->pertag->curtag = 2;
+	m->pertag->nmasters[2] = 3;
+	m->pertag->mfacts[2] = 0.75f;
+	m->pertag->ltidxs[2][0] = &layouts[0];
+	m->pertag->ltidxs[2][1] = &layouts[1];
+	for (slot = 0; slot < 2; slot++) {
+		m->nmaster = 0;
+		m->mfact = 0.5f;
+		m->sellt = 1 - slot;
+		m->lt[0] = m->lt[1] = &layouts[8];
+		m->pertag->sellts[2] = slot;
+		applypertag();
+		CHECK(m->sellt == slot && m->lt[0] == &layouts[0] && m->lt[1] == &layouts[1],
+		      "per-tag restoration lost a layout slot with slot %u selected", slot);
+		CHECK(m->nmaster == 3 && m->mfact == 0.75f,
+		      "per-tag restoration lost the master settings");
+	}
+	selmon = saved_selmon;
+	mons = saved_mons;
+	drw = saved_drw;
+	free_monitor(m);
 }
 
 static void
@@ -1274,6 +1327,7 @@ main(void)
 	test_sysmon_box();
 	test_autostart_command();
 	test_sysmon_start();
+	test_pertag_layout_slots();
 	test_arrange_order();
 	test_createmon();
 	test_copyvalidchars();
