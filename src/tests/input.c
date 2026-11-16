@@ -188,6 +188,133 @@ test_click_replay(Display *dpy, Window root, int screen, KeyCode supercode,
 	return got_click && got_key;
 }
 
+typedef struct {
+	int x, y, w, h;
+} Geometry;
+
+static Geometry
+geometry(Display *dpy, Window win)
+{
+	XWindowAttributes a;
+	Geometry g = {0};
+
+	if (XGetWindowAttributes(dpy, win, &a))
+		g = (Geometry){a.x, a.y, a.width, a.height};
+	return g;
+}
+
+static int
+same_geometry(Geometry a, Geometry b)
+{
+	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+static int
+wait_geometry(Display *dpy, Window win, Geometry expected)
+{
+	int i;
+
+	for (i = 0; i < 80; i++) {
+		if (same_geometry(geometry(dpy, win), expected))
+			return 1;
+		pause_millis(25);
+	}
+	return 0;
+}
+
+static void
+key(Display *dpy, KeySym sym, KeySym modifier)
+{
+	KeyCode supercode = XKeysymToKeycode(dpy, XK_Super_L);
+	KeyCode modcode = modifier ? XKeysymToKeycode(dpy, modifier) : 0;
+	KeyCode code = XKeysymToKeycode(dpy, sym);
+
+	XTestFakeKeyEvent(dpy, supercode, True, CurrentTime);
+	if (modcode)
+		XTestFakeKeyEvent(dpy, modcode, True, CurrentTime);
+	XTestFakeKeyEvent(dpy, code, True, CurrentTime);
+	XTestFakeKeyEvent(dpy, code, False, CurrentTime);
+	if (modcode)
+		XTestFakeKeyEvent(dpy, modcode, False, CurrentTime);
+	XTestFakeKeyEvent(dpy, supercode, False, CurrentTime);
+	XFlush(dpy);
+}
+
+static void
+test_pertag_views(Display *dpy, Window root)
+{
+	Window a, b, c, d;
+	Geometry a1, b1, c2, d2;
+	int i;
+
+	a = create_client(dpy, root, "tag-one-a", 0);
+	CHECK(wait_active(dpy, root, a), "first tag-one client was not selected");
+	b = create_client(dpy, root, "tag-one-b", 0);
+	CHECK(wait_active(dpy, root, b), "second tag-one client was not selected");
+	key(dpy, XK_t, 0); /* tile, two masters, hidden bar */
+	key(dpy, XK_o, 0);
+	key(dpy, XK_b, 0);
+	for (i = 0; i < 80; i++) {
+		a1 = geometry(dpy, a);
+		b1 = geometry(dpy, b);
+		if (a1.w > 0 && a1.x == b1.x && a1.y != b1.y
+		&& (a1.y == 10 || b1.y == 10))
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "tag one did not arrange two masters vertically without a bar");
+
+	key(dpy, XK_2, 0);
+	c = create_client(dpy, root, "tag-two-c", 0);
+	CHECK(wait_active(dpy, root, c), "first tag-two client was not selected");
+	d = create_client(dpy, root, "tag-two-d", 0);
+	CHECK(wait_active(dpy, root, d), "second tag-two client was not selected");
+	key(dpy, XK_u, XK_Shift_L); /* monocle, visible bar */
+	for (i = 0; i < 80; i++) {
+		c2 = geometry(dpy, c);
+		d2 = geometry(dpy, d);
+		if (same_geometry(c2, d2) && c2.y > 10)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "tag two did not use monocle with the bar visible");
+
+	key(dpy, XK_1, 0);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "view did not restore tag-one layout, master count and bar");
+	key(dpy, XK_2, 0);
+	CHECK(wait_geometry(dpy, c, c2) && wait_geometry(dpy, d, d2),
+	      "view did not restore tag-two layout and bar");
+	key(dpy, XK_1, 0);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "view did not return to tag one");
+	key(dpy, XK_2, XK_Control_L); /* include tag two, keep tag one current */
+	key(dpy, XK_1, XK_Control_L); /* remove tag one, select tag two */
+	CHECK(wait_geometry(dpy, c, c2) && wait_geometry(dpy, d, d2),
+	      "toggleview did not restore tag-two layout and bar");
+	key(dpy, XK_1, XK_Control_L);
+	key(dpy, XK_2, XK_Control_L);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "toggleview did not restore tag-one layout, master count and bar");
+
+	/* Leave both tags with their default layout slots and the bar shown. */
+	key(dpy, XK_o, XK_Shift_L);
+	key(dpy, XK_b, 0);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_t, XK_Shift_L);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_2, 0);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_t, XK_Shift_L);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_1, 0);
+	XDestroyWindow(dpy, a);
+	XDestroyWindow(dpy, b);
+	XDestroyWindow(dpy, c);
+	XDestroyWindow(dpy, d);
+	XFlush(dpy);
+}
+
 int
 main(void)
 {
@@ -215,6 +342,7 @@ main(void)
 	if (supercode && qcode && jcode && acode) {
 		test_idle_close(dpy, root, supercode, qcode);
 		test_click_replay(dpy, root, DefaultScreen(dpy), supercode, jcode, acode);
+		test_pertag_views(dpy, root);
 	}
 	XCloseDisplay(dpy);
 	if (failures)

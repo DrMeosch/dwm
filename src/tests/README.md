@@ -34,7 +34,9 @@ also starts a private X server and the production `dwm` event loop. When the
 XTEST development files are available, an XTEST client checks that idle Mod+q
 delivers a WM_DELETE_WINDOW request without further input, and that a click on
 an unfocused client is replayed before subsequent typing; both deliveries must
-occur without an external wake. If the files are unavailable, this input
+occur without an external wake. It also switches between tags with different
+layouts, master counts and bar visibility, checking that both view and toggleview
+restore the windows' geometry. If the files are unavailable, this input
 regression check is reported as skipped. With the same files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
