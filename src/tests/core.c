@@ -346,7 +346,9 @@ test_createmon(void)
 static void
 test_copyvalidchars(void)
 {
-	char out[64];
+	char out[256];
+	unsigned char raw[256], expected[225];
+	int i;
 
 	copyvalidchars(out, "ok\tbad\n\r\001 done");
 	CHECK(strcmp(out, "okbad done") == 0,
@@ -354,6 +356,22 @@ test_copyvalidchars(void)
 	copyvalidchars(out, "utf-8: \303\251");
 	CHECK(strcmp(out, "utf-8: \303\251") == 0,
 	      "copyvalidchars damaged a non-ASCII byte sequence");
+	copyvalidchars(out, "\001\037");
+	CHECK(!out[0], "copyvalidchars did not empty a control-only status");
+	copyvalidchars(out, "");
+	CHECK(!out[0], "copyvalidchars did not empty an empty status");
+	for (i = 1; i <= 255; i++)
+		raw[i - 1] = i;
+	raw[255] = 0;
+	for (i = 32; i <= 255; i++)
+		expected[i - 32] = i;
+	expected[224] = 0;
+	copyvalidchars(out, (char *)raw);
+	CHECK(!memcmp(out, expected, sizeof expected),
+	      "copyvalidchars did not preserve every non-control byte");
+	copyvalidchars((char *)raw, (char *)raw);
+	CHECK(!memcmp(raw, expected, sizeof expected),
+	      "copyvalidchars did not filter in place");
 }
 
 /* statuscode() must never read past the n bytes it is given */

@@ -18,8 +18,9 @@ with empty or unrelated client lists using a spawn stub, reading the parent of a
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces
 and parentheses, rejecting Xresources strings that exceed
 their buffer, keeping the selected-tag font set disabled for an empty or NULL
-`selfontweight`, parsing, measuring and click mapping of status2d codes with
-every truncated, malformed or out-of-range form falling back to plain text,
+`selfontweight`, filtering status bytes 1-31 while preserving all other non-NUL
+bytes, including in-place filtering, parsing, measuring and click mapping of
+status2d codes with every truncated, malformed or out-of-range form falling back to plain text,
 including malformed, adjacent and truncated codes in the same status,
 plus palette loading that accepts only exactly `#rrggbb`, status block mapping
 with unmarked text, consecutive markers, UTF-8 and an empty status, and finding

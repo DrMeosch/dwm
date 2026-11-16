@@ -202,7 +202,7 @@ static void clientmessage(XEvent *e);
 static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
-static void copyvalidchars(char *text, char *rawtext);
+static void copyvalidchars(char *text, const char *rawtext);
 static int validcolor(const char *s);
 static size_t statuscode(const char *s, size_t n);
 static Monitor *createmon(void);
@@ -836,16 +836,12 @@ configurerequest(XEvent *e)
 }
 
 void
-copyvalidchars(char *text, char *rawtext)
+copyvalidchars(char *text, const char *rawtext)
 {
-	int i = -1, j = 0;
-
-	while(rawtext[++i]) {
-		if ((unsigned char)rawtext[i] >= ' ') {
-			text[j++] = rawtext[i];
-		}
-	}
-	text[j] = '\0';
+	for (; *rawtext; rawtext++)
+		if ((unsigned char)*rawtext >= ' ')
+			*text++ = *rawtext;
+	*text = '\0';
 }
 
 Monitor *
