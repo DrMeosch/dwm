@@ -64,6 +64,7 @@ test_shiftview(void)
 {
 	Monitor m = {.tagset = {1, 1}};
 	Client occupied = {.tags = 4};
+	Client scratch = {.tags = SPTAGMASK | 2, .next = &occupied};
 	Arg arg;
 
 	m.clients = &occupied;
@@ -91,6 +92,35 @@ test_shiftview(void)
 	arg.i = 1;
 	shiftview(&arg);
 	CHECK(viewed == 2, "shiftview changed an empty view incorrectly: %u", viewed);
+
+	m.tagset[0] = 9;
+	shiftview(&arg);
+	CHECK(viewed == 3, "shiftview did not rotate a multi-tag view forward: %u", viewed);
+	arg.i = -1;
+	shiftview(&arg);
+	/* view() masks off high bits; the stub records the unmasked argument. */
+	CHECK(viewed == 76, "shiftview changed the raw backward multi-tag rotation: %u", viewed);
+
+	m.seltags = 1;
+	m.tagset[1] = 1;
+	occupied.tags = 4;
+	m.clients = &occupied;
+	arg.i = 2;
+	shiftview(&arg);
+	CHECK(viewed == 4, "shiftview did not use the selected tagset and forward step: %u", viewed);
+	arg.i = -2;
+	shiftview(&arg);
+	CHECK(viewed == 4, "shiftview did not use the selected tagset and backward step: %u", viewed);
+
+	m.clients = &scratch;
+	occupied.tags = 8;
+	arg.i = 1;
+	shiftview(&arg);
+	CHECK(viewed == 8, "shiftview treated a scratchpad client as an occupied tag: %u", viewed);
+	occupied.tags = 4;
+	arg.i = -1;
+	shiftview(&arg);
+	CHECK(viewed == 68, "shiftview changed the raw backward skip of vacant tags: %u", viewed);
 }
 
 static void
