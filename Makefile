@@ -14,7 +14,7 @@ all: dwm dwmsysmon
 	${CC} -c ${CFLAGS} $< -o $@
 
 src/borderwidth.o: src/borderwidth.h
-src/dwm.o: src/config.h src/config.mk src/borderwidth.h src/drw.h src/selborder.h src/sigusr2.h src/sysmon.h src/util.h
+src/dwm.o: src/config.h src/config.mk src/borderwidth.h src/drw.h src/selborder.h src/sigusr2.h src/sysmon.h src/util.h src/shiftview.c src/vanitygaps.c
 src/dwmsysmon.o: src/config.mk src/sensors.h src/sysmon.h
 src/sensors.o: src/config.mk src/sensors.h src/sysmon.h
 src/sysmon.o: src/config.mk src/sysmon.h

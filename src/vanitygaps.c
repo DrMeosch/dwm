@@ -161,20 +161,19 @@ getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc)
 	*nc = n;            // number of clients
 }
 
+/* n is the tiled-client count from getgaps. */
 void
-getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr, int *sr)
+getfacts(Monitor *m, unsigned int n, int msize, int ssize, float *mf, float *sf, int *mr, int *sr)
 {
-	unsigned int n;
+	unsigned int i, nmaster = m->nmaster;
 	float mfacts, sfacts;
 	int mtotal = 0, stotal = 0;
-	Client *c;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	mfacts = MIN(n, m->nmaster);
-	sfacts = n - m->nmaster;
+	mfacts = MIN(n, nmaster);
+	sfacts = n - nmaster;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (n < m->nmaster)
+	for (i = 0; i < n; i++)
+		if (i < nmaster)
 			mtotal += msize / mfacts;
 		else
 			stotal += ssize / sfacts;
@@ -223,7 +222,7 @@ bstack(Monitor *m)
 		sy = my + mh + ih;
 	}
 
-	getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
 		if (i < m->nmaster) {
@@ -367,7 +366,7 @@ centeredfloatingmaster(Monitor *m)
 		sh = m->wh - 2*oh;
 	}
 
-	getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
 		if (i < m->nmaster) {
@@ -414,7 +413,7 @@ deck(Monitor *m)
 		sh = m->wh - 2*oh;
 	}
 
-	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
 	if (n - m->nmaster > 0) /* override layout symbol */
 		snprintf(m->ltsymbol, sizeof m->ltsymbol, "D %d", n - m->nmaster);
@@ -566,7 +565,7 @@ tilelayout(Monitor *m, int rightside)
 			sx = mx + mw + iv;
 	}
 
-	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
 		if (i < m->nmaster) {

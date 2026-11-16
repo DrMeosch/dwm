@@ -59,6 +59,16 @@ done
 [ ! -e "$root/dwm-$version.tar.gz" ]
 [ -s "$root/LICENSE" ]
 
+# Editing either source included by config.h must rebuild dwm.o.
+touch "$tmp/dist/src/dwm.o"
+(cd "$tmp/dist" && make -q src/dwm.o)
+for f in shiftview.c vanitygaps.c; do
+	if (cd "$tmp/dist" && make -q -W "src/$f" src/dwm.o); then
+		echo "changing $f did not rebuild dwm.o" >&2
+		exit 1
+	fi
+done
+
 # make install gives the sampler CAP_PERFMON, which the Intel GPU usage takes, and says
 # how to give it when that fails; the Arch package does the same after installing or
 # upgrading, which drops it. setcap is a stub that logs its arguments or fails.

@@ -20,7 +20,8 @@ tag shifting,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
-dependencies and the LICENSE file shipped by `make dist`, and that `make install`
+dependencies and the LICENSE file shipped by `make dist`, that editing either
+source included by `config.h` rebuilds `dwm.o`, and that `make install`
 and the Arch package's install and upgrade scriptlet give `dwmsysmon` the
 `cap_perfmon=p` (permitted only) capability with a stub `setcap`, and only print how to set it
 when that fails, without failing themselves.
@@ -65,8 +66,10 @@ before it creates its tiled window; this order is deliberate, so the tiled
 window is always the newest, selected client for the bar checks.
 
 The geometry harness supplies the monitor/client iteration and resize boundary
-used by the layout code. It verifies requested rectangles; it does not test X
-server placement, size hints, or full key event dispatch. The normal `make`
+used by the layout code. It checks that layout factors and pixel remainders use
+the tiled-client count, excluding floating clients, including with no master.
+It verifies requested rectangles; it does not test X server placement, size hints,
+or full key event dispatch. The normal `make`
 target remains the production build check.
 
 The `sigusr2` check builds the production signal-pipe module and sends SIGUSR2

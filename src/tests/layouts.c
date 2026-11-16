@@ -140,6 +140,29 @@ test_layouts(void)
 }
 
 static void
+test_fact_counts(void)
+{
+	Monitor m = {.nmaster = 2};
+	Client clients[5];
+	float mf, sf;
+	int mr, sr, oh, ov, ih, iv;
+	unsigned int n;
+
+	reset_clients(clients, 5);
+	clients[1].isfloating = 1;
+	m.clients = clients;
+	getgaps(&m, &oh, &ov, &ih, &iv, &n);
+	CHECK(n == 4, "getgaps counted a floating client");
+	getfacts(&m, n, 101, 203, &mf, &sf, &mr, &sr);
+	CHECK(mf == 2.0f && sf == 2.0f && mr == 1 && sr == 1,
+	      "getfacts did not split four tiled clients and their remainders");
+	m.nmaster = 0;
+	getfacts(&m, n, 101, 203, &mf, &sf, &mr, &sr);
+	CHECK(mf == 0.0f && sf == 4.0f && mr == 101 && sr == 3,
+	      "getfacts did not keep all tiled clients in the stack");
+}
+
+static void
 test_facts_and_gaps(void)
 {
 	Monitor m = {.nmaster = 1, .gappih = 20, .gappiv = 10,
@@ -152,12 +175,12 @@ test_facts_and_gaps(void)
 	Arg arg = {.i = -50};
 
 	m.clients = &first;
-	getfacts(&m, 100, 200, &mf, &sf, &mr, &sr);
+	getfacts(&m, 1, 100, 200, &mf, &sf, &mr, &sr);
 	CHECK(mf == 1.0f && sf == 0.0f && mr == 0 && sr == 200,
 	      "getfacts single-master result was %.1f %.1f %d %d", mf, sf, mr, sr);
 
 	first.next = &second;
-	getfacts(&m, 100, 200, &mf, &sf, &mr, &sr);
+	getfacts(&m, 2, 100, 200, &mf, &sf, &mr, &sr);
 	CHECK(mf == 1.0f && sf == 1.0f && mr == 0 && sr == 0,
 	      "getfacts split result was %.1f %.1f %d %d", mf, sf, mr, sr);
 
@@ -199,6 +222,7 @@ int
 main(void)
 {
 	test_layouts();
+	test_fact_counts();
 	test_facts_and_gaps();
 	if (failures)
 		return EXIT_FAILURE;
