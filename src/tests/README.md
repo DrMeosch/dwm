@@ -9,7 +9,8 @@ master geometry in portrait and landscape with a floating client, core
 monitor/client state helpers (including
 stack positions for previous selection, increments with wrapping, hidden and sticky
 clients, missing selections and empty lists; monitor traversal in both directions
-and wrapping with one, two and three monitors,
+and wrapping with one, two and three monitors, removing the first, middle,
+last and only monitor and unmapping then destroying its bar,
 showing all monitors before arranging them, and restacking only when arranging
 one monitor, restoring both per-tag layout slots and master settings with either
 layout selected, refusing scratchpad-only tag views, spawning a missing scratchpad

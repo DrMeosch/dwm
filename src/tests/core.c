@@ -49,6 +49,8 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #define XDeleteProperty record_deleteproperty
 #define XConfigureWindow record_configurewindow
 #define XCheckMaskEvent record_checkmaskevent
+#define XUnmapWindow record_unmapwindow
+#define XDestroyWindow record_destroywindow
 #define popen pidof_popen
 #define pclose fclose
 #define system autostart_system
@@ -58,6 +60,8 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #undef popen
 #undef pclose
 #undef main
+#undef XDestroyWindow
+#undef XUnmapWindow
 #undef XCheckMaskEvent
 #undef XConfigureWindow
 #undef XMoveWindow
@@ -152,6 +156,27 @@ record_checkmaskevent(Display *d, long mask, XEvent *event)
 	return False;
 }
 
+static Window unmapped_bar, destroyed_bar;
+static int bar_events;
+
+int
+record_unmapwindow(Display *d, Window w)
+{
+	(void)d;
+	unmapped_bar = w;
+	bar_events = bar_events * 10 + 1;
+	return 1;
+}
+
+int
+record_destroywindow(Display *d, Window w)
+{
+	(void)d;
+	destroyed_bar = w;
+	bar_events = bar_events * 10 + 2;
+	return 1;
+}
+
 static void
 record_layout(Monitor *m)
 {
@@ -174,6 +199,49 @@ free_monitor(Monitor *m)
 {
 	free(m->pertag);
 	free(m);
+}
+
+static void
+test_cleanupmon(void)
+{
+	Monitor *saved_mons = mons;
+	Monitor *first = calloc(1, sizeof *first), *middle = calloc(1, sizeof *middle);
+	Monitor *last = calloc(1, sizeof *last), *tail = calloc(1, sizeof *tail);
+
+	if (!first || !middle || !last || !tail)
+		abort();
+	first->barwin = 101;
+	middle->barwin = 102;
+	last->barwin = 103;
+	tail->barwin = 104;
+	mons = first;
+	first->next = middle;
+	middle->next = last;
+	last->next = tail;
+
+	bar_events = 0;
+	cleanupmon(middle);
+	CHECK(mons == first && first->next == last && last->next == tail,
+	      "cleanupmon did not unlink the middle monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 102 && destroyed_bar == 102,
+	      "cleanupmon did not unmap then destroy the middle bar");
+	bar_events = 0;
+	cleanupmon(tail);
+	CHECK(mons == first && first->next == last && !last->next,
+	      "cleanupmon did not unlink the last monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 104 && destroyed_bar == 104,
+	      "cleanupmon did not unmap then destroy the last bar");
+	bar_events = 0;
+	cleanupmon(first);
+	CHECK(mons == last && !last->next, "cleanupmon did not unlink the first monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 101 && destroyed_bar == 101,
+	      "cleanupmon did not unmap then destroy the first bar");
+	bar_events = 0;
+	cleanupmon(last);
+	CHECK(!mons, "cleanupmon did not unlink the only monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 103 && destroyed_bar == 103,
+	      "cleanupmon did not unmap then destroy the only bar");
+	mons = saved_mons;
 }
 
 static void
@@ -1330,6 +1398,7 @@ main(void)
 	test_pertag_layout_slots();
 	test_arrange_order();
 	test_createmon();
+	test_cleanupmon();
 	test_copyvalidchars();
 	test_status2d();
 	test_client_lists();
