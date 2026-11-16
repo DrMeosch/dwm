@@ -573,8 +573,9 @@ test_stackpos(void)
 	m.clients = &first;
 	first.next = &hidden;
 	hidden.next = &last;
-	m.stack = &last;
-	last.snext = &first;
+	m.stack = &first;
+	first.snext = &hidden;
+	hidden.snext = &last;
 	m.sel = &first;
 	mons = selmon = &m;
 
@@ -582,10 +583,36 @@ test_stackpos(void)
 	CHECK(stackpos(&arg) == 1, "stackpos PREVSEL returned %d", stackpos(&arg));
 	arg.i = INC(1);
 	CHECK(stackpos(&arg) == 1, "stackpos increment returned %d", stackpos(&arg));
+	arg.i = INC(-1);
+	CHECK(stackpos(&arg) == 1, "stackpos backward wrap returned %d", stackpos(&arg));
+	m.sel = &last;
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == 0, "stackpos forward wrap returned %d", stackpos(&arg));
+	arg.i = PREVSEL;
+	CHECK(stackpos(&arg) == 0, "stackpos previous first returned %d", stackpos(&arg));
+	m.sel = &first;
+	hidden.issticky = 1;
+	CHECK(stackpos(&arg) == 1, "stackpos sticky previous returned %d", stackpos(&arg));
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == 1, "stackpos sticky increment returned %d", stackpos(&arg));
+	hidden.issticky = 0;
 	arg.i = -1;
 	CHECK(stackpos(&arg) == 1, "stackpos negative returned %d", stackpos(&arg));
+	arg.i = -3;
+	CHECK(stackpos(&arg) == 0, "stackpos negative clamp returned %d", stackpos(&arg));
+	arg.i = 9;
+	CHECK(stackpos(&arg) == 9, "stackpos absolute returned %d", stackpos(&arg));
+	m.stack = &first;
+	first.snext = NULL;
+	arg.i = PREVSEL;
+	CHECK(stackpos(&arg) == -1, "stackpos missing previous returned %d", stackpos(&arg));
+	m.sel = NULL;
+	CHECK(stackpos(&arg) == 0, "stackpos previous without selection returned %d", stackpos(&arg));
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == -1, "stackpos increment without selection returned %d", stackpos(&arg));
+	m.clients = NULL;
 	arg.i = 0;
-	CHECK(stackpos(&arg) == 0, "stackpos absolute returned %d", stackpos(&arg));
+	CHECK(stackpos(&arg) == -1, "stackpos empty clients returned %d", stackpos(&arg));
 	mons = selmon = NULL;
 }
 

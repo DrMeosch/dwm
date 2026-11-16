@@ -2196,17 +2196,16 @@ stackpos(const Arg *arg) {
 	if(!selmon->clients)
 		return -1;
 
-	if(arg->i == PREVSEL) {
-		for(l = selmon->stack; l && (!ISVISIBLE(l) || l == selmon->sel); l = l->snext);
+	if(arg->i == PREVSEL || ISINC(arg->i)) {
+		if(arg->i == PREVSEL)
+			for(l = selmon->stack; l && (!ISVISIBLE(l) || l == selmon->sel); l = l->snext);
+		else
+			l = selmon->sel;
 		if(!l)
 			return -1;
 		for(i = 0, c = selmon->clients; c != l; i += ISVISIBLE(c) ? 1 : 0, c = c->next);
-		return i;
-	}
-	else if(ISINC(arg->i)) {
-		if(!selmon->sel)
-			return -1;
-		for(i = 0, c = selmon->clients; c != selmon->sel; i += ISVISIBLE(c) ? 1 : 0, c = c->next);
+		if(arg->i == PREVSEL)
+			return i;
 		for(n = i; c; n += ISVISIBLE(c) ? 1 : 0, c = c->next);
 		return MOD(i + GETINC(arg->i), n);
 	}

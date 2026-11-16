@@ -7,7 +7,9 @@ compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, including exact bottom-stack and centered-floating
 master geometry in portrait and landscape with a floating client, core
 monitor/client state helpers (including
-monitor traversal in both directions and wrapping with one, two and three monitors,
+stack positions for previous selection, increments with wrapping, hidden and sticky
+clients, missing selections and empty lists; monitor traversal in both directions
+and wrapping with one, two and three monitors,
 showing all monitors before arranging them, and restacking only when arranging
 one monitor, refusing scratchpad-only tag views, spawning a missing scratchpad
 with empty or unrelated client lists using a spawn stub, reading the parent of a process from
