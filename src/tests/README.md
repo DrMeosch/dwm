@@ -5,6 +5,7 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
+monitor traversal in both directions and wrapping with one, two and three monitors,
 showing all monitors before arranging them, and restacking only when arranging
 one monitor, refusing scratchpad-only tag views, reading the parent of a process from
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces

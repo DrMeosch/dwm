@@ -448,6 +448,7 @@ test_geometry_helpers(void)
 {
 	Monitor left = {.wx = 0, .wy = 0, .ww = 500, .wh = 400};
 	Monitor right = {.wx = 500, .wy = 0, .ww = 500, .wh = 400};
+	Monitor third = {0};
 	Client c = {.mon = &left, .bw = 2, .w = 50, .h = 40};
 	Layout layout = {"test", tile};
 	int x, y, w, h;
@@ -463,6 +464,20 @@ test_geometry_helpers(void)
 	selmon = &right;
 	CHECK(dirtomon(1) == &left && dirtomon(-1) == &left,
 	      "dirtomon did not wrap around the monitor list");
+	right.next = &third;
+	selmon = &left;
+	CHECK(dirtomon(2) == &right && dirtomon(-2) == &third && dirtomon(0) == &third,
+	      "dirtomon failed at the first of three monitors");
+	selmon = &right;
+	CHECK(dirtomon(1) == &third && dirtomon(-1) == &left,
+	      "dirtomon failed at the middle monitor");
+	selmon = &third;
+	CHECK(dirtomon(1) == &left && dirtomon(-1) == &right,
+	      "dirtomon failed at the last of three monitors");
+	left.next = NULL;
+	selmon = &left;
+	CHECK(dirtomon(1) == &left && dirtomon(-1) == &left && dirtomon(0) == &left,
+	      "dirtomon failed with one monitor");
 
 	left.lt[0] = &layout;
 	left.sellt = 0;
