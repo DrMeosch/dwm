@@ -155,6 +155,7 @@ if [ "$input_available" -eq 1 ]; then
 		fake_pid=
 	fi
 fi
+"$tmp/x11" unmanage
 "$tmp/transient" >"$tmp/transient.log" 2>&1 &
 transient_pid=$!
 "$tmp/x11"

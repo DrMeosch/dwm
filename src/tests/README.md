@@ -49,7 +49,10 @@ layouts, master counts and bar visibility, checking that both view and togglevie
 restore the windows' geometry. It also shows and hides an existing scratchpad
 repeatedly and checks focus; a terminal stub prevents accidental desktop launches
 if scratchpad lookup fails. If the files are unavailable, this input regression
-check is reported as skipped. With the same files and `pidof`, and
+check is reported as skipped. A separate Xlib check unmaps, remaps and destroys
+tiled clients, checking that removal updates the client list, focus and remaining
+window geometry, including when the last client is removed. It does not exercise
+removal of a swallowed client. With the XTEST files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
 the pointer, pixel-exact against the drawn status, including when the status

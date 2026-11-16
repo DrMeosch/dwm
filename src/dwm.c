@@ -2619,11 +2619,9 @@ unmanage(Client *c, int destroyed)
 	}
 	free(c);
 
-	if (!s) {
-		arrange(m);
-		focus(NULL);
-		updateclientlist();
-	}
+	arrange(m);
+	focus(NULL);
+	updateclientlist();
 }
 
 void
