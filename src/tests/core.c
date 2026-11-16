@@ -44,6 +44,9 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #define posix_spawnp record_spawnp
 #define XChangeProperty record_changeproperty
 #define XSync record_sync
+#define XMoveWindow record_movewindow
+#define XConfigureWindow record_configurewindow
+#define XCheckMaskEvent record_checkmaskevent
 #define popen pidof_popen
 #define pclose fclose
 #define system autostart_system
@@ -53,6 +56,9 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #undef popen
 #undef pclose
 #undef main
+#undef XCheckMaskEvent
+#undef XConfigureWindow
+#undef XMoveWindow
 #undef XSync
 #undef XChangeProperty
 #undef posix_spawnp
@@ -87,6 +93,53 @@ record_sync(Display *d, Bool discard)
 	return 1;
 }
 
+static char arrange_events[32];
+static int narrange_events, recording_arrange;
+
+static void
+arrange_event(char event)
+{
+	if (recording_arrange && narrange_events < (int)sizeof arrange_events - 1) {
+		arrange_events[narrange_events++] = event;
+		arrange_events[narrange_events] = '\0';
+	}
+}
+
+int
+record_movewindow(Display *d, Window w, int x, int y)
+{
+	(void)d; (void)x; (void)y;
+	if (!recording_arrange)
+		abort();
+	arrange_event(w == 101 ? 'a' : w == 102 ? 'b' : '?');
+	return 1;
+}
+
+int
+record_configurewindow(Display *d, Window w, unsigned int mask, XWindowChanges *changes)
+{
+	(void)d; (void)mask; (void)changes;
+	if (!recording_arrange)
+		abort();
+	arrange_event(w == 101 ? 'R' : w == 102 ? 'S' : '?');
+	return 1;
+}
+
+Bool
+record_checkmaskevent(Display *d, long mask, XEvent *event)
+{
+	(void)d; (void)mask; (void)event;
+	if (!recording_arrange)
+		abort();
+	return False;
+}
+
+static void
+record_layout(Monitor *m)
+{
+	arrange_event(m->num == 1 ? 'A' : 'B');
+}
+
 static int failures;
 
 #define CHECK(condition, ...) do { \
@@ -103,6 +156,42 @@ free_monitor(Monitor *m)
 {
 	free(m->pertag);
 	free(m);
+}
+
+static void
+test_arrange_order(void)
+{
+	Layout layout = { "test", record_layout };
+	Monitor first = {0}, second = {0}, *saved_mons = mons;
+	Client a = {0}, b = {0};
+	Drw stub = {0}, *saved_drw = drw;
+	Fnt font = {0};
+
+	first.num = 1; first.next = &second; first.stack = first.sel = &a;
+	second.num = 2; second.stack = second.sel = &b;
+	first.lt[0] = second.lt[0] = &layout;
+	first.tagset[0] = second.tagset[0] = 1;
+	a.mon = &first; a.win = 101; a.tags = 1;
+	b.mon = &second; b.win = 102; b.tags = 1;
+	stub.fonts = &font;
+	drw = &stub;
+	mons = &first;
+	recording_arrange = 1;
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(NULL);
+	CHECK(!strcmp(arrange_events, "abAB"),
+	      "arrange all did not show every monitor before arranging: %s", arrange_events);
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(&second);
+	CHECK(!strcmp(arrange_events, "bBS"),
+	      "arrange one did not show, arrange and restack only that monitor: %s", arrange_events);
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(&first);
+	CHECK(!strcmp(arrange_events, "aAR"),
+	      "arrange first also touched other monitors: %s", arrange_events);
+	recording_arrange = 0;
+	mons = saved_mons;
+	drw = saved_drw;
 }
 
 static void
@@ -1110,6 +1199,7 @@ main(void)
 	test_sysmon_box();
 	test_autostart_command();
 	test_sysmon_start();
+	test_arrange_order();
 	test_createmon();
 	test_copyvalidchars();
 	test_status2d();
