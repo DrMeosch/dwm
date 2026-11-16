@@ -231,7 +231,14 @@ test_status2d(void)
 		      "statusblocksig mapped a click to the wrong block");
 		strcpy(rawstext, "no signal ^f50^");
 		CHECK(statusblocksig(0, 10) == 0, "statusblocksig invented a block");
+		strcpy(rawstext, "\303\251^f5^\001\002^f4^\037");
+		CHECK(statusblocksig(20, 24) == 0 && statusblocksig(20, 25) == 2
+		      && statusblocksig(20, 28) == 2 && statusblocksig(20, 29) == 31,
+		      "statusblocksig mishandled unmarked text or empty blocks");
+		CHECK(!strcmp(rawstext, "\303\251^f5^\001\002^f4^\037"),
+		      "statusblocksig changed the status text");
 		rawstext[0] = '\0';
+		CHECK(statusblocksig(0, 0) == 0, "statusblocksig invented a block for empty status");
 		drw = NULL;
 	}
 

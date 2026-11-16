@@ -1112,20 +1112,17 @@ drawstatus(char *text, size_t len, int x, int draw)
 int
 statusblocksig(int x, int evx)
 {
-	char *text = rawstext;
-	int i = -1, sig = 0;
-	char ch;
+	char *start = rawstext, *p;
+	int sig = 0;
 
-	while (text[++i]) {
-		if ((unsigned char)text[i] < ' ') {
-			ch = text[i];
-			x += drawstatus(text, i, 0, 0);
-			text += i+1;
-			i = -1;
-			if (x > evx) break;
-			sig = ch;
+	for (p = start; *p; p++)
+		if ((unsigned char)*p < ' ') {
+			x += drawstatus(start, p - start, 0, 0);
+			if (x > evx)
+				break;
+			sig = *p;
+			start = p + 1;
 		}
-	}
 	return sig;
 }
 

@@ -11,8 +11,9 @@ and parentheses, rejecting Xresources strings that exceed
 their buffer, keeping the selected-tag font set disabled for an empty or NULL
 `selfontweight`, parsing, measuring and click mapping of status2d codes with
 every truncated, malformed or out-of-range form falling back to plain text,
-plus palette loading that accepts only exactly `#rrggbb`, and finding the
-dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
+plus palette loading that accepts only exactly `#rrggbb`, status block mapping
+with unmarked text, consecutive markers, UTF-8 and an empty status, and finding
+the dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
 and `buttonpress()` signalling the block under a status click, including a
 status wider than the bar and the exact first and last pixel of each block, all
 without X11, XTEST or `pidof`),
