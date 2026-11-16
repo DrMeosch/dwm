@@ -128,6 +128,7 @@ test_shifttag(void)
 {
 	Monitor m = {.tagset = {1, 1}};
 	Client first = {.tags = 4};
+	Client second = {.tags = 8};
 	Arg arg = {.i = 1};
 
 	m.clients = &first;
@@ -142,6 +143,48 @@ test_shifttag(void)
 	arg.i = -1;
 	shifttag(&arg);
 	CHECK(tagged == 8, "shifttag did not wrap backwards: %u", tagged);
+
+	first.tags = 8;
+	first.next = &second;
+	second.tags = 4;
+	arg.i = 1;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not consider every client's tags: %u", tagged);
+
+	first.tags = 0;
+	arg.i = -1;
+	tagged = ~0u;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not skip backward to an occupied tag: %u", tagged);
+	m.seltags = 1;
+	m.tagset[1] = 1;
+	arg.i = 2;
+	tagged = ~0u;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not use the selected tagset and step: %u", tagged);
+	m.seltags = 0;
+	arg.i = 1;
+
+	m.tagset[0] = 3;
+	shifttag(&arg);
+	CHECK(tagged == 6, "shifttag changed the shifted multi-tag view: %u", tagged);
+
+	m.tagset[0] = 8;
+	first.tags = SPTAGMASK;
+	second.tags = 0;
+	shifttag(&arg);
+	CHECK(tagged == (SPTAGMASK | 1), "shifttag ignored a scratchpad tag: %u", tagged);
+
+	m.tagset[0] = 1;
+	first.tags = 8;
+	arg.i = 0;
+	tag_calls = 0;
+	shifttag(&arg);
+	CHECK(tag_calls == 0, "shifttag tagged when no client matched");
+	m.clients = NULL;
+	tag_calls = 0;
+	shifttag(&arg);
+	CHECK(tag_calls == 0, "shifttag tagged when there were no clients");
 }
 
 int

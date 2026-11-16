@@ -18,7 +18,8 @@ and `buttonpress()` signalling the block under a status click, including a
 status wider than the bar and the exact first and last pixel of each block, all
 without X11, XTEST or `pidof`),
 tag shifting in both directions, including multi-tag views, scratchpad clients,
-views with no clients and multi-step shifts,
+views with no clients and multi-step shifts; shifttag also checks all clients,
+includes scratchpad tags and does nothing when no client matches,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
