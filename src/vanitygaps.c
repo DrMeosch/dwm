@@ -218,7 +218,6 @@ bstack(Monitor *m)
 	if (m->nmaster && n > m->nmaster) {
 		sh = (mh - ih) * (1 - m->mfact);
 		mh = (mh - ih) * m->mfact;
-		sx = mx;
 		sy = my + mh + ih;
 	}
 
@@ -360,10 +359,6 @@ centeredfloatingmaster(Monitor *m)
 		}
 		mx = m->wx + (m->ww - mw) / 2;
 		my = m->wy + (m->wh - mh) / 2;
-
-		sx = m->wx + ov;
-		sy = m->wy + oh;
-		sh = m->wh - 2*oh;
 	}
 
 	getfacts(m, n, mw, sw, &mfacts, &sfacts, &mrest, &srest);

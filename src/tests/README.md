@@ -4,7 +4,9 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 `pkg-config`, the configured X11, Xft, fontconfig, XCB, and Xinerama development
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
-geometry and gap branches, core monitor/client state helpers (including
+geometry and gap branches, including exact bottom-stack and centered-floating
+master geometry in portrait and landscape with a floating client, core
+monitor/client state helpers (including
 monitor traversal in both directions and wrapping with one, two and three monitors,
 showing all monitors before arranging them, and restacking only when arranging
 one monitor, refusing scratchpad-only tag views, spawning a missing scratchpad

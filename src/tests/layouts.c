@@ -201,6 +201,47 @@ test_centeredmaster_facts(void)
 }
 
 static void
+test_stack_geometry(void)
+{
+	static const struct {
+		void (*layout)(Monitor *);
+		int ww, wh;
+		int rects[4][4];
+	} cases[] = {
+		{bstack, 200, 100, {{46, 30, 182, 40}, {-1, -1, -1, -1},
+		                    {46, 76, 89, 40}, {139, 76, 89, 40}}},
+		{bstack, 100, 200, {{46, 30, 82, 90}, {-1, -1, -1, -1},
+		                    {46, 126, 39, 90}, {89, 126, 39, 90}}},
+		{centeredfloatingmaster, 200, 100, {{87, 35, 100, 76}, {-1, -1, -1, -1},
+		                                    {46, 30, 89, 86}, {139, 30, 89, 86}}},
+		{centeredfloatingmaster, 100, 200, {{42, 73, 90, 100}, {-1, -1, -1, -1},
+		                                    {46, 30, 39, 186}, {89, 30, 39, 186}}},
+	};
+	Monitor m = {.wx = 37, .wy = 23, .gappih = 6, .gappiv = 4,
+	             .gappoh = 7, .gappov = 9, .nmaster = 1, .mfact = 0.5f};
+	Client clients[4];
+	size_t i, j;
+
+	for (j = 0; j < sizeof cases / sizeof cases[0]; j++) {
+		reset_clients(clients, 4);
+		clients[1].isfloating = 1;
+		for (i = 0; i < 4; i++)
+			clients[i].bw = 0;
+		m.clients = clients;
+		m.ww = cases[j].ww;
+		m.wh = cases[j].wh;
+		cases[j].layout(&m);
+		for (i = 0; i < 4; i++)
+			CHECK(clients[i].x == cases[j].rects[i][0]
+			      && clients[i].y == cases[j].rects[i][1]
+			      && clients[i].w == cases[j].rects[i][2]
+			      && clients[i].h == cases[j].rects[i][3],
+			      "stack geometry case %zu client %zu changed (%d,%d %dx%d)",
+			      j, i, clients[i].x, clients[i].y, clients[i].w, clients[i].h);
+	}
+}
+
+static void
 test_facts_and_gaps(void)
 {
 	Monitor m = {.nmaster = 1, .gappih = 20, .gappiv = 10,
@@ -262,6 +303,7 @@ main(void)
 	test_layouts();
 	test_fact_counts();
 	test_centeredmaster_facts();
+	test_stack_geometry();
 	test_facts_and_gaps();
 	if (failures)
 		return EXIT_FAILURE;
