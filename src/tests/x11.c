@@ -422,8 +422,30 @@ static void
 check_status_colors(Display *dpy, Window root)
 {
 	int width = DisplayWidth(dpy, DefaultScreen(dpy));
-	int from = width - 400, left = -1, plain_left = -1;
-	unsigned int count;
+	int from = width - 400, left = -1, plain_left = -1, fallback_left, i;
+	unsigned int count, fallback_count;
+
+	/* The test dwm is built with VERSION=6.5. Deleting the name restores that fallback. */
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 16, NULL) == 16,
+	      "the status before the fallback was not drawn");
+	set_status(dpy, root, "dwm-6.5");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 0, NULL) == 0,
+	      "the explicit fallback status was not drawn");
+	fallback_count = count_bar_pixels(dpy, root, NULL, width - 100, &fallback_left);
+	CHECK(fallback_count > 0, "the explicit fallback status was empty");
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 16, NULL) == 16,
+	      "the status before deleting the root name was not drawn");
+	XDeleteProperty(dpy, root, XA_WM_NAME);
+	XFlush(dpy);
+	for (i = 0; i < 80; i++) {
+		count = count_bar_pixels(dpy, root, NULL, width - 100, &left);
+		if (count == fallback_count && left == fallback_left)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "deleting the root name did not restore the fallback status");
 
 	/* a 4x4 rectangle, 50px of cursor advance, and 2px of padding; ^r does not advance */
 	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");

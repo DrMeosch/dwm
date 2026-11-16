@@ -62,8 +62,9 @@ is wider than the bar; this is the pixel-level counterpart of the headless
 `buttonpress()` check above, which runs everywhere. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
-rendered bar text, a status that leaves only a narrow gap before it without
-stale title pixels, colored status segments set through the root window name
+rendered bar text, the fallback status after the root window name is deleted,
+a status that leaves only a narrow gap before it without stale title pixels,
+colored status segments set through the root window name
 (pixel colors, alignment against the right edge of the bar, that codes take
 no width, and that text and rectangles pushed off the left edge by ^f advances
 beyond 16-bit X11 coordinates are not drawn, and that the status background
