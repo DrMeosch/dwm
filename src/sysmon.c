@@ -229,21 +229,22 @@ sysmon_decode(const char *data, unsigned long len, SysmonValues *v)
 		while (*end == ' ')
 			end++;
 	}
-	if (seen & Cpu && !(bad & Cpu))
+	seen &= ~bad;
+	if (seen & Cpu)
 		v->cpu = got.cpu;
-	if (seen & Temp && !(bad & Temp))
+	if (seen & Temp)
 		v->temp = got.temp;
-	if (seen & Fan && !(bad & Fan)) {
+	if (seen & Fan) {
 		v->nfan = got.nfan;
 		memcpy(v->fan, got.fan, got.nfan * sizeof *got.fan);
 	}
-	if (seen & Hist && !(bad & Hist)) {
+	if (seen & Hist) {
 		v->nhist = got.nhist;
 		memcpy(v->hist, got.hist, got.nhist * sizeof *got.hist);
 	}
-	if (seen & Gpu && !(bad & Gpu))
+	if (seen & Gpu)
 		v->gpu = got.gpu;
-	if (seen & GpuHist && !(bad & GpuHist)) {
+	if (seen & GpuHist) {
 		v->ngpuhist = got.ngpuhist;
 		memcpy(v->gpuhist, got.gpuhist, got.ngpuhist * sizeof *got.gpuhist);
 	}

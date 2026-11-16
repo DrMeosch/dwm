@@ -140,7 +140,9 @@ fans of 0-30000, `cpuhist=<0-100>[,<0-100>...]` with up to 16 samples, and
 oversized, empty and NUL-containing payloads are no value, and a malformed,
 out-of-range or repeated field, such as a history with an empty, signed,
 four-digit or out-of-range sample or a 17th one, is missing while the others
-stay; every combination of values and history lengths survives encoding and
+stay, even when several fields are rejected and malformed and valid repeats
+appear in either order; rejected lists leave no partial samples in the output.
+Every combination of values and history lengths survives encoding and
 decoding, the longest payload fits, and without a GPU still fits the 128 bytes a
 dwm from before the GPU usage reads, encoding leaves out a usage or history with
 a sample out of range or too many samples rather than sending part of it, a
