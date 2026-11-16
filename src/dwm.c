@@ -2492,12 +2492,11 @@ void
 togglescratch(const Arg *arg)
 {
 	Client *c;
-	unsigned int found = 0;
 	unsigned int scratchtag = SPTAG(arg->ui);
 	Arg sparg = {.v = scratchpads[arg->ui].cmd};
 
-	for (c = selmon->clients; c && !(found = c->tags & scratchtag); c = c->next);
-	if (found) {
+	for (c = selmon->clients; c && !(c->tags & scratchtag); c = c->next);
+	if (c) {
 		unsigned int newtagset = selmon->tagset[selmon->seltags] ^ scratchtag;
 		if (newtagset) {
 			selmon->tagset[selmon->seltags] = newtagset;

@@ -623,6 +623,34 @@ test_xresources(void)
 }
 
 static void
+test_scratchpad_spawn(void)
+{
+	Monitor monitor = {0}, *saved_selmon = selmon;
+	Client other = {0};
+	Arg arg = {.ui = 1};
+	int saved_nspawned = nspawned;
+
+	selmon = &monitor;
+	monitor.tagset[0] = 1;
+	nspawned = 0;
+	togglescratch(&arg);
+	CHECK(monitor.tagset[0] == (1 | SPTAG(1)) && nspawned == 1
+	      && !strcmp(spawned[0], spcmd2[0]),
+	      "missing scratchpad did not enable its tag and spawn its command");
+
+	monitor.tagset[0] = 1;
+	monitor.clients = &other;
+	other.tags = 1 | SPTAG(0);
+	nspawned = 0;
+	togglescratch(&arg);
+	CHECK(monitor.tagset[0] == (1 | SPTAG(1)) && nspawned == 1
+	      && !strcmp(spawned[0], spcmd2[0]),
+	      "unrelated clients prevented the missing scratchpad from spawning");
+	nspawned = saved_nspawned;
+	selmon = saved_selmon;
+}
+
+static void
 test_scratchpad_tag_views(void)
 {
 	Monitor *m = createmon();
@@ -1224,6 +1252,7 @@ main(void)
 	test_bar_geometry();
 	test_stackpos();
 	test_xresources();
+	test_scratchpad_spawn();
 	test_scratchpad_tag_views();
 	test_process_helpers();
 	test_terminal_lookup();

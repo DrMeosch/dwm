@@ -7,7 +7,8 @@ compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, core monitor/client state helpers (including
 monitor traversal in both directions and wrapping with one, two and three monitors,
 showing all monitors before arranging them, and restacking only when arranging
-one monitor, refusing scratchpad-only tag views, reading the parent of a process from
+one monitor, refusing scratchpad-only tag views, spawning a missing scratchpad
+with empty or unrelated client lists using a spawn stub, reading the parent of a process from
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces
 and parentheses, rejecting Xresources strings that exceed
 their buffer, keeping the selected-tag font set disabled for an empty or NULL
@@ -40,8 +41,10 @@ an unfocused client is replayed before subsequent typing; both deliveries must
 occur without an external wake. It checks that switching to an empty tag clears
 the selected client's title from the bar, and switches between tags with different
 layouts, master counts and bar visibility, checking that both view and toggleview
-restore the windows' geometry. If the files are unavailable, this input
-regression check is reported as skipped. With the same files and `pidof`, and
+restore the windows' geometry. It also shows and hides an existing scratchpad
+repeatedly and checks focus; a terminal stub prevents accidental desktop launches
+if scratchpad lookup fails. If the files are unavailable, this input regression
+check is reported as skipped. With the same files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
 the pointer, pixel-exact against the drawn status, including when the status

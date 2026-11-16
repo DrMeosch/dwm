@@ -241,6 +241,57 @@ key(Display *dpy, KeySym sym, KeySym modifier)
 	XFlush(dpy);
 }
 
+static void
+test_scratchpad_toggle(Display *dpy, Window root)
+{
+	Window scratch, normal;
+	XClassHint hint = { "spcalc", "St" };
+	Atom property = XInternAtom(dpy, "_NET_CLIENT_INFO", False), type;
+	int format, i, managed = 0;
+	unsigned long count, remaining;
+	unsigned char *data;
+
+	normal = create_client(dpy, root, "scratchpad normal client", 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad test normal client was not selected");
+	scratch = XCreateSimpleWindow(dpy, root, 40, 40, 180, 120, 0, 0, 0);
+	XSetClassHint(dpy, scratch, &hint);
+	XStoreName(dpy, scratch, "scratchpad regression");
+	XMapWindow(dpy, scratch);
+	XFlush(dpy);
+	for (i = 0; i < 80; i++) {
+		data = NULL;
+		if (XGetWindowProperty(dpy, scratch, property, 0, 2, False, XA_CARDINAL,
+		                       &type, &format, &count, &remaining, &data) == Success
+		&& type == XA_CARDINAL && format == 32 && count == 2
+		&& ((unsigned long *)data)[0] == (1UL << 10))
+			managed = 1;
+		if (data)
+			XFree(data);
+		if (managed)
+			break;
+		pause_millis(25);
+	}
+	CHECK(managed, "scratchpad client was not managed with its tag");
+	if (!managed) {
+		XDestroyWindow(dpy, scratch);
+		XDestroyWindow(dpy, normal);
+		return;
+	}
+	CHECK(wait_active(dpy, root, normal), "hidden scratchpad changed focus");
+	key(dpy, XK_v, XK_Shift_L); /* push the normal client ahead of the scratchpad */
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, scratch), "scratchpad did not show and gain focus (active %#lx)", active_window(dpy, root));
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad did not hide and restore focus");
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, scratch), "scratchpad did not show again (active %#lx)", active_window(dpy, root));
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad did not hide again");
+	XDestroyWindow(dpy, scratch);
+	XDestroyWindow(dpy, normal);
+	XFlush(dpy);
+}
+
 static int
 bar_title_ink(Display *dpy, Window bar, int height, unsigned long background)
 {
@@ -415,6 +466,7 @@ main(void)
 		test_click_replay(dpy, root, DefaultScreen(dpy), supercode, jcode, acode);
 		test_empty_title(dpy, root);
 		test_pertag_views(dpy, root);
+		test_scratchpad_toggle(dpy, root);
 	}
 	XCloseDisplay(dpy);
 	if (failures)

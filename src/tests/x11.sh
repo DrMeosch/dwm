@@ -129,6 +129,8 @@ fi
 # dwm starts the sampler that reads fixtures, never an installed dwmsysmon
 mkdir "$tmp/bin"
 ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
+# A failed scratchpad lookup must never launch the configured terminal.
+ln -s /bin/true "$tmp/bin/st"
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
