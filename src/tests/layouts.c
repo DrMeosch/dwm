@@ -140,6 +140,108 @@ test_layouts(void)
 }
 
 static void
+test_fact_counts(void)
+{
+	Monitor m = {.nmaster = 2};
+	Client clients[5];
+	float mf, sf;
+	int mr, sr, oh, ov, ih, iv;
+	unsigned int n;
+
+	reset_clients(clients, 5);
+	clients[1].isfloating = 1;
+	m.clients = clients;
+	getgaps(&m, &oh, &ov, &ih, &iv, &n);
+	CHECK(n == 4, "getgaps counted a floating client");
+	getfacts(&m, n, 101, 203, &mf, &sf, &mr, &sr);
+	CHECK(mf == 2.0f && sf == 2.0f && mr == 1 && sr == 1,
+	      "getfacts did not split four tiled clients and their remainders");
+	m.nmaster = 0;
+	getfacts(&m, n, 101, 203, &mf, &sf, &mr, &sr);
+	CHECK(mf == 0.0f && sf == 4.0f && mr == 101 && sr == 3,
+	      "getfacts did not keep all tiled clients in the stack");
+}
+
+static void
+test_centeredmaster_facts(void)
+{
+	static const struct {
+		int nmaster;
+		int rects[6][4];
+	} cases[] = {
+		{0, {{0, 0, 101, 21}, {-1, -1, -1, -1}, {0, 21, 101, 20},
+		     {0, 41, 101, 20}, {0, 61, 101, 20}, {0, 81, 101, 20}}},
+		{1, {{25, 0, 50, 101}, {-1, -1, -1, -1}, {75, 0, 25, 50},
+		     {0, 0, 25, 51}, {75, 50, 25, 51}, {0, 51, 25, 50}}},
+		{2, {{25, 0, 50, 51}, {-1, -1, -1, -1}, {25, 51, 50, 50},
+		     {75, 0, 25, 50}, {0, 0, 25, 101}, {75, 50, 25, 51}}},
+		{6, {{0, 0, 101, 21}, {-1, -1, -1, -1}, {0, 21, 101, 20},
+		     {0, 41, 101, 20}, {0, 61, 101, 20}, {0, 81, 101, 20}}},
+	};
+	Monitor m = {.ww = 101, .wh = 101, .mfact = 0.5f};
+	Client clients[6];
+	size_t j, i;
+
+	for (j = 0; j < sizeof cases / sizeof cases[0]; j++) {
+		reset_clients(clients, 6);
+		clients[1].isfloating = 1;
+		for (i = 0; i < 6; i++)
+			clients[i].bw = 0;
+		m.clients = clients;
+		m.nmaster = cases[j].nmaster;
+		centeredmaster(&m);
+		for (i = 0; i < 6; i++)
+			CHECK(clients[i].x == cases[j].rects[i][0]
+			      && clients[i].y == cases[j].rects[i][1]
+			      && clients[i].w == cases[j].rects[i][2]
+			      && clients[i].h == cases[j].rects[i][3],
+			      "centeredmaster with %d masters changed client %zu geometry (%d,%d %dx%d)",
+			      m.nmaster, i, clients[i].x, clients[i].y, clients[i].w, clients[i].h);
+	}
+}
+
+static void
+test_stack_geometry(void)
+{
+	static const struct {
+		void (*layout)(Monitor *);
+		int ww, wh;
+		int rects[4][4];
+	} cases[] = {
+		{bstack, 200, 100, {{46, 30, 182, 40}, {-1, -1, -1, -1},
+		                    {46, 76, 89, 40}, {139, 76, 89, 40}}},
+		{bstack, 100, 200, {{46, 30, 82, 90}, {-1, -1, -1, -1},
+		                    {46, 126, 39, 90}, {89, 126, 39, 90}}},
+		{centeredfloatingmaster, 200, 100, {{87, 35, 100, 76}, {-1, -1, -1, -1},
+		                                    {46, 30, 89, 86}, {139, 30, 89, 86}}},
+		{centeredfloatingmaster, 100, 200, {{42, 73, 90, 100}, {-1, -1, -1, -1},
+		                                    {46, 30, 39, 186}, {89, 30, 39, 186}}},
+	};
+	Monitor m = {.wx = 37, .wy = 23, .gappih = 6, .gappiv = 4,
+	             .gappoh = 7, .gappov = 9, .nmaster = 1, .mfact = 0.5f};
+	Client clients[4];
+	size_t i, j;
+
+	for (j = 0; j < sizeof cases / sizeof cases[0]; j++) {
+		reset_clients(clients, 4);
+		clients[1].isfloating = 1;
+		for (i = 0; i < 4; i++)
+			clients[i].bw = 0;
+		m.clients = clients;
+		m.ww = cases[j].ww;
+		m.wh = cases[j].wh;
+		cases[j].layout(&m);
+		for (i = 0; i < 4; i++)
+			CHECK(clients[i].x == cases[j].rects[i][0]
+			      && clients[i].y == cases[j].rects[i][1]
+			      && clients[i].w == cases[j].rects[i][2]
+			      && clients[i].h == cases[j].rects[i][3],
+			      "stack geometry case %zu client %zu changed (%d,%d %dx%d)",
+			      j, i, clients[i].x, clients[i].y, clients[i].w, clients[i].h);
+	}
+}
+
+static void
 test_facts_and_gaps(void)
 {
 	Monitor m = {.nmaster = 1, .gappih = 20, .gappiv = 10,
@@ -152,12 +254,12 @@ test_facts_and_gaps(void)
 	Arg arg = {.i = -50};
 
 	m.clients = &first;
-	getfacts(&m, 100, 200, &mf, &sf, &mr, &sr);
+	getfacts(&m, 1, 100, 200, &mf, &sf, &mr, &sr);
 	CHECK(mf == 1.0f && sf == 0.0f && mr == 0 && sr == 200,
 	      "getfacts single-master result was %.1f %.1f %d %d", mf, sf, mr, sr);
 
 	first.next = &second;
-	getfacts(&m, 100, 200, &mf, &sf, &mr, &sr);
+	getfacts(&m, 2, 100, 200, &mf, &sf, &mr, &sr);
 	CHECK(mf == 1.0f && sf == 1.0f && mr == 0 && sr == 0,
 	      "getfacts split result was %.1f %.1f %d %d", mf, sf, mr, sr);
 
@@ -199,6 +301,9 @@ int
 main(void)
 {
 	test_layouts();
+	test_fact_counts();
+	test_centeredmaster_facts();
+	test_stack_geometry();
 	test_facts_and_gaps();
 	if (failures)
 		return EXIT_FAILURE;

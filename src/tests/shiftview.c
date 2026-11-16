@@ -64,6 +64,7 @@ test_shiftview(void)
 {
 	Monitor m = {.tagset = {1, 1}};
 	Client occupied = {.tags = 4};
+	Client scratch = {.tags = SPTAGMASK | 2, .next = &occupied};
 	Arg arg;
 
 	m.clients = &occupied;
@@ -91,6 +92,35 @@ test_shiftview(void)
 	arg.i = 1;
 	shiftview(&arg);
 	CHECK(viewed == 2, "shiftview changed an empty view incorrectly: %u", viewed);
+
+	m.tagset[0] = 9;
+	shiftview(&arg);
+	CHECK(viewed == 3, "shiftview did not rotate a multi-tag view forward: %u", viewed);
+	arg.i = -1;
+	shiftview(&arg);
+	/* view() masks off high bits; the stub records the unmasked argument. */
+	CHECK(viewed == 76, "shiftview changed the raw backward multi-tag rotation: %u", viewed);
+
+	m.seltags = 1;
+	m.tagset[1] = 1;
+	occupied.tags = 4;
+	m.clients = &occupied;
+	arg.i = 2;
+	shiftview(&arg);
+	CHECK(viewed == 4, "shiftview did not use the selected tagset and forward step: %u", viewed);
+	arg.i = -2;
+	shiftview(&arg);
+	CHECK(viewed == 4, "shiftview did not use the selected tagset and backward step: %u", viewed);
+
+	m.clients = &scratch;
+	occupied.tags = 8;
+	arg.i = 1;
+	shiftview(&arg);
+	CHECK(viewed == 8, "shiftview treated a scratchpad client as an occupied tag: %u", viewed);
+	occupied.tags = 4;
+	arg.i = -1;
+	shiftview(&arg);
+	CHECK(viewed == 68, "shiftview changed the raw backward skip of vacant tags: %u", viewed);
 }
 
 static void
@@ -98,6 +128,7 @@ test_shifttag(void)
 {
 	Monitor m = {.tagset = {1, 1}};
 	Client first = {.tags = 4};
+	Client second = {.tags = 8};
 	Arg arg = {.i = 1};
 
 	m.clients = &first;
@@ -112,6 +143,48 @@ test_shifttag(void)
 	arg.i = -1;
 	shifttag(&arg);
 	CHECK(tagged == 8, "shifttag did not wrap backwards: %u", tagged);
+
+	first.tags = 8;
+	first.next = &second;
+	second.tags = 4;
+	arg.i = 1;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not consider every client's tags: %u", tagged);
+
+	first.tags = 0;
+	arg.i = -1;
+	tagged = ~0u;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not skip backward to an occupied tag: %u", tagged);
+	m.seltags = 1;
+	m.tagset[1] = 1;
+	arg.i = 2;
+	tagged = ~0u;
+	shifttag(&arg);
+	CHECK(tagged == 4, "shifttag did not use the selected tagset and step: %u", tagged);
+	m.seltags = 0;
+	arg.i = 1;
+
+	m.tagset[0] = 3;
+	shifttag(&arg);
+	CHECK(tagged == 6, "shifttag changed the shifted multi-tag view: %u", tagged);
+
+	m.tagset[0] = 8;
+	first.tags = SPTAGMASK;
+	second.tags = 0;
+	shifttag(&arg);
+	CHECK(tagged == (SPTAGMASK | 1), "shifttag ignored a scratchpad tag: %u", tagged);
+
+	m.tagset[0] = 1;
+	first.tags = 8;
+	arg.i = 0;
+	tag_calls = 0;
+	shifttag(&arg);
+	CHECK(tag_calls == 0, "shifttag tagged when no client matched");
+	m.clients = NULL;
+	tag_calls = 0;
+	shifttag(&arg);
+	CHECK(tag_calls == 0, "shifttag tagged when there were no clients");
 }
 
 int

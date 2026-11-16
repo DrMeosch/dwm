@@ -202,7 +202,7 @@ static void clientmessage(XEvent *e);
 static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
-static void copyvalidchars(char *text, char *rawtext);
+static void copyvalidchars(char *text, const char *rawtext);
 static int validcolor(const char *s);
 static size_t statuscode(const char *s, size_t n);
 static Monitor *createmon(void);
@@ -506,15 +506,16 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 void
 arrange(Monitor *m)
 {
-	if (m)
-		showhide(m->stack);
-	else for (m = mons; m; m = m->next)
-		showhide(m->stack);
 	if (m) {
+		showhide(m->stack);
 		arrangemon(m);
 		restack(m);
-	} else for (m = mons; m; m = m->next)
-		arrangemon(m);
+	} else {
+		for (m = mons; m; m = m->next)
+			showhide(m->stack);
+		for (m = mons; m; m = m->next)
+			arrangemon(m);
+	}
 }
 
 void
@@ -704,14 +705,10 @@ cleanup(void)
 void
 cleanupmon(Monitor *mon)
 {
-	Monitor *m;
+	Monitor **m;
 
-	if (mon == mons)
-		mons = mons->next;
-	else {
-		for (m = mons; m && m->next != mon; m = m->next);
-		m->next = mon->next;
-	}
+	for (m = &mons; *m != mon; m = &(*m)->next);
+	*m = mon->next;
 	XUnmapWindow(dpy, mon->barwin);
 	XDestroyWindow(dpy, mon->barwin);
 	free(mon);
@@ -839,16 +836,12 @@ configurerequest(XEvent *e)
 }
 
 void
-copyvalidchars(char *text, char *rawtext)
+copyvalidchars(char *text, const char *rawtext)
 {
-	int i = -1, j = 0;
-
-	while(rawtext[++i]) {
-		if ((unsigned char)rawtext[i] >= ' ') {
-			text[j++] = rawtext[i];
-		}
-	}
-	text[j] = '\0';
+	for (; *rawtext; rawtext++)
+		if ((unsigned char)*rawtext >= ' ')
+			*text++ = *rawtext;
+	*text = '\0';
 }
 
 Monitor *
@@ -949,15 +942,13 @@ detachstack(Client *c)
 Monitor *
 dirtomon(int dir)
 {
-	Monitor *m = NULL;
+	Monitor *m;
 
 	if (dir > 0) {
 		if (!(m = selmon->next))
 			m = mons;
-	} else if (selmon == mons)
-		for (m = mons; m->next; m = m->next);
-	else
-		for (m = mons; m->next != selmon; m = m->next);
+	} else
+		for (m = mons; m->next && m->next != selmon; m = m->next);
 	return m;
 }
 
@@ -1044,8 +1035,9 @@ drawstatus(char *text, size_t len, int x, int draw)
 	}
 	while (start < len) {
 		/* plain text runs up to the next valid code */
-		for (pos = start; pos < len && !(text[pos] == '^' && statuscode(text + pos, len - pos)); pos++)
-			;
+		for (pos = start; pos < len; pos++)
+			if (text[pos] == '^' && (code = statuscode(text + pos, len - pos)))
+				break;
 		if (pos > start) {
 			saved = text[pos];
 			text[pos] = '\0';
@@ -1057,7 +1049,6 @@ drawstatus(char *text, size_t len, int x, int draw)
 		}
 		if (pos >= len)
 			break;
-		code = statuscode(text + pos, len - pos);
 		start = pos + code;
 		p = text + pos + 2;
 		switch (text[pos + 1]) {
@@ -1112,20 +1103,17 @@ drawstatus(char *text, size_t len, int x, int draw)
 int
 statusblocksig(int x, int evx)
 {
-	char *text = rawstext;
-	int i = -1, sig = 0;
-	char ch;
+	char *start = rawstext, *p;
+	int sig = 0;
 
-	while (text[++i]) {
-		if ((unsigned char)text[i] < ' ') {
-			ch = text[i];
-			x += drawstatus(text, i, 0, 0);
-			text += i+1;
-			i = -1;
-			if (x > evx) break;
-			sig = ch;
+	for (p = start; *p; p++)
+		if ((unsigned char)*p < ' ') {
+			x += drawstatus(start, p - start, 0, 0);
+			if (x > evx)
+				break;
+			sig = *p;
+			start = p + 1;
 		}
-	}
 	return sig;
 }
 
@@ -1311,18 +1299,13 @@ drawbar(Monitor *m)
 		end = mx;
 	}
 
-	if ((w = end - x) > bh) {
-		if (m->sel) {
-			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
-			if (m->sel->isfloating)
-				drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
-		} else {
-			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_rect(drw, x, 0, w, bh, 1, 1);
-		}
+	if ((w = end - x) > bh && m->sel) {
+		drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
+		drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
+		if (m->sel->isfloating)
+			drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
 	} else if (w > 0) {
-		/* too narrow for the title: clear what an earlier title left behind */
+		/* no title, or too narrow: clear what an earlier title left behind */
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		drw_rect(drw, x, 0, w, bh, 1, 1);
 	}
@@ -2205,17 +2188,16 @@ stackpos(const Arg *arg) {
 	if(!selmon->clients)
 		return -1;
 
-	if(arg->i == PREVSEL) {
-		for(l = selmon->stack; l && (!ISVISIBLE(l) || l == selmon->sel); l = l->snext);
+	if(arg->i == PREVSEL || ISINC(arg->i)) {
+		if(arg->i == PREVSEL)
+			for(l = selmon->stack; l && (!ISVISIBLE(l) || l == selmon->sel); l = l->snext);
+		else
+			l = selmon->sel;
 		if(!l)
 			return -1;
 		for(i = 0, c = selmon->clients; c != l; i += ISVISIBLE(c) ? 1 : 0, c = c->next);
-		return i;
-	}
-	else if(ISINC(arg->i)) {
-		if(!selmon->sel)
-			return -1;
-		for(i = 0, c = selmon->clients; c != selmon->sel; i += ISVISIBLE(c) ? 1 : 0, c = c->next);
+		if(arg->i == PREVSEL)
+			return i;
 		for(n = i; c; n += ISVISIBLE(c) ? 1 : 0, c = c->next);
 		return MOD(i + GETINC(arg->i), n);
 	}
@@ -2501,12 +2483,11 @@ void
 togglescratch(const Arg *arg)
 {
 	Client *c;
-	unsigned int found = 0;
 	unsigned int scratchtag = SPTAG(arg->ui);
 	Arg sparg = {.v = scratchpads[arg->ui].cmd};
 
-	for (c = selmon->clients; c && !(found = c->tags & scratchtag); c = c->next);
-	if (found) {
+	for (c = selmon->clients; c && !(c->tags & scratchtag); c = c->next);
+	if (c) {
 		unsigned int newtagset = selmon->tagset[selmon->seltags] ^ scratchtag;
 		if (newtagset) {
 			selmon->tagset[selmon->seltags] = newtagset;
@@ -2539,6 +2520,25 @@ toggletag(const Arg *arg)
 	}
 }
 
+static void
+applypertag(void)
+{
+	Pertag *p = selmon->pertag;
+	unsigned int tag = p->curtag;
+
+	selmon->nmaster = p->nmasters[tag];
+	selmon->mfact = p->mfacts[tag];
+	selmon->sellt = p->sellts[tag];
+	selmon->lt[0] = p->ltidxs[tag][0];
+	selmon->lt[1] = p->ltidxs[tag][1];
+
+	if (selmon->showbar != p->showbars[tag])
+		togglebar(NULL);
+
+	focus(NULL);
+	arrange(selmon);
+}
+
 void
 toggleview(const Arg *arg)
 {
@@ -2561,18 +2561,7 @@ toggleview(const Arg *arg)
 			selmon->pertag->curtag = i + 1;
 		}
 
-		/* apply settings for this view */
-		selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag];
-		selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag];
-		selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
-		selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
-		selmon->lt[selmon->sellt^1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt^1];
-
-		if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
-			togglebar(NULL);
-
-		focus(NULL);
-		arrange(selmon);
+		applypertag();
 	}
 }
 
@@ -2625,11 +2614,9 @@ unmanage(Client *c, int destroyed)
 	}
 	free(c);
 
-	if (!s) {
-		arrange(m);
-		focus(NULL);
-		updateclientlist();
-	}
+	arrange(m);
+	focus(NULL);
+	updateclientlist();
 }
 
 void
@@ -2838,13 +2825,11 @@ updatesizehints(Client *c)
 void
 updatestatus(void)
 {
-	Monitor *m;
 	if (!gettextprop(root, XA_WM_NAME, rawstext, sizeof(rawstext)))
 		strcpy(stext, "dwm-"VERSION);
 	else
 		copyvalidchars(stext, rawstext);
-	for (m = mons; m; m = m->next)
-		drawbar(m);
+	drawbars();
 }
 
 static long long
@@ -3011,17 +2996,7 @@ view(const Arg *arg)
 		selmon->pertag->curtag = tmptag;
 	}
 
-	selmon->nmaster = selmon->pertag->nmasters[selmon->pertag->curtag];
-	selmon->mfact = selmon->pertag->mfacts[selmon->pertag->curtag];
-	selmon->sellt = selmon->pertag->sellts[selmon->pertag->curtag];
-	selmon->lt[selmon->sellt] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt];
-	selmon->lt[selmon->sellt^1] = selmon->pertag->ltidxs[selmon->pertag->curtag][selmon->sellt^1];
-
-	if (selmon->showbar != selmon->pertag->showbars[selmon->pertag->curtag])
-		togglebar(NULL);
-
-	focus(NULL);
-	arrange(selmon);
+	applypertag();
 }
 
 pid_t

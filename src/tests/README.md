@@ -4,23 +4,38 @@ From the repository root, run `make test` with GCC or Clang, C99 support,
 `pkg-config`, the configured X11, Xft, fontconfig, XCB, and Xinerama development
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
-geometry and gap branches, core monitor/client state helpers (including
-refusing scratchpad-only tag views, reading the parent of a process from
+geometry and gap branches, including exact bottom-stack and centered-floating
+master geometry in portrait and landscape with a floating client, core
+monitor/client state helpers (including
+stack positions for previous selection, increments with wrapping, hidden and sticky
+clients, missing selections and empty lists; monitor traversal in both directions
+and wrapping with one, two and three monitors, removing the first, middle,
+last and only monitor and unmapping then destroying its bar,
+showing all monitors before arranging them, and restacking only when arranging
+one monitor, restoring both per-tag layout slots and master settings with either
+layout selected, refusing scratchpad-only tag views, spawning a missing scratchpad
+with empty or unrelated client lists using a spawn stub, reading the parent of a process from
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces
 and parentheses, rejecting Xresources strings that exceed
 their buffer, keeping the selected-tag font set disabled for an empty or NULL
-`selfontweight`, parsing, measuring and click mapping of status2d codes with
-every truncated, malformed or out-of-range form falling back to plain text,
-plus palette loading that accepts only exactly `#rrggbb`, and finding the
-dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
+`selfontweight`, filtering status bytes 1-31 while preserving all other non-NUL
+bytes, including in-place filtering, parsing, measuring and click mapping of
+status2d codes with every truncated, malformed or out-of-range form falling back to plain text,
+including malformed, adjacent and truncated codes in the same status,
+plus palette loading that accepts only exactly `#rrggbb`, status block mapping
+with unmarked text, consecutive markers, UTF-8 and an empty status, and finding
+the dwmblocks PID without parsing anything when `pidof` fails or prints nothing,
 and `buttonpress()` signalling the block under a status click, including a
 status wider than the bar and the exact first and last pixel of each block, all
 without X11, XTEST or `pidof`),
-tag shifting,
+tag shifting in both directions, including multi-tag views, scratchpad clients,
+views with no clients and multi-step shifts; shifttag also checks all clients,
+includes scratchpad tags and does nothing when no client matches,
 UTF-8 decoding and drawing API guards, utility error behavior, and
 build/configuration/manpage contracts, including the `selfontweight` selected-tag
 font set, the PKGBUILD source and
-dependencies and the LICENSE file shipped by `make dist`, and that `make install`
+dependencies and the LICENSE file shipped by `make dist`, that editing either
+source included by `config.h` rebuilds `dwm.o`, and that `make install`
 and the Arch package's install and upgrade scriptlet give `dwmsysmon` the
 `cap_perfmon=p` (permitted only) capability with a stub `setcap`, and only print how to set it
 when that fails, without failing themselves.
@@ -31,8 +46,16 @@ also starts a private X server and the production `dwm` event loop. When the
 XTEST development files are available, an XTEST client checks that idle Mod+q
 delivers a WM_DELETE_WINDOW request without further input, and that a click on
 an unfocused client is replayed before subsequent typing; both deliveries must
-occur without an external wake. If the files are unavailable, this input
-regression check is reported as skipped. With the same files and `pidof`, and
+occur without an external wake. It checks that switching to an empty tag clears
+the selected client's title from the bar, and switches between tags with different
+layouts, master counts and bar visibility, checking that both view and toggleview
+restore the windows' geometry. It also shows and hides an existing scratchpad
+repeatedly and checks focus; a terminal stub prevents accidental desktop launches
+if scratchpad lookup fails. If the files are unavailable, this input regression
+check is reported as skipped. A separate Xlib check unmaps, remaps and destroys
+tiled clients, checking that removal updates the client list, focus and remaining
+window geometry, including when the last client is removed. It does not exercise
+removal of a swallowed client. With the XTEST files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
 the pointer, pixel-exact against the drawn status, including when the status
@@ -40,8 +63,9 @@ is wider than the bar; this is the pixel-level counterpart of the headless
 `buttonpress()` check above, which runs everywhere. The production `transient.c`
 executable is also exercised. An Xlib client verifies
 resource-driven borders,
-rendered bar text, a status that leaves only a narrow gap before it without
-stale title pixels, colored status segments set through the root window name
+rendered bar text, the fallback status after the root window name is deleted,
+a status that leaves only a narrow gap before it without stale title pixels,
+colored status segments set through the root window name
 (pixel colors, alignment against the right edge of the bar, that codes take
 no width, and that text and rectangles pushed off the left edge by ^f advances
 beyond 16-bit X11 coordinates are not drawn, and that the status background
@@ -65,8 +89,12 @@ before it creates its tiled window; this order is deliberate, so the tiled
 window is always the newest, selected client for the bar checks.
 
 The geometry harness supplies the monitor/client iteration and resize boundary
-used by the layout code. It verifies requested rectangles; it does not test X
-server placement, size hints, or full key event dispatch. The normal `make`
+used by the layout code. It checks that layout factors and pixel remainders use
+the tiled-client count, excluding floating clients, including with no master.
+For centered master it also checks exact rectangles with a floating client,
+odd pixel remainders, and zero, one, two or more masters than tiled clients.
+It verifies requested rectangles; it does not test X server placement, size hints,
+or full key event dispatch. The normal `make`
 target remains the production build check.
 
 The `sigusr2` check builds the production signal-pipe module and sends SIGUSR2
@@ -128,7 +156,9 @@ fans of 0-30000, `cpuhist=<0-100>[,<0-100>...]` with up to 16 samples, and
 oversized, empty and NUL-containing payloads are no value, and a malformed,
 out-of-range or repeated field, such as a history with an empty, signed,
 four-digit or out-of-range sample or a 17th one, is missing while the others
-stay; every combination of values and history lengths survives encoding and
+stay, even when several fields are rejected and malformed and valid repeats
+appear in either order; rejected lists leave no partial samples in the output.
+Every combination of values and history lengths survives encoding and
 decoding, the longest payload fits, and without a GPU still fits the 128 bytes a
 dwm from before the GPU usage reads, encoding leaves out a usage or history with
 a sample out of range or too many samples rather than sending part of it, a

@@ -422,8 +422,30 @@ static void
 check_status_colors(Display *dpy, Window root)
 {
 	int width = DisplayWidth(dpy, DefaultScreen(dpy));
-	int from = width - 400, left = -1, plain_left = -1;
-	unsigned int count;
+	int from = width - 400, left = -1, plain_left = -1, fallback_left, i;
+	unsigned int count, fallback_count;
+
+	/* The test dwm is built with VERSION=6.5. Deleting the name restores that fallback. */
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 16, NULL) == 16,
+	      "the status before the fallback was not drawn");
+	set_status(dpy, root, "dwm-6.5");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 0, NULL) == 0,
+	      "the explicit fallback status was not drawn");
+	fallback_count = count_bar_pixels(dpy, root, NULL, width - 100, &fallback_left);
+	CHECK(fallback_count > 0, "the explicit fallback status was empty");
+	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
+	CHECK(wait_bar_color(dpy, root, "#ff5555", from, 16, NULL) == 16,
+	      "the status before deleting the root name was not drawn");
+	XDeleteProperty(dpy, root, XA_WM_NAME);
+	XFlush(dpy);
+	for (i = 0; i < 80; i++) {
+		count = count_bar_pixels(dpy, root, NULL, width - 100, &left);
+		if (count == fallback_count && left == fallback_left)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "deleting the root name did not restore the fallback status");
 
 	/* a 4x4 rectangle, 50px of cursor advance, and 2px of padding; ^r does not advance */
 	set_status(dpy, root, "^c#ff5555^^r0,0,4,4^^f50^");
@@ -671,6 +693,70 @@ check_malformed_geometry(Display *dpy, Window root)
 	      "a root ConfigureNotify without a size changed the bar");
 }
 
+/* Wait for both the advertised client list and focus to reflect a removal. */
+static int
+wait_clients(Display *dpy, Window root, const Window *wins, unsigned int count, Window focus)
+{
+	Atom property = XInternAtom(dpy, "_NET_CLIENT_LIST", False), type;
+	unsigned char *data;
+	unsigned long n, after;
+	Window selected;
+	int format, revert, i, matches;
+	unsigned int j;
+
+	for (i = 0; i < 100; i++) {
+		data = NULL;
+		matches = XGetWindowProperty(dpy, root, property, 0, 128, False, XA_WINDOW,
+		                             &type, &format, &n, &after, &data) == Success
+		       && n == count && !after && (count == 0 || (type == XA_WINDOW && format == 32));
+		for (j = 0; matches && j < count; j++)
+			matches = ((Window *)data)[j] == wins[j];
+		if (data)
+			XFree(data);
+		XGetInputFocus(dpy, &selected, &revert);
+		if (matches && selected == focus)
+			return 1;
+		pause_millis(25);
+	}
+	return 0;
+}
+
+static void
+check_unmanage(Display *dpy, Window root)
+{
+	Window a, b, pair[2];
+	XWindowAttributes split = {0}, expanded = {0};
+
+	a = XCreateSimpleWindow(dpy, root, 0, 0, 200, 200, 0, 0, 0);
+	b = XCreateSimpleWindow(dpy, root, 0, 0, 200, 200, 0, 0, 0);
+	XMapWindow(dpy, a);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &a, 1, a), "first client was not managed and focused");
+	XMapWindow(dpy, b);
+	XFlush(dpy);
+	pair[0] = a; pair[1] = b;
+	CHECK(wait_clients(dpy, root, pair, 2, b), "second client was not managed and focused");
+	CHECK(XGetWindowAttributes(dpy, a, &split), "could not inspect the split layout");
+
+	XUnmapWindow(dpy, b);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &a, 1, a), "unmapping did not remove the client and focus its neighbor");
+	CHECK(XGetWindowAttributes(dpy, a, &expanded) && expanded.width > split.width,
+	      "unmapping did not rearrange the remaining tiled client");
+
+	XMapWindow(dpy, b);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, pair, 2, b), "unmapped client was not managed again");
+	XDestroyWindow(dpy, b);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &a, 1, a), "destroying did not remove the client and focus its neighbor");
+	CHECK(XGetWindowAttributes(dpy, a, &expanded) && expanded.width > split.width,
+	      "destroying did not rearrange the remaining tiled client");
+	XDestroyWindow(dpy, a);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "last client removal did not clear the list and focus");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -722,6 +808,13 @@ main(int argc, char *argv[])
 	if (argc == 2 && !strcmp(argv[1], "atom-format")) {
 		check_atom_format(dpy, root);
 		check_client_info(dpy, root);
+		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 unmanage: ordinary unmap and destroy update the layout, focus and client list */
+	if (argc == 2 && !strcmp(argv[1], "unmanage")) {
+		check_unmanage(dpy, root);
 		XCloseDisplay(dpy);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}

@@ -161,20 +161,19 @@ getgaps(Monitor *m, int *oh, int *ov, int *ih, int *iv, unsigned int *nc)
 	*nc = n;            // number of clients
 }
 
+/* n is the tiled-client count from getgaps. */
 void
-getfacts(Monitor *m, int msize, int ssize, float *mf, float *sf, int *mr, int *sr)
+getfacts(Monitor *m, unsigned int n, int msize, int ssize, float *mf, float *sf, int *mr, int *sr)
 {
-	unsigned int n;
+	unsigned int i, nmaster = m->nmaster;
 	float mfacts, sfacts;
 	int mtotal = 0, stotal = 0;
-	Client *c;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	mfacts = MIN(n, m->nmaster);
-	sfacts = n - m->nmaster;
+	mfacts = MIN(n, nmaster);
+	sfacts = n - nmaster;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (n < m->nmaster)
+	for (i = 0; i < n; i++)
+		if (i < nmaster)
 			mtotal += msize / mfacts;
 		else
 			stotal += ssize / sfacts;
@@ -219,11 +218,10 @@ bstack(Monitor *m)
 	if (m->nmaster && n > m->nmaster) {
 		sh = (mh - ih) * (1 - m->mfact);
 		mh = (mh - ih) * m->mfact;
-		sx = mx;
 		sy = my + mh + ih;
 	}
 
-	getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++) {
 		if (i < m->nmaster) {
@@ -287,19 +285,19 @@ centeredmaster(Monitor *m)
 	}
 
 	/* calculate facts */
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++) {
-		if (!m->nmaster || n < m->nmaster)
+	for (i = 0; i < n; i++) {
+		if (!m->nmaster || i < m->nmaster)
 			mfacts += 1;
-		else if ((n - m->nmaster) % 2)
+		else if ((i - m->nmaster) % 2)
 			lfacts += 1; // total factor of left hand stack area
 		else
 			rfacts += 1; // total factor of right hand stack area
 	}
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (!m->nmaster || n < m->nmaster)
+	for (i = 0; i < n; i++)
+		if (!m->nmaster || i < m->nmaster)
 			mtotal += mh / mfacts;
-		else if ((n - m->nmaster) % 2)
+		else if ((i - m->nmaster) % 2)
 			ltotal += lh / lfacts;
 		else
 			rtotal += rh / rfacts;
@@ -361,13 +359,9 @@ centeredfloatingmaster(Monitor *m)
 		}
 		mx = m->wx + (m->ww - mw) / 2;
 		my = m->wy + (m->wh - mh) / 2;
-
-		sx = m->wx + ov;
-		sy = m->wy + oh;
-		sh = m->wh - 2*oh;
 	}
 
-	getfacts(m, mw, sw, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mw, sw, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
 		if (i < m->nmaster) {
@@ -414,7 +408,7 @@ deck(Monitor *m)
 		sh = m->wh - 2*oh;
 	}
 
-	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
 	if (n - m->nmaster > 0) /* override layout symbol */
 		snprintf(m->ltsymbol, sizeof m->ltsymbol, "D %d", n - m->nmaster);
@@ -566,7 +560,7 @@ tilelayout(Monitor *m, int rightside)
 			sx = mx + mw + iv;
 	}
 
-	getfacts(m, mh, sh, &mfacts, &sfacts, &mrest, &srest);
+	getfacts(m, n, mh, sh, &mfacts, &sfacts, &mrest, &srest);
 
 	for (i = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), i++)
 		if (i < m->nmaster) {

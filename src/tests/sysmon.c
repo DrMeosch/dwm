@@ -326,6 +326,8 @@ test_payload(void)
 		{ "cpu:5", "-1 -1" }, { "vram=5", "-1 -1" }, { "cpu=5,6", "-1 -1" }, { "cpu=0x10", "-1 -1" },
 		{ "\377\377\377", "-1 -1" }, { "cpu=\033[2J", "-1 -1" },
 		{ "cpu=5 cpu=6", "-1 -1" }, { "cpu=5 temp=50 temp=50", "5 -1" }, { "cpu=5 fan=1 fan=1", "5 -1" },
+		{ "cpu=7 cpu=bad temp=55 fan=1,2 fan=3 cpuhist=4,,5 gpu=9 gpuhist=6,7", "-1 55 gpu=9 //6,7" },
+		{ "cpu=bad cpu=7 temp=55 fan=1,,2 fan=3 cpuhist=4,,5 cpuhist=8 gpu=9 gpuhist=6,7", "-1 55 gpu=9 //6,7" },
 		{ "cpu=42 temp=151 fan=2400", "42 -1 2400" }, { "cpu=42 temp=1000", "42 -1" },
 		{ "cpu=42 temp=-5", "42 -1" }, { "cpu=42 temp=55C", "42 -1" }, { "cpu=42 temp=", "42 -1" },
 		{ "cpu=42 TEMP=55", "42 -1" }, { "cpu=42 temp=5.5", "42 -1" },
@@ -385,6 +387,19 @@ test_payload(void)
 		values_text(&v, got, sizeof got);
 		CHECK(!strcmp(got, cases[i].want), "decode(\"%s\") = \"%s\", want \"%s\"", cases[i].text, got, cases[i].want);
 		CHECK((rc == 0) == (strcmp(cases[i].want, "-1 -1") != 0), "decode(\"%s\") returned %d", cases[i].text, rc);
+	}
+	/* Rejected lists must not leave even partially parsed samples in the output. */
+	sysmon_clear(&back);
+	back.temp = 55;
+	back.gpu = 9;
+	back.ngpuhist = 2;
+	back.gpuhist[0] = 6;
+	back.gpuhist[1] = 7;
+	{
+		const char *mixed = "cpu=bad cpu=7 temp=55 fan=1,,2 fan=3 cpuhist=4,,5 cpuhist=8 gpu=9 gpuhist=6,7";
+
+		CHECK(sysmon_decode(mixed, strlen(mixed), &v) == 0 && !memcmp(&v, &back, sizeof v),
+		      "decode retained partial values from rejected fields");
 	}
 	CHECK(sysmon_decode(NULL, 5, &v) == -1 && v.cpu == -1, "decode accepted a NULL payload");
 	CHECK(sysmon_decode("cpu=5", 0, &v) == -1 && v.cpu == -1, "decode accepted an empty payload");

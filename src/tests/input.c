@@ -5,6 +5,7 @@
 #include <X11/extensions/XTest.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/select.h>
 
 static int failures;
@@ -188,6 +189,254 @@ test_click_replay(Display *dpy, Window root, int screen, KeyCode supercode,
 	return got_click && got_key;
 }
 
+typedef struct {
+	int x, y, w, h;
+} Geometry;
+
+static Geometry
+geometry(Display *dpy, Window win)
+{
+	XWindowAttributes a;
+	Geometry g = {0};
+
+	if (XGetWindowAttributes(dpy, win, &a))
+		g = (Geometry){a.x, a.y, a.width, a.height};
+	return g;
+}
+
+static int
+same_geometry(Geometry a, Geometry b)
+{
+	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+static int
+wait_geometry(Display *dpy, Window win, Geometry expected)
+{
+	int i;
+
+	for (i = 0; i < 80; i++) {
+		if (same_geometry(geometry(dpy, win), expected))
+			return 1;
+		pause_millis(25);
+	}
+	return 0;
+}
+
+static void
+key(Display *dpy, KeySym sym, KeySym modifier)
+{
+	KeyCode supercode = XKeysymToKeycode(dpy, XK_Super_L);
+	KeyCode modcode = modifier ? XKeysymToKeycode(dpy, modifier) : 0;
+	KeyCode code = XKeysymToKeycode(dpy, sym);
+
+	XTestFakeKeyEvent(dpy, supercode, True, CurrentTime);
+	if (modcode)
+		XTestFakeKeyEvent(dpy, modcode, True, CurrentTime);
+	XTestFakeKeyEvent(dpy, code, True, CurrentTime);
+	XTestFakeKeyEvent(dpy, code, False, CurrentTime);
+	if (modcode)
+		XTestFakeKeyEvent(dpy, modcode, False, CurrentTime);
+	XTestFakeKeyEvent(dpy, supercode, False, CurrentTime);
+	XFlush(dpy);
+}
+
+static void
+test_scratchpad_toggle(Display *dpy, Window root)
+{
+	Window scratch, normal;
+	XClassHint hint = { "spcalc", "St" };
+	Atom property = XInternAtom(dpy, "_NET_CLIENT_INFO", False), type;
+	int format, i, managed = 0;
+	unsigned long count, remaining;
+	unsigned char *data;
+
+	normal = create_client(dpy, root, "scratchpad normal client", 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad test normal client was not selected");
+	scratch = XCreateSimpleWindow(dpy, root, 40, 40, 180, 120, 0, 0, 0);
+	XSetClassHint(dpy, scratch, &hint);
+	XStoreName(dpy, scratch, "scratchpad regression");
+	XMapWindow(dpy, scratch);
+	XFlush(dpy);
+	for (i = 0; i < 80; i++) {
+		data = NULL;
+		if (XGetWindowProperty(dpy, scratch, property, 0, 2, False, XA_CARDINAL,
+		                       &type, &format, &count, &remaining, &data) == Success
+		&& type == XA_CARDINAL && format == 32 && count == 2
+		&& ((unsigned long *)data)[0] == (1UL << 10))
+			managed = 1;
+		if (data)
+			XFree(data);
+		if (managed)
+			break;
+		pause_millis(25);
+	}
+	CHECK(managed, "scratchpad client was not managed with its tag");
+	if (!managed) {
+		XDestroyWindow(dpy, scratch);
+		XDestroyWindow(dpy, normal);
+		return;
+	}
+	CHECK(wait_active(dpy, root, normal), "hidden scratchpad changed focus");
+	key(dpy, XK_v, XK_Shift_L); /* push the normal client ahead of the scratchpad */
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, scratch), "scratchpad did not show and gain focus (active %#lx)", active_window(dpy, root));
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad did not hide and restore focus");
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, scratch), "scratchpad did not show again (active %#lx)", active_window(dpy, root));
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, normal), "scratchpad did not hide again");
+	XDestroyWindow(dpy, scratch);
+	XDestroyWindow(dpy, normal);
+	XFlush(dpy);
+}
+
+static int
+bar_title_ink(Display *dpy, Window bar, int height, unsigned long background)
+{
+	XImage *image = XGetImage(dpy, bar, 250, 0, 150, height, AllPlanes, ZPixmap);
+	int x, y, ink = 0;
+
+	if (!image)
+		return -1;
+	for (y = 0; y < height; y++)
+		for (x = 0; x < 150; x++)
+			ink += XGetPixel(image, x, y) != background;
+	XDestroyImage(image);
+	return ink;
+}
+
+/* The empty view must clear the selected client's title from the bar. */
+static void
+test_empty_title(Display *dpy, Window root)
+{
+	Window parent, *children = NULL, bar = None, client;
+	XWindowAttributes a;
+	XColor background, exact;
+	unsigned int count, j;
+	char title[201];
+	int i, ink = 0;
+
+	if (!XQueryTree(dpy, root, &root, &parent, &children, &count)) {
+		CHECK(0, "could not find the bar for the empty title check");
+		return;
+	}
+	for (j = 0; j < count; j++)
+		if (XGetWindowAttributes(dpy, children[j], &a) && a.override_redirect
+		&& a.map_state == IsViewable && a.x == 0 && a.y == 0
+		&& a.width == DisplayWidth(dpy, DefaultScreen(dpy)) && a.height < 40) {
+			bar = children[j];
+			break;
+		}
+	if (children)
+		XFree(children);
+	if (bar == None || !XAllocNamedColor(dpy, DefaultColormap(dpy, DefaultScreen(dpy)),
+	                                    "#282a36", &background, &exact)) {
+		CHECK(0, "could not prepare the empty title check");
+		return;
+	}
+	memset(title, '_', sizeof title - 1);
+	title[sizeof title - 1] = '\0';
+	client = create_client(dpy, root, title, 0);
+	CHECK(wait_active(dpy, root, client), "title test client was not selected");
+	for (i = 0; i < 80; i++) {
+		ink = bar_title_ink(dpy, bar, a.height, background.pixel);
+		if (ink > 0)
+			break;
+		pause_millis(25);
+	}
+	CHECK(ink > 0, "selected title was not drawn in the bar");
+	key(dpy, XK_9, 0);
+	CHECK(wait_active(dpy, root, None), "empty tag retained an active client");
+	for (i = 0; i < 80; i++) {
+		ink = bar_title_ink(dpy, bar, a.height, background.pixel);
+		if (ink == 0)
+			break;
+		pause_millis(25);
+	}
+	CHECK(ink == 0, "empty tag left %d title pixels in the bar", ink);
+	key(dpy, XK_1, 0);
+	XDestroyWindow(dpy, client);
+	XFreeColors(dpy, DefaultColormap(dpy, DefaultScreen(dpy)), &background.pixel, 1, 0);
+	XFlush(dpy);
+}
+
+static void
+test_pertag_views(Display *dpy, Window root)
+{
+	Window a, b, c, d;
+	Geometry a1, b1, c2, d2;
+	int i;
+
+	a = create_client(dpy, root, "tag-one-a", 0);
+	CHECK(wait_active(dpy, root, a), "first tag-one client was not selected");
+	b = create_client(dpy, root, "tag-one-b", 0);
+	CHECK(wait_active(dpy, root, b), "second tag-one client was not selected");
+	key(dpy, XK_t, 0); /* tile, two masters, hidden bar */
+	key(dpy, XK_o, 0);
+	key(dpy, XK_b, 0);
+	for (i = 0; i < 80; i++) {
+		a1 = geometry(dpy, a);
+		b1 = geometry(dpy, b);
+		if (a1.w > 0 && a1.x == b1.x && a1.y != b1.y
+		&& (a1.y == 10 || b1.y == 10))
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "tag one did not arrange two masters vertically without a bar");
+
+	key(dpy, XK_2, 0);
+	c = create_client(dpy, root, "tag-two-c", 0);
+	CHECK(wait_active(dpy, root, c), "first tag-two client was not selected");
+	d = create_client(dpy, root, "tag-two-d", 0);
+	CHECK(wait_active(dpy, root, d), "second tag-two client was not selected");
+	key(dpy, XK_u, XK_Shift_L); /* monocle, visible bar */
+	for (i = 0; i < 80; i++) {
+		c2 = geometry(dpy, c);
+		d2 = geometry(dpy, d);
+		if (same_geometry(c2, d2) && c2.y > 10)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "tag two did not use monocle with the bar visible");
+
+	key(dpy, XK_1, 0);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "view did not restore tag-one layout, master count and bar");
+	key(dpy, XK_2, 0);
+	CHECK(wait_geometry(dpy, c, c2) && wait_geometry(dpy, d, d2),
+	      "view did not restore tag-two layout and bar");
+	key(dpy, XK_1, 0);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "view did not return to tag one");
+	key(dpy, XK_2, XK_Control_L); /* include tag two, keep tag one current */
+	key(dpy, XK_1, XK_Control_L); /* remove tag one, select tag two */
+	CHECK(wait_geometry(dpy, c, c2) && wait_geometry(dpy, d, d2),
+	      "toggleview did not restore tag-two layout and bar");
+	key(dpy, XK_1, XK_Control_L);
+	key(dpy, XK_2, XK_Control_L);
+	CHECK(wait_geometry(dpy, a, a1) && wait_geometry(dpy, b, b1),
+	      "toggleview did not restore tag-one layout, master count and bar");
+
+	/* Leave both tags with their default layout slots and the bar shown. */
+	key(dpy, XK_o, XK_Shift_L);
+	key(dpy, XK_b, 0);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_t, XK_Shift_L);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_2, 0);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_t, XK_Shift_L);
+	key(dpy, XK_z, XK_Shift_L);
+	key(dpy, XK_1, 0);
+	XDestroyWindow(dpy, a);
+	XDestroyWindow(dpy, b);
+	XDestroyWindow(dpy, c);
+	XDestroyWindow(dpy, d);
+	XFlush(dpy);
+}
+
 int
 main(void)
 {
@@ -215,6 +464,9 @@ main(void)
 	if (supercode && qcode && jcode && acode) {
 		test_idle_close(dpy, root, supercode, qcode);
 		test_click_replay(dpy, root, DefaultScreen(dpy), supercode, jcode, acode);
+		test_empty_title(dpy, root);
+		test_pertag_views(dpy, root);
+		test_scratchpad_toggle(dpy, root);
 	}
 	XCloseDisplay(dpy);
 	if (failures)

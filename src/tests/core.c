@@ -44,6 +44,13 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #define posix_spawnp record_spawnp
 #define XChangeProperty record_changeproperty
 #define XSync record_sync
+#define XMoveWindow record_movewindow
+#define XSetInputFocus record_setinputfocus
+#define XDeleteProperty record_deleteproperty
+#define XConfigureWindow record_configurewindow
+#define XCheckMaskEvent record_checkmaskevent
+#define XUnmapWindow record_unmapwindow
+#define XDestroyWindow record_destroywindow
 #define popen pidof_popen
 #define pclose fclose
 #define system autostart_system
@@ -53,6 +60,13 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #undef popen
 #undef pclose
 #undef main
+#undef XDestroyWindow
+#undef XUnmapWindow
+#undef XCheckMaskEvent
+#undef XConfigureWindow
+#undef XMoveWindow
+#undef XSetInputFocus
+#undef XDeleteProperty
 #undef XSync
 #undef XChangeProperty
 #undef posix_spawnp
@@ -87,6 +101,88 @@ record_sync(Display *d, Bool discard)
 	return 1;
 }
 
+static char arrange_events[32];
+static int narrange_events, recording_arrange;
+
+static void
+arrange_event(char event)
+{
+	if (recording_arrange && narrange_events < (int)sizeof arrange_events - 1) {
+		arrange_events[narrange_events++] = event;
+		arrange_events[narrange_events] = '\0';
+	}
+}
+
+int
+record_movewindow(Display *d, Window w, int x, int y)
+{
+	(void)d; (void)x; (void)y;
+	if (!recording_arrange)
+		abort();
+	arrange_event(w == 101 ? 'a' : w == 102 ? 'b' : '?');
+	return 1;
+}
+
+int
+record_setinputfocus(Display *d, Window w, int revert, Time time)
+{
+	(void)d; (void)w; (void)revert; (void)time;
+	return 1;
+}
+
+int
+record_deleteproperty(Display *d, Window w, Atom property)
+{
+	(void)d; (void)w; (void)property;
+	return 1;
+}
+
+int
+record_configurewindow(Display *d, Window w, unsigned int mask, XWindowChanges *changes)
+{
+	(void)d; (void)mask; (void)changes;
+	if (!recording_arrange)
+		abort();
+	arrange_event(w == 101 ? 'R' : w == 102 ? 'S' : '?');
+	return 1;
+}
+
+Bool
+record_checkmaskevent(Display *d, long mask, XEvent *event)
+{
+	(void)d; (void)mask; (void)event;
+	if (!recording_arrange)
+		abort();
+	return False;
+}
+
+static Window unmapped_bar, destroyed_bar;
+static int bar_events;
+
+int
+record_unmapwindow(Display *d, Window w)
+{
+	(void)d;
+	unmapped_bar = w;
+	bar_events = bar_events * 10 + 1;
+	return 1;
+}
+
+int
+record_destroywindow(Display *d, Window w)
+{
+	(void)d;
+	destroyed_bar = w;
+	bar_events = bar_events * 10 + 2;
+	return 1;
+}
+
+static void
+record_layout(Monitor *m)
+{
+	arrange_event(m->num == 1 ? 'A' : 'B');
+}
+
 static int failures;
 
 #define CHECK(condition, ...) do { \
@@ -103,6 +199,120 @@ free_monitor(Monitor *m)
 {
 	free(m->pertag);
 	free(m);
+}
+
+static void
+test_cleanupmon(void)
+{
+	Monitor *saved_mons = mons;
+	Monitor *first = calloc(1, sizeof *first), *middle = calloc(1, sizeof *middle);
+	Monitor *last = calloc(1, sizeof *last), *tail = calloc(1, sizeof *tail);
+
+	if (!first || !middle || !last || !tail)
+		abort();
+	first->barwin = 101;
+	middle->barwin = 102;
+	last->barwin = 103;
+	tail->barwin = 104;
+	mons = first;
+	first->next = middle;
+	middle->next = last;
+	last->next = tail;
+
+	bar_events = 0;
+	cleanupmon(middle);
+	CHECK(mons == first && first->next == last && last->next == tail,
+	      "cleanupmon did not unlink the middle monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 102 && destroyed_bar == 102,
+	      "cleanupmon did not unmap then destroy the middle bar");
+	bar_events = 0;
+	cleanupmon(tail);
+	CHECK(mons == first && first->next == last && !last->next,
+	      "cleanupmon did not unlink the last monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 104 && destroyed_bar == 104,
+	      "cleanupmon did not unmap then destroy the last bar");
+	bar_events = 0;
+	cleanupmon(first);
+	CHECK(mons == last && !last->next, "cleanupmon did not unlink the first monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 101 && destroyed_bar == 101,
+	      "cleanupmon did not unmap then destroy the first bar");
+	bar_events = 0;
+	cleanupmon(last);
+	CHECK(!mons, "cleanupmon did not unlink the only monitor");
+	CHECK(bar_events == 12 && unmapped_bar == 103 && destroyed_bar == 103,
+	      "cleanupmon did not unmap then destroy the only bar");
+	mons = saved_mons;
+}
+
+static void
+test_pertag_layout_slots(void)
+{
+	Monitor *m = createmon(), *saved_selmon = selmon, *saved_mons = mons;
+	Fnt font = {0};
+	Drw drawing = {.fonts = &font}, *saved_drw = drw;
+	unsigned int slot;
+
+	drw = &drawing;
+	selmon = m;
+	mons = NULL;
+	m->showbar = m->pertag->showbars[2] = 0;
+	m->pertag->curtag = 2;
+	m->pertag->nmasters[2] = 3;
+	m->pertag->mfacts[2] = 0.75f;
+	m->pertag->ltidxs[2][0] = &layouts[0];
+	m->pertag->ltidxs[2][1] = &layouts[1];
+	for (slot = 0; slot < 2; slot++) {
+		m->nmaster = 0;
+		m->mfact = 0.5f;
+		m->sellt = 1 - slot;
+		m->lt[0] = m->lt[1] = &layouts[8];
+		m->pertag->sellts[2] = slot;
+		applypertag();
+		CHECK(m->sellt == slot && m->lt[0] == &layouts[0] && m->lt[1] == &layouts[1],
+		      "per-tag restoration lost a layout slot with slot %u selected", slot);
+		CHECK(m->nmaster == 3 && m->mfact == 0.75f,
+		      "per-tag restoration lost the master settings");
+	}
+	selmon = saved_selmon;
+	mons = saved_mons;
+	drw = saved_drw;
+	free_monitor(m);
+}
+
+static void
+test_arrange_order(void)
+{
+	Layout layout = { "test", record_layout };
+	Monitor first = {0}, second = {0}, *saved_mons = mons;
+	Client a = {0}, b = {0};
+	Drw stub = {0}, *saved_drw = drw;
+	Fnt font = {0};
+
+	first.num = 1; first.next = &second; first.stack = first.sel = &a;
+	second.num = 2; second.stack = second.sel = &b;
+	first.lt[0] = second.lt[0] = &layout;
+	first.tagset[0] = second.tagset[0] = 1;
+	a.mon = &first; a.win = 101; a.tags = 1;
+	b.mon = &second; b.win = 102; b.tags = 1;
+	stub.fonts = &font;
+	drw = &stub;
+	mons = &first;
+	recording_arrange = 1;
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(NULL);
+	CHECK(!strcmp(arrange_events, "abAB"),
+	      "arrange all did not show every monitor before arranging: %s", arrange_events);
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(&second);
+	CHECK(!strcmp(arrange_events, "bBS"),
+	      "arrange one did not show, arrange and restack only that monitor: %s", arrange_events);
+	narrange_events = 0; arrange_events[0] = '\0';
+	arrange(&first);
+	CHECK(!strcmp(arrange_events, "aAR"),
+	      "arrange first also touched other monitors: %s", arrange_events);
+	recording_arrange = 0;
+	mons = saved_mons;
+	drw = saved_drw;
 }
 
 static void
@@ -136,7 +346,9 @@ test_createmon(void)
 static void
 test_copyvalidchars(void)
 {
-	char out[64];
+	char out[256];
+	unsigned char raw[256], expected[225];
+	int i;
 
 	copyvalidchars(out, "ok\tbad\n\r\001 done");
 	CHECK(strcmp(out, "okbad done") == 0,
@@ -144,6 +356,22 @@ test_copyvalidchars(void)
 	copyvalidchars(out, "utf-8: \303\251");
 	CHECK(strcmp(out, "utf-8: \303\251") == 0,
 	      "copyvalidchars damaged a non-ASCII byte sequence");
+	copyvalidchars(out, "\001\037");
+	CHECK(!out[0], "copyvalidchars did not empty a control-only status");
+	copyvalidchars(out, "");
+	CHECK(!out[0], "copyvalidchars did not empty an empty status");
+	for (i = 1; i <= 255; i++)
+		raw[i - 1] = i;
+	raw[255] = 0;
+	for (i = 32; i <= 255; i++)
+		expected[i - 32] = i;
+	expected[224] = 0;
+	copyvalidchars(out, (char *)raw);
+	CHECK(!memcmp(out, expected, sizeof expected),
+	      "copyvalidchars did not preserve every non-control byte");
+	copyvalidchars((char *)raw, (char *)raw);
+	CHECK(!memcmp(raw, expected, sizeof expected),
+	      "copyvalidchars did not filter in place");
 }
 
 /* statuscode() must never read past the n bytes it is given */
@@ -221,6 +449,11 @@ test_status2d(void)
 		strcpy(text, "^f10^^f10^^f");
 		CHECK(drawstatus(text, strlen(text), 5, 0) == 20,
 		      "drawstatus did not measure relative to the start");
+		strcpy(text, "bad^x^^f4^^f6^tail^f3");
+		CHECK(drawstatus(text, strlen(text), 5, 0) == 10
+		      && drawstatus(text, strlen("bad^x^^f4^^f6"), 5, 0) == 4
+		      && !strcmp(text, "bad^x^^f4^^f6^tail^f3"),
+		      "drawstatus mishandled malformed, adjacent or truncated codes");
 
 		/* clicks map through the same walker; codes themselves take no space */
 		strcpy(rawstext, "\001^f50^\002^f30^\003^f20^");
@@ -231,7 +464,14 @@ test_status2d(void)
 		      "statusblocksig mapped a click to the wrong block");
 		strcpy(rawstext, "no signal ^f50^");
 		CHECK(statusblocksig(0, 10) == 0, "statusblocksig invented a block");
+		strcpy(rawstext, "\303\251^f5^\001\002^f4^\037");
+		CHECK(statusblocksig(20, 24) == 0 && statusblocksig(20, 25) == 2
+		      && statusblocksig(20, 28) == 2 && statusblocksig(20, 29) == 31,
+		      "statusblocksig mishandled unmarked text or empty blocks");
+		CHECK(!strcmp(rawstext, "\303\251^f5^\001\002^f4^\037"),
+		      "statusblocksig changed the status text");
 		rawstext[0] = '\0';
+		CHECK(statusblocksig(0, 0) == 0, "statusblocksig invented a block for empty status");
 		drw = NULL;
 	}
 
@@ -352,6 +592,7 @@ test_geometry_helpers(void)
 {
 	Monitor left = {.wx = 0, .wy = 0, .ww = 500, .wh = 400};
 	Monitor right = {.wx = 500, .wy = 0, .ww = 500, .wh = 400};
+	Monitor third = {0};
 	Client c = {.mon = &left, .bw = 2, .w = 50, .h = 40};
 	Layout layout = {"test", tile};
 	int x, y, w, h;
@@ -367,6 +608,20 @@ test_geometry_helpers(void)
 	selmon = &right;
 	CHECK(dirtomon(1) == &left && dirtomon(-1) == &left,
 	      "dirtomon did not wrap around the monitor list");
+	right.next = &third;
+	selmon = &left;
+	CHECK(dirtomon(2) == &right && dirtomon(-2) == &third && dirtomon(0) == &third,
+	      "dirtomon failed at the first of three monitors");
+	selmon = &right;
+	CHECK(dirtomon(1) == &third && dirtomon(-1) == &left,
+	      "dirtomon failed at the middle monitor");
+	selmon = &third;
+	CHECK(dirtomon(1) == &left && dirtomon(-1) == &right,
+	      "dirtomon failed at the last of three monitors");
+	left.next = NULL;
+	selmon = &left;
+	CHECK(dirtomon(1) == &left && dirtomon(-1) == &left && dirtomon(0) == &left,
+	      "dirtomon failed with one monitor");
 
 	left.lt[0] = &layout;
 	left.sellt = 0;
@@ -457,8 +712,9 @@ test_stackpos(void)
 	m.clients = &first;
 	first.next = &hidden;
 	hidden.next = &last;
-	m.stack = &last;
-	last.snext = &first;
+	m.stack = &first;
+	first.snext = &hidden;
+	hidden.snext = &last;
 	m.sel = &first;
 	mons = selmon = &m;
 
@@ -466,10 +722,36 @@ test_stackpos(void)
 	CHECK(stackpos(&arg) == 1, "stackpos PREVSEL returned %d", stackpos(&arg));
 	arg.i = INC(1);
 	CHECK(stackpos(&arg) == 1, "stackpos increment returned %d", stackpos(&arg));
+	arg.i = INC(-1);
+	CHECK(stackpos(&arg) == 1, "stackpos backward wrap returned %d", stackpos(&arg));
+	m.sel = &last;
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == 0, "stackpos forward wrap returned %d", stackpos(&arg));
+	arg.i = PREVSEL;
+	CHECK(stackpos(&arg) == 0, "stackpos previous first returned %d", stackpos(&arg));
+	m.sel = &first;
+	hidden.issticky = 1;
+	CHECK(stackpos(&arg) == 1, "stackpos sticky previous returned %d", stackpos(&arg));
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == 1, "stackpos sticky increment returned %d", stackpos(&arg));
+	hidden.issticky = 0;
 	arg.i = -1;
 	CHECK(stackpos(&arg) == 1, "stackpos negative returned %d", stackpos(&arg));
+	arg.i = -3;
+	CHECK(stackpos(&arg) == 0, "stackpos negative clamp returned %d", stackpos(&arg));
+	arg.i = 9;
+	CHECK(stackpos(&arg) == 9, "stackpos absolute returned %d", stackpos(&arg));
+	m.stack = &first;
+	first.snext = NULL;
+	arg.i = PREVSEL;
+	CHECK(stackpos(&arg) == -1, "stackpos missing previous returned %d", stackpos(&arg));
+	m.sel = NULL;
+	CHECK(stackpos(&arg) == 0, "stackpos previous without selection returned %d", stackpos(&arg));
+	arg.i = INC(1);
+	CHECK(stackpos(&arg) == -1, "stackpos increment without selection returned %d", stackpos(&arg));
+	m.clients = NULL;
 	arg.i = 0;
-	CHECK(stackpos(&arg) == 0, "stackpos absolute returned %d", stackpos(&arg));
+	CHECK(stackpos(&arg) == -1, "stackpos empty clients returned %d", stackpos(&arg));
 	mons = selmon = NULL;
 }
 
@@ -509,6 +791,34 @@ test_xresources(void)
 		      "resource_load rejected a color that fits: %s", buf.color);
 		XrmDestroyDatabase(db);
 	}
+}
+
+static void
+test_scratchpad_spawn(void)
+{
+	Monitor monitor = {0}, *saved_selmon = selmon;
+	Client other = {0};
+	Arg arg = {.ui = 1};
+	int saved_nspawned = nspawned;
+
+	selmon = &monitor;
+	monitor.tagset[0] = 1;
+	nspawned = 0;
+	togglescratch(&arg);
+	CHECK(monitor.tagset[0] == (1 | SPTAG(1)) && nspawned == 1
+	      && !strcmp(spawned[0], spcmd2[0]),
+	      "missing scratchpad did not enable its tag and spawn its command");
+
+	monitor.tagset[0] = 1;
+	monitor.clients = &other;
+	other.tags = 1 | SPTAG(0);
+	nspawned = 0;
+	togglescratch(&arg);
+	CHECK(monitor.tagset[0] == (1 | SPTAG(1)) && nspawned == 1
+	      && !strcmp(spawned[0], spcmd2[0]),
+	      "unrelated clients prevented the missing scratchpad from spawning");
+	nspawned = saved_nspawned;
+	selmon = saved_selmon;
 }
 
 static void
@@ -1103,7 +1413,10 @@ main(void)
 	test_sysmon_box();
 	test_autostart_command();
 	test_sysmon_start();
+	test_pertag_layout_slots();
+	test_arrange_order();
 	test_createmon();
+	test_cleanupmon();
 	test_copyvalidchars();
 	test_status2d();
 	test_client_lists();
@@ -1112,6 +1425,7 @@ main(void)
 	test_bar_geometry();
 	test_stackpos();
 	test_xresources();
+	test_scratchpad_spawn();
 	test_scratchpad_tag_views();
 	test_process_helpers();
 	test_terminal_lookup();
