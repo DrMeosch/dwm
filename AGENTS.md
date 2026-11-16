@@ -7,7 +7,9 @@ See [README.md](README.md) for features and layout.
 
 - Build: `make` (produces `./dwm`).
 - Test: `make test` (also what CI runs, followed by `make`). Run both before finishing a change.
+- In fresh environments, ensure `jq`, `pkg-config` and the configured X11 development libraries are installed. For full X11 coverage also install Xvfb, `xdpyinfo`, `xrdb`, `xprop` and XTEST development files; check that relevant X11 and input tests did not skip.
 - Clean: `make clean`.
+- When compiling `src/tests/run.sh` tests outside `make test`, reuse the Makefile's `TEST_CFLAGS` and `TEST_LIBS`, including feature macros and include paths.
 
 ## Conventions
 
@@ -21,6 +23,9 @@ See [README.md](README.md) for features and layout.
 ## Gotchas
 
 - `.envrc*` files are gitignored and hold credentials. Never read them into output, commit them, or copy their values into docs or code.
+- Never print credential stores such as `~/.docker/config.json` or private keys; check for existence or use the consuming tool instead.
 - `make dist` keeps the `src/` layout and ships the top-level `Makefile`; a new source file needs adding to its `cp` list (`config.h` includes `.c` files directly).
 - `docs/dwm-*.sh` call desktop tools (`xfconf-query`, `gsettings`, `atc`) and `pkill -USR2 -x dwm`; do not run them in a shared or CI environment.
+- When testing theme scripts, stub desktop tools and `notify-send`, and ensure the `pkill` stub can signal only the test dwm.
 - Tests must never launch configured autostart or desktop commands.
+- Keep throwaway prototypes, review logs and helper scripts outside the repository tree, e.g. under `/tmp`, unless requested as deliverables.
