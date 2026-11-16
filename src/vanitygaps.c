@@ -286,19 +286,19 @@ centeredmaster(Monitor *m)
 	}
 
 	/* calculate facts */
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++) {
-		if (!m->nmaster || n < m->nmaster)
+	for (i = 0; i < n; i++) {
+		if (!m->nmaster || i < m->nmaster)
 			mfacts += 1;
-		else if ((n - m->nmaster) % 2)
+		else if ((i - m->nmaster) % 2)
 			lfacts += 1; // total factor of left hand stack area
 		else
 			rfacts += 1; // total factor of right hand stack area
 	}
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++)
-		if (!m->nmaster || n < m->nmaster)
+	for (i = 0; i < n; i++)
+		if (!m->nmaster || i < m->nmaster)
 			mtotal += mh / mfacts;
-		else if ((n - m->nmaster) % 2)
+		else if ((i - m->nmaster) % 2)
 			ltotal += lh / lfacts;
 		else
 			rtotal += rh / rfacts;

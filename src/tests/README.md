@@ -73,6 +73,8 @@ window is always the newest, selected client for the bar checks.
 The geometry harness supplies the monitor/client iteration and resize boundary
 used by the layout code. It checks that layout factors and pixel remainders use
 the tiled-client count, excluding floating clients, including with no master.
+For centered master it also checks exact rectangles with a floating client,
+odd pixel remainders, and zero, one, two or more masters than tiled clients.
 It verifies requested rectangles; it does not test X server placement, size hints,
 or full key event dispatch. The normal `make`
 target remains the production build check.
