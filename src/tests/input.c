@@ -5,6 +5,7 @@
 #include <X11/extensions/XTest.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/select.h>
 
 static int failures;
@@ -240,6 +241,76 @@ key(Display *dpy, KeySym sym, KeySym modifier)
 	XFlush(dpy);
 }
 
+static int
+bar_title_ink(Display *dpy, Window bar, int height, unsigned long background)
+{
+	XImage *image = XGetImage(dpy, bar, 250, 0, 150, height, AllPlanes, ZPixmap);
+	int x, y, ink = 0;
+
+	if (!image)
+		return -1;
+	for (y = 0; y < height; y++)
+		for (x = 0; x < 150; x++)
+			ink += XGetPixel(image, x, y) != background;
+	XDestroyImage(image);
+	return ink;
+}
+
+/* The empty view must clear the selected client's title from the bar. */
+static void
+test_empty_title(Display *dpy, Window root)
+{
+	Window parent, *children = NULL, bar = None, client;
+	XWindowAttributes a;
+	XColor background, exact;
+	unsigned int count, j;
+	char title[201];
+	int i, ink = 0;
+
+	if (!XQueryTree(dpy, root, &root, &parent, &children, &count)) {
+		CHECK(0, "could not find the bar for the empty title check");
+		return;
+	}
+	for (j = 0; j < count; j++)
+		if (XGetWindowAttributes(dpy, children[j], &a) && a.override_redirect
+		&& a.map_state == IsViewable && a.x == 0 && a.y == 0
+		&& a.width == DisplayWidth(dpy, DefaultScreen(dpy)) && a.height < 40) {
+			bar = children[j];
+			break;
+		}
+	if (children)
+		XFree(children);
+	if (bar == None || !XAllocNamedColor(dpy, DefaultColormap(dpy, DefaultScreen(dpy)),
+	                                    "#282a36", &background, &exact)) {
+		CHECK(0, "could not prepare the empty title check");
+		return;
+	}
+	memset(title, '_', sizeof title - 1);
+	title[sizeof title - 1] = '\0';
+	client = create_client(dpy, root, title, 0);
+	CHECK(wait_active(dpy, root, client), "title test client was not selected");
+	for (i = 0; i < 80; i++) {
+		ink = bar_title_ink(dpy, bar, a.height, background.pixel);
+		if (ink > 0)
+			break;
+		pause_millis(25);
+	}
+	CHECK(ink > 0, "selected title was not drawn in the bar");
+	key(dpy, XK_9, 0);
+	CHECK(wait_active(dpy, root, None), "empty tag retained an active client");
+	for (i = 0; i < 80; i++) {
+		ink = bar_title_ink(dpy, bar, a.height, background.pixel);
+		if (ink == 0)
+			break;
+		pause_millis(25);
+	}
+	CHECK(ink == 0, "empty tag left %d title pixels in the bar", ink);
+	key(dpy, XK_1, 0);
+	XDestroyWindow(dpy, client);
+	XFreeColors(dpy, DefaultColormap(dpy, DefaultScreen(dpy)), &background.pixel, 1, 0);
+	XFlush(dpy);
+}
+
 static void
 test_pertag_views(Display *dpy, Window root)
 {
@@ -342,6 +413,7 @@ main(void)
 	if (supercode && qcode && jcode && acode) {
 		test_idle_close(dpy, root, supercode, qcode);
 		test_click_replay(dpy, root, DefaultScreen(dpy), supercode, jcode, acode);
+		test_empty_title(dpy, root);
 		test_pertag_views(dpy, root);
 	}
 	XCloseDisplay(dpy);

@@ -1308,18 +1308,13 @@ drawbar(Monitor *m)
 		end = mx;
 	}
 
-	if ((w = end - x) > bh) {
-		if (m->sel) {
-			drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
-			drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
-			if (m->sel->isfloating)
-				drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
-		} else {
-			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_rect(drw, x, 0, w, bh, 1, 1);
-		}
+	if ((w = end - x) > bh && m->sel) {
+		drw_setscheme(drw, scheme[m == selmon ? SchemeSel : SchemeInv]);
+		drw_text(drw, x, 0, w, bh, lrpad / 2, m->sel->name, 0);
+		if (m->sel->isfloating)
+			drw_rect(drw, x + boxs, boxs, boxw, boxw, m->sel->isfixed, 0);
 	} else if (w > 0) {
-		/* too narrow for the title: clear what an earlier title left behind */
+		/* no title, or too narrow: clear what an earlier title left behind */
 		drw_setscheme(drw, scheme[SchemeNorm]);
 		drw_rect(drw, x, 0, w, bh, 1, 1);
 	}
