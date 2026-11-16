@@ -310,6 +310,11 @@ test_status2d(void)
 		strcpy(text, "^f10^^f10^^f");
 		CHECK(drawstatus(text, strlen(text), 5, 0) == 20,
 		      "drawstatus did not measure relative to the start");
+		strcpy(text, "bad^x^^f4^^f6^tail^f3");
+		CHECK(drawstatus(text, strlen(text), 5, 0) == 10
+		      && drawstatus(text, strlen("bad^x^^f4^^f6"), 5, 0) == 4
+		      && !strcmp(text, "bad^x^^f4^^f6^tail^f3"),
+		      "drawstatus mishandled malformed, adjacent or truncated codes");
 
 		/* clicks map through the same walker; codes themselves take no space */
 		strcpy(rawstext, "\001^f50^\002^f30^\003^f20^");

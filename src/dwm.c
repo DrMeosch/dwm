@@ -1043,8 +1043,9 @@ drawstatus(char *text, size_t len, int x, int draw)
 	}
 	while (start < len) {
 		/* plain text runs up to the next valid code */
-		for (pos = start; pos < len && !(text[pos] == '^' && statuscode(text + pos, len - pos)); pos++)
-			;
+		for (pos = start; pos < len; pos++)
+			if (text[pos] == '^' && (code = statuscode(text + pos, len - pos)))
+				break;
 		if (pos > start) {
 			saved = text[pos];
 			text[pos] = '\0';
@@ -1056,7 +1057,6 @@ drawstatus(char *text, size_t len, int x, int draw)
 		}
 		if (pos >= len)
 			break;
-		code = statuscode(text + pos, len - pos);
 		start = pos + code;
 		p = text + pos + 2;
 		switch (text[pos + 1]) {
