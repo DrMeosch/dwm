@@ -1,7 +1,7 @@
 # Regression checks
 
 From the repository root, run `make test` with GCC or Clang, C99 support,
-`pkg-config`, the configured X11, Xft, fontconfig, XCB, and Xinerama development
+`pkg-config`, the configured X11, Xext, Xi, Xft, fontconfig, XCB, and Xinerama development
 headers/libraries, and the system math library available. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, including exact bottom-stack and centered-floating
@@ -81,6 +81,18 @@ outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.
+The XTEST switcher check uses a second private Xvfb with two different-sized
+Xinerama heads. It checks each panel's monitor and row count, recent-first
+navigation and wrapping, committing a visible window without changing the
+multi-tag view, revealing the lowest tag of a hidden multi-tag window, and
+leaving the other monitor's view, layout and remembered selection alone. It
+also checks both Ctrl keys, Escape with repeat, stale targets, external focus
+changes, the fullscreen lock, an application keyboard grab and Ctrl+j/k
+delivery after dismissal.
+Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
+placement. On an isolated X server with two side-by-side Xinerama heads, the
+same `input switcher` check also tests cancellation on pointer crossing and
+reopening on the newly selected monitor. Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 

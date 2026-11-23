@@ -135,6 +135,18 @@ Zooms/cycles focused window to/from master area.
 .B Super\-j/k
 Focus next/previous window.
 .TP
+.B Ctrl\-Tab
+Open the window switcher on the selected monitor. It lists a title and tags for
+each window on that monitor in recent focus-stack order, starting on the most
+recent other window. With Ctrl held, press j or k to move the highlight down or
+up, wrapping at the ends without changing focus. Release the last Ctrl key to
+activate the highlighted window, or press Escape to cancel. If the window is
+already visible, the current view stays as it is. Otherwise dwm reveals its
+lowest-numbered ordinary tag on that monitor. Hidden scratchpads are not listed,
+and fullscreen focus lock still applies. Ctrl\-Tab is reserved for dwm even in
+applications that use it for tab switching. Ctrl\-j/k still go to applications
+when the switcher is closed.
+.TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.
 .TP

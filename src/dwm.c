@@ -41,6 +41,8 @@
 #include <X11/Xproto.h>
 #include <X11/Xresource.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/shape.h>
+#include <X11/extensions/XInput2.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
@@ -223,6 +225,7 @@ static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
 static void focusin(XEvent *e);
+static void focusout(XEvent *e);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
@@ -279,6 +282,9 @@ static void sighup(int unused);
 static void sigterm(int unused);
 static void spawn(const Arg *arg);
 static int stackpos(const Arg *arg);
+static void switchercancel(void);
+static void switcherdraw(void);
+static void switcherevent(XEvent *e);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void togglebar(const Arg *arg);
@@ -346,6 +352,8 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[EnterNotify] = enternotify,
 	[Expose] = expose,
 	[FocusIn] = focusin,
+	[FocusOut] = focusout,
+	[GenericEvent] = switcherevent,
 	[KeyPress] = keypress,
 	[MappingNotify] = mappingnotify,
 	[MapRequest] = maprequest,
@@ -369,6 +377,20 @@ static Drw *drw;
 static Fnt *selfonts;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
+
+static int switcherxi;
+static struct {
+	Monitor *mon;
+	Window win, focus;
+	struct SwitcherRow {
+		Window win;
+		unsigned int tags;
+		char title[sizeof ((Client *)0)->name];
+	} *rows;
+	size_t count, selected, first, shown;
+	int keyboard, width, rowheight;
+	unsigned char controls[32], held[32];
+} switcher;
 
 static xcb_connection_t *xcon;
 
@@ -640,6 +662,7 @@ buttonpress(XEvent *e)
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
 
+	switchercancel();
 	click = ClkRootWin;
 	/* focus monitor if necessary */
 	if ((m = wintomon(ev->window)) && m != selmon) {
@@ -680,6 +703,7 @@ cleanup(void)
 	Monitor *m;
 	size_t i;
 
+	switchercancel();
 	view(&a);
 	selmon->lt[selmon->sellt] = &foo;
 	for (m = mons; m; m = m->next)
@@ -1346,13 +1370,18 @@ expose(XEvent *e)
 	Monitor *m;
 	XExposeEvent *ev = &e->xexpose;
 
-	if (ev->count == 0 && (m = wintomon(ev->window)))
+	if (ev->count != 0)
+		return;
+	if (ev->window == switcher.win)
+		switcherdraw();
+	else if ((m = wintomon(ev->window)))
 		drawbar(m);
 }
 
 void
 focus(Client *c)
 {
+	switchercancel();
 	if (!c || !ISVISIBLE(c)) {
 		for (c = selmon->stack; c && (!ISVISIBLE(c) || (c->issticky && !selmon->sel->issticky)); c = c->snext);
 
@@ -1386,8 +1415,22 @@ focusin(XEvent *e)
 {
 	XFocusChangeEvent *ev = &e->xfocus;
 
-	if (selmon->sel && ev->window != selmon->sel->win)
+	if (switcher.mon && (ev->mode == NotifyGrab || ev->mode == NotifyUngrab))
+		return;
+	if (selmon->sel && ev->window != selmon->sel->win) {
+		switchercancel();
 		setfocus(selmon->sel);
+	}
+}
+
+static void
+focusout(XEvent *e)
+{
+	XFocusChangeEvent *ev = &e->xfocus;
+
+	if (switcher.mon && ev->mode != NotifyGrab && ev->mode != NotifyUngrab
+	&& ev->window == switcher.focus && ev->detail != NotifyInferior)
+		switchercancel();
 }
 
 void
@@ -1536,13 +1579,28 @@ grabkeys(void)
 		unsigned int modifiers[] = { 0, LockMask, numlockmask, numlockmask|LockMask };
 		int start, end, skip;
 		KeySym *syms;
+		unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
+		XIEventMask mask = { XIAllMasterDevices, sizeof bits, bits };
+		XIGrabModifiers ximods[LENGTH(modifiers)];
 
 		XUngrabKey(dpy, AnyKey, AnyModifier, root);
+		if (switcherxi) {
+			XIGrabModifiers any = { XIAnyModifier, 0 };
+
+			XIUngrabKeycode(dpy, XIAllMasterDevices, XIAnyKeycode, root, 1, &any);
+			XISetMask(bits, XI_KeyPress);
+			XISetMask(bits, XI_KeyRelease);
+			for (j = 0; j < LENGTH(modifiers); j++)
+				ximods[j] = (XIGrabModifiers){ ControlMask | modifiers[j], 0 };
+		}
 		XDisplayKeycodes(dpy, &start, &end);
 		syms = XGetKeyboardMapping(dpy, start, end - start + 1, &skip);
 		if (!syms)
 			return;
-		for (k = start; k <= end; k++)
+		for (k = start; k <= end; k++) {
+			if (switcherxi && syms[(k - start) * skip] == switcherkey)
+				XIGrabKeycode(dpy, XIAllMasterDevices, k, root, GrabModeAsync,
+				              GrabModeAsync, False, &mask, LENGTH(ximods), ximods);
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
 				if (keys[i].keysym == syms[(k - start) * skip])
@@ -1551,6 +1609,7 @@ grabkeys(void)
 							 keys[i].mod | modifiers[j],
 							 root, True,
 							 GrabModeAsync, GrabModeAsync);
+		}
 		XFree(syms);
 	}
 }
@@ -1581,6 +1640,8 @@ keypress(XEvent *e)
 	KeySym keysym;
 	XKeyEvent *ev;
 
+	if (switcher.mon)
+		return;
 	ev = &e->xkey;
 	keysym = XKeycodeToKeysym(dpy, (KeyCode)ev->keycode, 0);
 	for (i = 0; i < LENGTH(keys); i++)
@@ -1703,8 +1764,10 @@ mappingnotify(XEvent *e)
 	XMappingEvent *ev = &e->xmapping;
 
 	XRefreshKeyboardMapping(ev);
-	if (ev->request == MappingKeyboard)
+	if (ev->request != MappingPointer) {
+		switchercancel();
 		grabkeys();
+	}
 }
 
 void
@@ -1743,7 +1806,8 @@ motionnotify(XEvent *e)
 
 	if (ev->window != root)
 		return;
-	if ((m = recttomon(ev->x_root, ev->y_root, 1, 1)) != mon && mon) {
+	m = recttomon(ev->x_root, ev->y_root, 1, 1);
+	if (switcher.mon ? m != selmon : m != mon && mon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
@@ -2241,7 +2305,7 @@ setmfact(const Arg *arg)
 void
 setup(void)
 {
-	int i;
+	int i, event, error, major = 2, minor = 0;
 	XSetWindowAttributes wa;
 	Atom utf8string;
 
@@ -2323,6 +2387,11 @@ setup(void)
 		|LeaveWindowMask|StructureNotifyMask|PropertyChangeMask;
 	XChangeWindowAttributes(dpy, root, CWEventMask|CWCursor, &wa);
 	XSelectInput(dpy, root, wa.event_mask);
+	/* XI2 marks repeat presses; Shape 1.1 makes the panel transparent to input. */
+	if (!XQueryExtension(dpy, "XInputExtension", &switcherxi, &event, &error)
+	|| XIQueryVersion(dpy, &major, &minor) != Success
+	|| !XShapeQueryVersion(dpy, &major, &minor) || (major == 1 && minor < 1))
+		switcherxi = 0;
 	grabkeys();
 	focus(NULL);
 }
@@ -2417,6 +2486,231 @@ setclienttagprop(Client *c)
 	long data[] = { (long) c->tags, (long) c->mon->num };
 	XChangeProperty(dpy, c->win, netatom[NetClientInfo], XA_CARDINAL, 32,
 			PropModeReplace, (unsigned char *) data, 2);
+}
+
+static Client *
+switcherlookup(Monitor *m, Window win)
+{
+	Client *c;
+
+	for (c = m->clients; c; c = c->next)
+		if (c->win == win)
+			return c;
+	return NULL;
+}
+
+static void
+switchercancel(void)
+{
+	if (!switcher.mon)
+		return;
+	XIUngrabDevice(dpy, switcher.keyboard, CurrentTime);
+	if (switcher.win)
+		XDestroyWindow(dpy, switcher.win);
+	free(switcher.rows);
+	memset(&switcher, 0, sizeof switcher);
+}
+
+static void
+switchercommit(void)
+{
+	Monitor *m = switcher.mon;
+	Window win = switcher.rows[switcher.selected].win, actualfocus;
+	Window initialfocus = switcher.focus;
+	XWindowAttributes wa;
+	Client *c;
+	unsigned int normal;
+	int revert;
+
+	switchercancel();
+	XGetInputFocus(dpy, &actualfocus, &revert);
+	if (actualfocus != initialfocus || m != selmon
+	|| (m->sel && m->sel->isfullscreen && lockfullscreen)
+	|| !(c = switcherlookup(m, win))
+	|| !XGetWindowAttributes(dpy, win, &wa) || wa.map_state != IsViewable)
+		return;
+	if (!ISVISIBLE(c)) {
+		normal = c->tags & TAGMASK & ~SPTAGMASK;
+		if (!normal)
+			return;
+		view(&(Arg){ .ui = normal & -normal });
+	}
+	focus(c);
+	restack(m);
+}
+
+static void
+switcherdraw(void)
+{
+	unsigned int oldw = drw->w, oldh = drw->h, w = switcher.width;
+	unsigned int h = switcher.shown * switcher.rowheight;
+	size_t i, j, used;
+	int written;
+	char label[512];
+	const char *sep;
+	struct SwitcherRow *row;
+
+	if (switcher.selected < switcher.first)
+		switcher.first = switcher.selected;
+	else if (switcher.selected >= switcher.first + switcher.shown)
+		switcher.first = switcher.selected - switcher.shown + 1;
+	if (w > oldw || h > oldh)
+		drw_resize(drw, w, h);
+	drw_setscheme(drw, scheme[SchemeNorm]);
+	for (i = 0; i < switcher.shown; i++) {
+		row = &switcher.rows[switcher.first + i];
+		label[0] = '[';
+		used = 1;
+		sep = "";
+		for (j = 0; j < NUMTAGS; j++) {
+			if (!(row->tags & (1U << j)))
+				continue;
+			written = snprintf(label + used, sizeof label - used, "%s%s", sep,
+			                   j < LENGTH(tags) ? tags[j] : scratchpads[j - LENGTH(tags)].name);
+			if (written < 0 || (size_t)written >= sizeof label - used)
+				break;
+			used += written;
+			sep = ", ";
+		}
+		snprintf(label + used, sizeof label - used, "]  %s", row->title);
+		drw_text(drw, 0, i * switcher.rowheight, w, switcher.rowheight, lrpad,
+		         label, switcher.first + i == switcher.selected);
+	}
+	drw_map(drw, switcher.win, 0, 0, w, h);
+	if (w > oldw || h > oldh)
+		drw_resize(drw, oldw, oldh);
+}
+
+static int
+switcherctrlheld(void)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof switcher.held; i++)
+		if (switcher.held[i] & switcher.controls[i])
+			return 1;
+	return 0;
+}
+
+static void
+switcherstart(XIDeviceEvent *ev)
+{
+	Monitor *m = selmon;
+	Client *c;
+	XModifierKeymap *mods;
+	XSetWindowAttributes wa = {
+		.override_redirect = True,
+		.event_mask = ExposureMask,
+		.background_pixel = scheme[SchemeNorm][ColBg].pixel,
+		.border_pixel = scheme[SchemeNorm][ColFg].pixel
+	};
+	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
+	XIEventMask mask = { ev->deviceid, sizeof bits, bits };
+	size_t count = 0, i;
+	int j, code, w, h, revert, rowheight = bh + 6;
+
+	if (ev->flags & XIKeyRepeat || CLEANMASK(ev->mods.effective) != ControlMask
+	|| m->mw < 3 || m->mh < rowheight + 2
+	|| (m->sel && m->sel->isfullscreen && lockfullscreen))
+		goto refuse;
+	for (c = m->stack; c; c = c->snext)
+		if (ISVISIBLE(c) || (c->tags & TAGMASK & ~SPTAGMASK))
+			count++;
+	if (!count || !(mods = XGetModifierMapping(dpy)))
+		goto refuse;
+	XISetMask(bits, XI_KeyPress);
+	XISetMask(bits, XI_KeyRelease);
+	/* Replacing the passive grab prevents Tab release from ending navigation. */
+	if (XIGrabDevice(dpy, ev->deviceid, root, ev->time, None, GrabModeAsync,
+	                 GrabModeAsync, False, &mask) != GrabSuccess) {
+		XFreeModifiermap(mods);
+		goto refuse;
+	}
+	switcher.mon = m;
+	switcher.keyboard = ev->deviceid;
+	XGetInputFocus(dpy, &switcher.focus, &revert);
+	for (j = 0; j < mods->max_keypermod; j++) {
+		code = mods->modifiermap[ControlMapIndex * mods->max_keypermod + j];
+		if (code)
+			switcher.controls[code / 8] |= 1U << (code % 8);
+	}
+	XFreeModifiermap(mods);
+	/* A fast tap may have released Ctrl before the explicit grab. */
+	XQueryKeymap(dpy, (char *)switcher.held);
+	if (!switcherctrlheld()) {
+		switchercancel();
+		return;
+	}
+
+	switcher.rows = ecalloc(count, sizeof *switcher.rows);
+	switcher.count = count;
+	for (i = 0, c = m->stack; c; c = c->snext) {
+		if (!ISVISIBLE(c) && !(c->tags & TAGMASK & ~SPTAGMASK))
+			continue;
+		switcher.rows[i].win = c->win;
+		switcher.rows[i].tags = c->tags;
+		memcpy(switcher.rows[i++].title, c->name, sizeof c->name);
+	}
+	switcher.selected = count > 1 && m->sel && switcher.rows[0].win == m->sel->win;
+	switcher.width = w = MIN(640, MAX(3, m->mw * 3 / 4)) - 2;
+	switcher.rowheight = rowheight;
+	switcher.shown = MIN(count, (size_t)MAX(1, (m->mh * 3 / 4 - 2) / rowheight));
+	h = switcher.shown * rowheight;
+	switcher.win = XCreateWindow(dpy, root, m->mx + (m->mw - w - 2) / 2,
+	                            m->my + (m->mh - h - 2) / 2, w, h, 1,
+	                            CopyFromParent, InputOutput, CopyFromParent,
+	                            CWOverrideRedirect|CWEventMask|CWBackPixel|CWBorderPixel, &wa);
+	/* Opening or dismissing under the pointer must not generate focus-follows-mouse. */
+	XShapeCombineRectangles(dpy, switcher.win, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted);
+	XMapRaised(dpy, switcher.win);
+	switcherdraw();
+	return;
+
+refuse:
+	XIUngrabDevice(dpy, ev->deviceid, ev->time);
+}
+
+static void
+switcherevent(XEvent *e)
+{
+	XGenericEventCookie *cookie = &e->xcookie;
+	XIDeviceEvent *ev;
+	KeySym sym;
+	unsigned int byte, bit;
+
+	if (!switcherxi || cookie->extension != switcherxi
+	|| (cookie->evtype != XI_KeyPress && cookie->evtype != XI_KeyRelease)
+	|| !XGetEventData(dpy, cookie))
+		return;
+	ev = cookie->data;
+	sym = XKeycodeToKeysym(dpy, (KeyCode)ev->detail, 0);
+	if (!switcher.mon) {
+		if (ev->evtype == XI_KeyPress && sym == switcherkey)
+			switcherstart(ev);
+	} else if (ev->deviceid == switcher.keyboard) {
+		byte = (KeyCode)ev->detail / 8;
+		bit = 1U << ((KeyCode)ev->detail % 8);
+		if (switcher.controls[byte] & bit) {
+			if (ev->evtype == XI_KeyPress)
+				switcher.held[byte] |= bit;
+			else {
+				switcher.held[byte] &= ~bit;
+				if (!switcherctrlheld())
+					switchercommit();
+			}
+		} else if (ev->evtype == XI_KeyPress) {
+			if (sym == XK_Escape)
+				switchercancel();
+			else if (sym == XK_j) {
+				switcher.selected = (switcher.selected + 1) % switcher.count;
+				switcherdraw();
+			} else if (sym == XK_k) {
+				switcher.selected = switcher.selected ? switcher.selected - 1 : switcher.count - 1;
+				switcherdraw();
+			}
+		}
+	}
+	XFreeEventData(dpy, cookie);
 }
 
 void
@@ -2688,6 +2982,7 @@ updategeom(void)
 {
 	int dirty = 0;
 
+	switchercancel();
 #ifdef XINERAMA
 	if (XineramaIsActive(dpy)) {
 		int i, j, n, nn;
