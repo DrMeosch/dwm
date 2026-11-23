@@ -378,7 +378,7 @@ static Clr **scheme;
 static Display *dpy;
 static Drw *drw;
 static Fnt *selfonts;
-static Monitor *mons, *selmon, *pointermon;
+static Monitor *mons, *selmon, *pointermon, *suppressedmon;
 static unsigned long enterbefore;
 static Window root, wmcheckwin;
 
@@ -1350,6 +1350,13 @@ drawbars(void)
 		drawbar(m);
 }
 
+static void
+checksuppressedcrossing(Monitor *m)
+{
+	if (switcher.mon && m != switcher.mon && m != (suppressedmon ? suppressedmon : pointermon))
+		switchercancel();
+}
+
 void
 enternotify(XEvent *e)
 {
@@ -1358,16 +1365,15 @@ enternotify(XEvent *e)
 	XCrossingEvent *ev = &e->xcrossing;
 
 	if (ev->serial < enterbefore) {
-		if (switcher.mon && !ev->send_event && ev->mode == NotifyNormal) {
+		if (!ev->send_event && ev->mode == NotifyNormal) {
 			m = pointtomon(ev->x_root, ev->y_root);
-			if (m != pointermon && m != switcher.mon)
-				switchercancel();
-			else
-				pointermon = m;
+			checksuppressedcrossing(m);
+			suppressedmon = m;
 		}
 		return;
 	}
 	enterbefore = 0;
+	suppressedmon = NULL;
 	pointermon = pointtomon(ev->x_root, ev->y_root);
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
@@ -1836,6 +1842,10 @@ motionnotify(XEvent *e)
 	if (ev->window != root)
 		return;
 	m = pointtomon(ev->x_root, ev->y_root);
+	if (suppressedmon) {
+		checksuppressedcrossing(m);
+		suppressedmon = NULL;
+	}
 	if (m != pointermon && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
@@ -3128,6 +3138,7 @@ updategeom(void)
 	}
 	if (dirty) {
 		selmon = mons;
+		suppressedmon = NULL;
 		pointermon = selmon = wintomon(root);
 	}
 	return dirty;

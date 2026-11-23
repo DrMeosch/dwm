@@ -117,10 +117,15 @@ crosses into a B client that consumes motion must dismiss the panel before
 Ctrl release without changing focus or revealing the highlighted hidden tag.
 With Ctrl+Tab queued between the scratchpad removal and crossing, the panel
 must map and then close while Ctrl is still down. Without an opener, the same
-restack must leave focus and monitor selection on A. A plain mouse resize must
+restack must leave focus and monitor selection on A when B consumes motion,
+while motion into B's root gap still selects B. With the pointer initially on B
+and A selected by keyboard, a suppressed enter into A before the opener and a
+return to B after it must cancel without revealing A's hidden row. A plain mouse resize must
 change the floating client's geometry and leave it able to receive typing.
 Queuing the release and crossing during restack must cancel when the crossing comes first,
 but reveal and focus the hidden target when the last Ctrl release comes first.
+For release-first, the fixture waits for logical Tab release and a subsequent
+dwm configure reply, then checks that Ctrl is logically up before moving the pointer.
 Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.

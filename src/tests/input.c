@@ -855,6 +855,32 @@ check_switcher_group(Display *dpy, Window root)
 	XkbLockGroup(dpy, XkbUseCoreKbd, 0);
 }
 
+static int
+wait_tab_release_handled(Display *dpy, Window tiled)
+{
+	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	char keys[32];
+	XEvent ev;
+	int i;
+
+	for (i = 0; i < 80; i++) {
+		XQueryKeymap(dpy, keys);
+		if (!(keys[tab / 8] & (1 << (tab % 8))))
+			break;
+		pause_millis(25);
+	}
+	if (i == 80)
+		return 0;
+	XResizeWindow(dpy, tiled, 1, 1);
+	for (i = 0; i < 80; i++) {
+		while (XCheckTypedWindowEvent(dpy, tiled, ConfigureNotify, &ev))
+			if (ev.xconfigure.send_event)
+				return 1;
+		pause_millis(25);
+	}
+	return 0;
+}
+
 static void
 queued_gap_return(Display *dpy, XineramaScreenInfo *heads, int click)
 {
@@ -1149,34 +1175,60 @@ test_switcher(Display *dpy, Window root)
 	      "fullscreen switcher attempt changed view or focus");
 
 	if (separate) {
-		enum { Closed, Pending, Held, CrossingFirst, ReleaseFirst } order;
+		enum { RootMotion, RoundTrip, Closed, Pending, Held, CrossingFirst, ReleaseFirst } order;
 
 		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask | FocusChangeMask);
 		XSelectInput(dpy, a4, KeyPressMask | FocusChangeMask);
 		XSelectInput(dpy, root, SubstructureNotifyMask);
-		for (order = Closed; order <= ReleaseFirst; order++) {
+		XSelectInput(dpy, a23, KeyPressMask | PointerMotionMask | StructureNotifyMask);
+		for (order = RootMotion; order <= ReleaseFirst; order++) {
 			unrelated = order == Held ? pads[0][1] : switcher_client(dpy, root, "restack witness", ScratchCalc, 0);
 			XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
 			CHECK(wait_visible(dpy, unrelated, heads[0], 0) && wait_active(dpy, root, a23)
 			   && wait_visible(dpy, a4, heads[0], 0), "restack did not start with target and witness hidden");
+			if (order == RoundTrip) {
+				XWarpPointer(dpy, None, b2, 0, 0, 0, 0, 20, 20);
+				CHECK(wait_active(dpy, root, b2), "pointer did not start on B");
+				key(dpy, XK_h, 0);
+				CHECK(wait_active(dpy, root, a23), "keyboard did not select A");
+			}
 			if (order >= Held)
 				CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
 			XSync(dpy, True);
+			if (order == ReleaseFirst)
+				CHECK(wait_tab_release_handled(dpy, a23), "dwm did not acknowledge the post-Tab configure request");
 			XGrabServer(dpy);
 			XDestroyWindow(dpy, unrelated);
-			if (order == Pending) {
+			if (order == RoundTrip)
+				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), a23geom.x + 20, a23geom.y + 20, CurrentTime);
+			if (order == RoundTrip || order == Pending) {
 				switcher_key(dpy, XK_Control_L, True);
 				switcher_tap(dpy, XK_Tab);
 			}
-			if (order == ReleaseFirst)
+			if (order == ReleaseFirst) {
 				switcher_key(dpy, XK_Control_L, False);
-			XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
+				CHECK(XkbGetState(dpy, XkbUseCoreKbd, &state) == Success && !(state.base_mods & ControlMask),
+				      "Ctrl release was still frozen before crossing");
+			}
+			if (order == RootMotion)
+				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
+				                     heads[1].y_org + heads[1].height - 1, CurrentTime);
+			else
+				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
 			if (order == CrossingFirst)
 				switcher_key(dpy, XK_Control_L, False);
 			XUngrabServer(dpy);
 			XSync(dpy, False);
+			if (order == RootMotion) {
+				CHECK(wait_active(dpy, root, b2), "closed restack swallowed B root motion");
+				key(dpy, XK_h, 0);
+				CHECK(wait_active(dpy, root, a23), "could not restore keyboard selection to A");
+				continue;
+			}
+			if (order == RoundTrip)
+				CHECK(XCheckTypedWindowEvent(dpy, a23, MotionNotify, &event), "A client did not consume motion");
 			CHECK(XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event), "B client did not consume motion");
-			if (order == Pending) {
+			if (order == RoundTrip || order == Pending) {
 				for (i = 0; i < 80 && !XCheckTypedWindowEvent(dpy, root, MapNotify, &event); i++)
 					pause_millis(25);
 				CHECK(i < 80 && event.xmap.override_redirect, "pending opener did not map the panel");
