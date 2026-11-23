@@ -379,6 +379,7 @@ static Display *dpy;
 static Drw *drw;
 static Fnt *selfonts;
 static Monitor *mons, *selmon, *pointermon;
+static unsigned long enterbefore;
 static Window root, wmcheckwin;
 
 static int switcherxi, switcherkeyboard, switcherxkb;
@@ -1356,6 +1357,17 @@ enternotify(XEvent *e)
 	Monitor *m;
 	XCrossingEvent *ev = &e->xcrossing;
 
+	if (ev->serial < enterbefore) {
+		if (switcher.mon && !ev->send_event && ev->mode == NotifyNormal) {
+			m = pointtomon(ev->x_root, ev->y_root);
+			if (m != pointermon && m != switcher.mon)
+				switchercancel();
+			else
+				pointermon = m;
+		}
+		return;
+	}
+	enterbefore = 0;
 	pointermon = pointtomon(ev->x_root, ev->y_root);
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
@@ -2026,20 +2038,16 @@ resizeclient(Client *c, int x, int y, int w, int h)
 }
 
 static void
-drainenters(void)
+drainenters(int sync)
 {
-	Monitor *m;
 	XEvent ev;
 
-	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev)) {
-		if (!switcher.mon || ev.xcrossing.send_event || ev.xcrossing.mode != NotifyNormal)
-			continue;
-		m = pointtomon(ev.xcrossing.x_root, ev.xcrossing.y_root);
-		if (m != pointermon && m != switcher.mon)
-			switchercancel();
-		else
-			pointermon = m;
-	}
+	if (switcher.mon)
+		enterbefore = NextRequest(dpy);
+	if (sync || switcher.mon)
+		XSync(dpy, False);
+	if (!switcher.mon)
+		while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 }
 
 void
@@ -2091,7 +2099,7 @@ resizemouse(const Arg *arg)
 	} while (ev.type != ButtonRelease);
 	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
 	XUngrabPointer(dpy, CurrentTime);
-	drainenters();
+	drainenters(0);
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
@@ -2130,8 +2138,7 @@ restack(Monitor *m)
 				wc.sibling = c->win;
 			}
 	}
-	XSync(dpy, False);
-	drainenters();
+	drainenters(1);
 }
 
 void

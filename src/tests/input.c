@@ -552,22 +552,26 @@ queued_switch(Display *dpy, KeySym ctrl, KeySym step, int steps, Window target)
 }
 
 static int
-highlight_height(Display *dpy, Window panel, int height)
+wait_highlight(Display *dpy, Window panel, int height, int rowheight, int selected)
 {
 	XImage *image;
-	int i, y, highlighted = 0;
+	unsigned long background;
+	int i, y;
 
-	for (i = 0; panel && height > 0 && !highlighted && i < 80; i++) {
+	for (i = 0; panel && rowheight > 0 && height > rowheight && i < 80; i++) {
 		image = XGetImage(dpy, panel, 0, 0, 1, height, AllPlanes, ZPixmap);
 		if (!image)
 			break;
-		for (y = 1; y < height; y++)
-			highlighted += XGetPixel(image, 0, y) != XGetPixel(image, 0, 0);
+		background = XGetPixel(image, 0, selected ? 0 : rowheight);
+		for (y = 0; y < height; y++)
+			if ((XGetPixel(image, 0, y) != background) != (y / rowheight == selected))
+				break;
 		XDestroyImage(image);
-		if (!highlighted)
-			pause_millis(25);
+		if (y == height)
+			return 1;
+		pause_millis(25);
 	}
-	return highlighted;
+	return 0;
 }
 
 static int
@@ -865,7 +869,8 @@ test_switcher(Display *dpy, Window root)
 	Window a1, a2, a4, a12, a23, b1, b1other, b2;
 	Window pads[2][2];
 	Geometry panel = {0}, b1geom, b1othergeom, a23geom, a2geom, b2geom, b2othergeom;
-	int i, n = 0, separate, height_a, height_b, height_one, row;
+	int i, n = 0, separate, height_a, height_b, row;
+	const int navrows[] = { 0, 4, 0, 1, 2 };
 	Window panelwin, child, popup, unrelated;
 	XSetWindowAttributes popupattrs = { .override_redirect = True };
 	XEvent event = {0};
@@ -915,7 +920,7 @@ test_switcher(Display *dpy, Window root)
 	XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 	XDestroyWindow(dpy, popup);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "sole client did not open a panel");
-	height_one = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
+	row = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_active(dpy, root, a23), "sole hidden client was not activated");
 	check_floating_switcher(dpy, root, a23, heads[0]);
@@ -979,14 +984,17 @@ test_switcher(Display *dpy, Window root)
 	CHECK(panel_on(panel, heads[0]), "panel was not centered inside monitor A");
 	panelwin = switcher_panel(dpy, root, &panel);
 	height_a = geometry(dpy, panelwin).h;
-	row = highlight_height(dpy, panelwin, height_a);
-	CHECK(row > 0 && height_one == row && height_a == 5 * row,
-	      "expected one and five rows, got heights %d and %d (highlight %d)", height_one, height_a, row);
+	CHECK(row > 0 && height_a == 5 * row && wait_highlight(dpy, panelwin, height_a, row, 1),
+	      "expected five rows of height %d with the second highlighted", row);
 	CHECK(active_window(dpy, root) == a4 && wait_visible(dpy, a23, heads[0], 0),
 	      "opening the switcher changed focus or view");
 	switcher_key(dpy, XK_Control_R, True);
 	switcher_key(dpy, XK_Control_L, False);
-	switcher_tap(dpy, XK_j); /* the other visible row after a1 is a12 */
+	for (i = 0; i < 5; i++) {
+		switcher_tap(dpy, i < 2 ? XK_k : XK_j);
+		CHECK(wait_highlight(dpy, panelwin, height_a, row, navrows[i]) && active_window(dpy, root) == a4,
+		      "navigation step %d did not highlight row %d without focusing it", i, navrows[i]);
+	}
 	CHECK(wait_panel(dpy, root, 1, &panel) && active_window(dpy, root) == a4,
 	      "releasing one of two Ctrl keys committed the switcher");
 	switcher_key(dpy, XK_Control_R, False);
@@ -1132,22 +1140,45 @@ test_switcher(Display *dpy, Window root)
 	      "fullscreen switcher attempt changed view or focus");
 
 	if (separate) {
-		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
-		XSync(dpy, True);
-		CHECK(wait_visible(dpy, pads[0][1], heads[0], 0), "restack witness was not hidden");
+		enum { Held, CrossingFirst, ReleaseFirst } order;
+
 		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask);
-		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
-		XGrabServer(dpy);
-		XDestroyWindow(dpy, pads[0][1]);
-		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
-		XUngrabServer(dpy);
-		XSync(dpy, False);
-		CHECK(XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event), "B client did not consume motion");
-		CHECK(wait_panel(dpy, root, 0, &panel), "restack swallowed cross-monitor cancellation");
-		switcher_key(dpy, XK_Control_L, False);
-		switcher_tap(dpy, XK_x);
-		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
-		   && wait_visible(dpy, a4, heads[0], 0), "release after restack activated a stale row");
+		XSelectInput(dpy, a4, KeyPressMask | FocusChangeMask);
+		for (order = Held; order <= ReleaseFirst; order++) {
+			unrelated = order == Held ? pads[0][1] : switcher_client(dpy, root, "restack witness", ScratchCalc, 0);
+			XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
+			CHECK(wait_visible(dpy, unrelated, heads[0], 0) && wait_active(dpy, root, a23)
+			   && wait_visible(dpy, a4, heads[0], 0), "restack did not start with target and witness hidden");
+			CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
+			XSync(dpy, True);
+			XGrabServer(dpy);
+			XDestroyWindow(dpy, unrelated);
+			if (order == ReleaseFirst)
+				switcher_key(dpy, XK_Control_L, False);
+			XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
+			if (order == CrossingFirst)
+				switcher_key(dpy, XK_Control_L, False);
+			XUngrabServer(dpy);
+			XSync(dpy, False);
+			CHECK(XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event), "B client did not consume motion");
+			CHECK(wait_panel(dpy, root, 0, &panel), "restack left the panel armed");
+			if (order == Held)
+				switcher_key(dpy, XK_Control_L, False);
+			if (order == ReleaseFirst) {
+				CHECK(wait_visible(dpy, a4, heads[0], 1), "later crossing discarded the hidden target");
+				for (i = 0; i < 80 && !XCheckTypedWindowEvent(dpy, a4, FocusIn, &event); i++)
+					pause_millis(25);
+				CHECK(i < 80, "release before crossing did not focus the target");
+			} else {
+				switcher_tap(dpy, XK_x);
+				CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+				   && wait_visible(dpy, a4, heads[0], 0), "release after crossing activated a stale row");
+			}
+		}
+		XWarpPointer(dpy, None, a4, 0, 0, 0, 0, 20, 20);
+		CHECK(wait_active(dpy, root, a4), "could not return to the committed target");
+		queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
+		CHECK(wait_active(dpy, root, a23), "could not restore A's origin");
 		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
 		XSync(dpy, True);
 		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for queued crossing");

@@ -86,8 +86,9 @@ Xinerama heads. It checks each panel's monitor and row count, recent-first
 navigation and wrapping, committing a visible window without changing the
 multi-tag view, revealing the lowest tag of a hidden multi-tag window, and
 leaving the other monitor's view, layout and remembered selection alone. It
-measures row counts against a single highlighted row, including the extra row
-when a scratchpad is shown. New clients probe the ordinary tags; two scratchpad-only
+measures row counts against the one-window panel, including the extra row
+when a scratchpad is shown. It checks that the highlighted band follows j and k
+through both wrap directions while the original window retains focus. New clients probe the ordinary tags; two scratchpad-only
 windows on each monitor reveal the scratchpad bits. Hidden activation must restore
 recorded monocle geometry on one destination and tiled geometry on the other. Queued
 Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
@@ -114,6 +115,8 @@ middle click queued in B's gap must toggle only B's bar, even if the pointer
 has already returned to A. Closing an unlisted scratchpad while the pointer
 crosses into a B client that consumes motion must dismiss the panel before
 Ctrl release without changing focus or revealing the highlighted hidden tag.
+Queuing both actions during restack must cancel when the crossing comes first,
+but reveal and focus the hidden target when the last Ctrl release comes first.
 Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
