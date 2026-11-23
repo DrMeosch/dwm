@@ -378,11 +378,12 @@ static Clr **scheme;
 static Display *dpy;
 static Drw *drw;
 static Fnt *selfonts;
-static Monitor *mons, *selmon, *pointermon, *suppressedmon;
+static Monitor *mons, *selmon, *pointermon, *suppressedmon, *rootmotionmon;
 static unsigned long enterbefore;
 static Window root, wmcheckwin;
 
 static int switcherxi, switcherkeyboard, switcherxkb;
+static unsigned long switcherungrabserial;
 static struct {
 	Monitor *mon;
 	Window win, focus, origin;
@@ -737,6 +738,8 @@ cleanupmon(Monitor *mon)
 
 	for (m = &mons; *m != mon; m = &(*m)->next);
 	*m = mon->next;
+	if (mon == rootmotionmon)
+		rootmotionmon = NULL;
 	XUnmapWindow(dpy, mon->barwin);
 	XDestroyWindow(dpy, mon->barwin);
 	free(mon);
@@ -1838,20 +1841,23 @@ motionnotify(XEvent *e)
 {
 	Monitor *m;
 	XMotionEvent *ev = &e->xmotion;
+	int selectmon;
 
 	if (ev->window != root)
 		return;
 	m = pointtomon(ev->x_root, ev->y_root);
+	selectmon = switcher.mon ? m != pointermon && m != selmon
+	                         : rootmotionmon && m != rootmotionmon;
 	if (suppressedmon) {
 		checksuppressedcrossing(m);
 		suppressedmon = NULL;
 	}
-	if (m != pointermon && m != selmon) {
+	if (selectmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
 	}
-	pointermon = m;
+	pointermon = rootmotionmon = m;
 }
 
 void
@@ -2609,10 +2615,17 @@ switcherclose(void)
 }
 
 static void
+switcherungrab(void)
+{
+	switcherungrabserial = XNextRequest(dpy);
+	XIUngrabDevice(dpy, switcherkeyboard, CurrentTime);
+}
+
+static void
 switchercancel(void)
 {
 	if (switcher.mon) {
-		XIUngrabDevice(dpy, switcherkeyboard, CurrentTime);
+		switcherungrab();
 		switcherclose();
 	}
 }
@@ -2642,7 +2655,7 @@ switchercommit(void)
 		focus(c);
 		restack(m);
 	}
-	XIUngrabDevice(dpy, switcherkeyboard, CurrentTime);
+	switcherungrab();
 }
 
 static void
@@ -2773,6 +2786,9 @@ switcherevent(XEvent *e)
 	if (cookie->evtype != XI_KeyPress && cookie->evtype != XI_KeyRelease)
 		goto done;
 	ev = cookie->data;
+	if (ev->serial < switcherungrabserial)
+		goto done;
+	switcherungrabserial = 0;
 	sym = switcherkeysym((KeyCode)ev->detail, ev->group.effective);
 	if (!switcher.mon) {
 		if (ev->evtype == XI_KeyPress && sym == XK_Tab)

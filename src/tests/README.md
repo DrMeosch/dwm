@@ -102,9 +102,10 @@ With two visible windows, latched Ctrl must leave focus and typing at the origin
 The check also tests a focus round trip from root, an unmanaged popup, or a client child. It also covers both
 Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
 monitor, the fullscreen lock, an application keyboard grab and Ctrl+j/k delivery
-after dismissal. A second XKB group relocates Tab, j, k and Escape. The fixture
-checks that the alternate keys work and that an application can both register
-and receive the Ctrl shortcut on the inactive group's Tab keycode.
+after dismissal. Tab queued after a listed window closes must not reopen the panel
+or swallow the next printable key. A second XKB group relocates Tab, j, k and
+Escape. The fixture checks that the alternate keys work and that an application
+can both register and receive the Ctrl shortcut on the inactive group's Tab keycode.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with Xinerama head 0 to the left of head 1,
 start with the pointer on head 0. The same `input switcher` check distinguishes
@@ -119,10 +120,12 @@ crosses into a B client that consumes motion must dismiss the panel before
 Ctrl release without changing focus or revealing the highlighted hidden tag.
 With Ctrl+Tab queued between the scratchpad removal and crossing, the panel
 must map and then close while Ctrl is still down. Without an opener, the same
-restack must leave focus and monitor selection on A when B consumes motion,
-while motion into B's root gap still selects B. With the pointer initially on B
-and A selected by keyboard, a suppressed enter into A before the opener and a
-return to B after it must cancel without revealing A's hidden row.
+restack must leave focus and monitor selection on A when B consumes motion.
+If the last root motion was in A's gap and a B client consumed motion on entry,
+moving from that client to B's root gap during restack must still select B.
+With the pointer initially on B and A selected by keyboard, a suppressed enter
+into A before the opener and a return to B after it must cancel without revealing
+A's hidden row.
 Queuing the release and crossing during restack must cancel when the crossing comes first,
 but reveal and focus the hidden target when the last Ctrl release comes first.
 For release-first, the fixture waits for logical Tab release and a subsequent

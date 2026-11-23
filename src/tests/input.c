@@ -1143,12 +1143,21 @@ test_switcher(Display *dpy, Window root)
 	CHECK(wait_active(dpy, root, a4), "unrelated configure, manage or unmanage dismissed A's panel");
 	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
 	CHECK(wait_active(dpy, root, a23), "could not restore A's selection");
+	XSelectInput(dpy, a23, KeyPressMask | StructureNotifyMask);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for target removal");
+	XSync(dpy, True);
+	CHECK(wait_tab_release_handled(dpy, a23), "opening Tab release was not handled before target removal");
+	XGrabServer(dpy);
 	XDestroyWindow(dpy, a12);
-	CHECK(wait_panel(dpy, root, 0, &panel), "target removal left the switcher armed");
+	switcher_tap(dpy, XK_Tab);
 	switcher_key(dpy, XK_Control_L, False);
-	CHECK(active_window(dpy, root) == a23 && wait_visible(dpy, a1, heads[0], 0),
-	      "release after target removal switched to another row");
+	XUngrabServer(dpy);
+	CHECK(wait_tab_release_handled(dpy, a23), "queued Tab was not handled after target removal");
+	CHECK(wait_panel(dpy, root, 0, &panel), "queued Tab reopened the switcher after target removal");
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+	   && active_window(dpy, root) == a23 && wait_visible(dpy, a1, heads[0], 0),
+	      "release after target removal stole typing or switched to another row");
 
 	if (XGrabKeyboard(dpy, a23, False, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess) {
 		switcher_key(dpy, XK_Control_L, True);
@@ -1179,16 +1188,25 @@ test_switcher(Display *dpy, Window root)
 
 		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask | FocusChangeMask);
 		XSelectInput(dpy, a4, KeyPressMask | FocusChangeMask);
-		XSelectInput(dpy, root, SubstructureNotifyMask);
+		XSelectInput(dpy, root, SubstructureNotifyMask | PointerMotionMask);
 		XSelectInput(dpy, a23, KeyPressMask | PointerMotionMask | StructureNotifyMask);
 		for (order = RootMotion; order <= ReleaseFirst; order++) {
 			unrelated = order == Held ? pads[0][1] : switcher_client(dpy, root, "restack witness", ScratchCalc, 0);
 			XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
 			CHECK(wait_visible(dpy, unrelated, heads[0], 0) && wait_active(dpy, root, a23)
 			   && wait_visible(dpy, a4, heads[0], 0), "restack did not start with target and witness hidden");
-			if (order == RoundTrip) {
+			if (order == RootMotion || order == RoundTrip) {
+				if (order == RootMotion) {
+					XSync(dpy, True);
+					XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
+					                     heads[0].y_org + heads[0].height - 1, CurrentTime);
+				}
 				XWarpPointer(dpy, None, b2, 0, 0, 0, 0, 20, 20);
 				CHECK(wait_active(dpy, root, b2), "pointer did not start on B");
+				if (order == RootMotion)
+					CHECK(XCheckTypedWindowEvent(dpy, root, MotionNotify, &event)
+					   && XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event),
+					      "expected root motion on A and only client motion on entering B");
 				key(dpy, XK_h, 0);
 				CHECK(wait_active(dpy, root, a23), "keyboard did not select A");
 			}
