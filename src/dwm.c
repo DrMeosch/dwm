@@ -284,6 +284,7 @@ static void spawn(const Arg *arg);
 static int stackpos(const Arg *arg);
 static void switchercancel(void);
 static void switcherdraw(void);
+static void switcherremoved(Window win);
 static void switcherevent(XEvent *e);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
@@ -313,6 +314,7 @@ static void updatetitle(Client *c);
 static void updatewindowtype(Client *c);
 static void updatewmhints(Client *c);
 static void view(const Arg *arg);
+static void viewmask(unsigned int mask, Client *target);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static int xerror(Display *dpy, XErrorEvent *ee);
@@ -375,13 +377,13 @@ static Clr **scheme;
 static Display *dpy;
 static Drw *drw;
 static Fnt *selfonts;
-static Monitor *mons, *selmon;
+static Monitor *mons, *selmon, *pointermon;
 static Window root, wmcheckwin;
 
 static int switcherxi;
 static struct {
 	Monitor *mon;
-	Window win, focus;
+	Window win, focus, origin;
 	struct SwitcherRow {
 		Window win;
 		unsigned int tags;
@@ -574,6 +576,7 @@ swallow(Client *p, Client *c)
 	detachstack(c);
 
 	setclientstate(c, WithdrawnState);
+	switcherremoved(p->win);
 	XUnmapWindow(dpy, p->win);
 
 	p->swallowing = c;
@@ -662,7 +665,6 @@ buttonpress(XEvent *e)
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
 
-	switchercancel();
 	click = ClkRootWin;
 	/* focus monitor if necessary */
 	if ((m = wintomon(ev->window)) && m != selmon) {
@@ -793,6 +795,7 @@ configurenotify(XEvent *e)
 		sw = ev->width;
 		sh = ev->height;
 		if (updategeom() || dirty) {
+			switchercancel();
 			drw_resize(drw, sw, bh);
 			updatebars();
 			for (m = mons; m; m = m->next) {
@@ -1352,6 +1355,7 @@ enternotify(XEvent *e)
 	Monitor *m;
 	XCrossingEvent *ev = &e->xcrossing;
 
+	pointermon = recttomon(ev->x_root, ev->y_root, 1, 1);
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
@@ -1381,7 +1385,6 @@ expose(XEvent *e)
 void
 focus(Client *c)
 {
-	switchercancel();
 	if (!c || !ISVISIBLE(c)) {
 		for (c = selmon->stack; c && (!ISVISIBLE(c) || (c->issticky && !selmon->sel->issticky)); c = c->snext);
 
@@ -1389,6 +1392,9 @@ focus(Client *c)
 			for (c = selmon->stack; c && !ISVISIBLE(c); c = c->snext);
 	}
 
+	if (switcher.mon && (selmon != switcher.mon || (c && c->mon != selmon)
+	|| (c ? c->win : None) != switcher.origin))
+		switchercancel();
 	if (selmon->sel && selmon->sel != c)
 		unfocus(selmon->sel, 0);
 	if (c) {
@@ -1400,8 +1406,9 @@ focus(Client *c)
 		attachstack(c);
 		grabbuttons(c, 1);
 		XSetWindowBorder(dpy, c->win, scheme[SchemeSel][ColBorder].pixel);
-		setfocus(c);
-	} else {
+		if (!switcher.mon)
+			setfocus(c);
+	} else if (!switcher.mon) {
 		XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 		XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
 	}
@@ -1429,7 +1436,8 @@ focusout(XEvent *e)
 	XFocusChangeEvent *ev = &e->xfocus;
 
 	if (switcher.mon && ev->mode != NotifyGrab && ev->mode != NotifyUngrab
-	&& ev->window == switcher.focus && ev->detail != NotifyInferior)
+	&& (ev->window == switcher.origin || ev->window == switcher.focus)
+	&& ev->detail != NotifyInferior)
 		switchercancel();
 }
 
@@ -1599,8 +1607,8 @@ grabkeys(void)
 			return;
 		for (k = start; k <= end; k++) {
 			if (switcherxi && syms[(k - start) * skip] == switcherkey)
-				XIGrabKeycode(dpy, XIAllMasterDevices, k, root, GrabModeAsync,
-				              GrabModeAsync, False, &mask, LENGTH(ximods), ximods);
+				XIGrabKeycode(dpy, XIAllMasterDevices, k, root, GrabModeSync,
+				              GrabModeSync, False, &mask, LENGTH(ximods), ximods);
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
 				if (keys[i].keysym == syms[(k - start) * skip])
@@ -1800,19 +1808,18 @@ monocle(Monitor *m)
 void
 motionnotify(XEvent *e)
 {
-	static Monitor *mon = NULL;
 	Monitor *m;
 	XMotionEvent *ev = &e->xmotion;
 
 	if (ev->window != root)
 		return;
 	m = recttomon(ev->x_root, ev->y_root, 1, 1);
-	if (switcher.mon ? m != selmon : m != mon && mon) {
+	if (m != pointermon && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
 	}
-	mon = m;
+	pointermon = m;
 }
 
 void
@@ -2158,6 +2165,7 @@ sendmon(Client *c, Monitor *m)
 {
 	if (c->mon == m)
 		return;
+	switcherremoved(c->win);
 	unfocus(c, 1);
 	detach(c);
 	detachstack(c);
@@ -2488,15 +2496,22 @@ setclienttagprop(Client *c)
 			PropModeReplace, (unsigned char *) data, 2);
 }
 
-static Client *
-switcherlookup(Monitor *m, Window win)
+static int
+switchereligible(Client *c)
 {
-	Client *c;
+	return ISVISIBLE(c) || (c->tags & TAGMASK & ~SPTAGMASK);
+}
 
-	for (c = m->clients; c; c = c->next)
-		if (c->win == win)
-			return c;
-	return NULL;
+static void
+switcherremoved(Window win)
+{
+	size_t i;
+
+	for (i = 0; i < switcher.count; i++)
+		if (switcher.rows[i].win == win) {
+			switchercancel();
+			return;
+		}
 }
 
 static void
@@ -2526,17 +2541,16 @@ switchercommit(void)
 	XGetInputFocus(dpy, &actualfocus, &revert);
 	if (actualfocus != initialfocus || m != selmon
 	|| (m->sel && m->sel->isfullscreen && lockfullscreen)
-	|| !(c = switcherlookup(m, win))
+	|| !(c = wintoclient(win)) || c->mon != m || !switchereligible(c)
 	|| !XGetWindowAttributes(dpy, win, &wa) || wa.map_state != IsViewable)
 		return;
 	if (!ISVISIBLE(c)) {
 		normal = c->tags & TAGMASK & ~SPTAGMASK;
-		if (!normal)
-			return;
-		view(&(Arg){ .ui = normal & -normal });
+		viewmask(normal & -normal, c);
+	} else {
+		focus(c);
+		restack(m);
 	}
-	focus(c);
-	restack(m);
 }
 
 static void
@@ -2614,20 +2628,22 @@ switcherstart(XIDeviceEvent *ev)
 	|| (m->sel && m->sel->isfullscreen && lockfullscreen))
 		goto refuse;
 	for (c = m->stack; c; c = c->snext)
-		if (ISVISIBLE(c) || (c->tags & TAGMASK & ~SPTAGMASK))
+		if (switchereligible(c))
 			count++;
 	if (!count || !(mods = XGetModifierMapping(dpy)))
 		goto refuse;
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
 	/* Replacing the passive grab prevents Tab release from ending navigation. */
-	if (XIGrabDevice(dpy, ev->deviceid, root, ev->time, None, GrabModeAsync,
+	XQueryKeymap(dpy, (char *)switcher.held);
+	if (XIGrabDevice(dpy, ev->deviceid, root, ev->time, None, GrabModeSync,
 	                 GrabModeAsync, False, &mask) != GrabSuccess) {
 		XFreeModifiermap(mods);
 		goto refuse;
 	}
 	switcher.mon = m;
 	switcher.keyboard = ev->deviceid;
+	switcher.origin = m->sel ? m->sel->win : None;
 	XGetInputFocus(dpy, &switcher.focus, &revert);
 	for (j = 0; j < mods->max_keypermod; j++) {
 		code = mods->modifiermap[ControlMapIndex * mods->max_keypermod + j];
@@ -2635,17 +2651,11 @@ switcherstart(XIDeviceEvent *ev)
 			switcher.controls[code / 8] |= 1U << (code % 8);
 	}
 	XFreeModifiermap(mods);
-	/* A fast tap may have released Ctrl before the explicit grab. */
-	XQueryKeymap(dpy, (char *)switcher.held);
-	if (!switcherctrlheld()) {
-		switchercancel();
-		return;
-	}
 
 	switcher.rows = ecalloc(count, sizeof *switcher.rows);
 	switcher.count = count;
 	for (i = 0, c = m->stack; c; c = c->snext) {
-		if (!ISVISIBLE(c) && !(c->tags & TAGMASK & ~SPTAGMASK))
+		if (!switchereligible(c))
 			continue;
 		switcher.rows[i].win = c->win;
 		switcher.rows[i].tags = c->tags;
@@ -2684,10 +2694,12 @@ switcherevent(XEvent *e)
 		return;
 	ev = cookie->data;
 	sym = XKeycodeToKeysym(dpy, (KeyCode)ev->detail, 0);
-	if (!switcher.mon) {
-		if (ev->evtype == XI_KeyPress && sym == switcherkey)
+	if (!switcher.mon || ev->deviceid != switcher.keyboard) {
+		if (!switcher.mon && ev->evtype == XI_KeyPress && sym == switcherkey)
 			switcherstart(ev);
-	} else if (ev->deviceid == switcher.keyboard) {
+		else
+			XIUngrabDevice(dpy, ev->deviceid, ev->time);
+	} else {
 		byte = (KeyCode)ev->detail / 8;
 		bit = 1U << ((KeyCode)ev->detail % 8);
 		if (switcher.controls[byte] & bit) {
@@ -2710,6 +2722,8 @@ switcherevent(XEvent *e)
 			}
 		}
 	}
+	if (switcher.mon && ev->deviceid == switcher.keyboard)
+		XIAllowEvents(dpy, ev->deviceid, XISyncDevice, ev->time);
 	XFreeEventData(dpy, cookie);
 }
 
@@ -2815,7 +2829,7 @@ toggletag(const Arg *arg)
 }
 
 static void
-applypertag(void)
+applypertag(Client *target)
 {
 	Pertag *p = selmon->pertag;
 	unsigned int tag = p->curtag;
@@ -2829,7 +2843,7 @@ applypertag(void)
 	if (selmon->showbar != p->showbars[tag])
 		togglebar(NULL);
 
-	focus(NULL);
+	focus(target);
 	arrange(selmon);
 }
 
@@ -2855,7 +2869,7 @@ toggleview(const Arg *arg)
 			selmon->pertag->curtag = i + 1;
 		}
 
-		applypertag();
+		applypertag(NULL);
 	}
 }
 
@@ -2878,6 +2892,7 @@ unmanage(Client *c, int destroyed)
 	Monitor *m = c->mon;
 	XWindowChanges wc;
 
+	switcherremoved(c->win);
 	if (c->swallowing) {
 		unswallow(c);
 		return;
@@ -2982,7 +2997,6 @@ updategeom(void)
 {
 	int dirty = 0;
 
-	switchercancel();
 #ifdef XINERAMA
 	if (XineramaIsActive(dpy)) {
 		int i, j, n, nn;
@@ -3023,9 +3037,11 @@ updategeom(void)
 			}
 		/* removed monitors if n > nn */
 		for (i = nn; i < n; i++) {
+			dirty = 1;
 			for (m = mons; m && m->next; m = m->next);
+			if (m == switcher.mon)
+				switchercancel();
 			while ((c = m->clients)) {
-				dirty = 1;
 				m->clients = c->next;
 				detachstack(c);
 				c->mon = mons;
@@ -3051,7 +3067,7 @@ updategeom(void)
 	}
 	if (dirty) {
 		selmon = mons;
-		selmon = wintomon(root);
+		pointermon = selmon = wintomon(root);
 	}
 	return dirty;
 }
@@ -3266,23 +3282,29 @@ updatewmhints(Client *c)
 void
 view(const Arg *arg)
 {
+	viewmask(arg->ui, NULL);
+}
+
+static void
+viewmask(unsigned int mask, Client *target)
+{
 	int i;
 	unsigned int tmptag;
 
-	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
+	if ((mask & TAGMASK) == selmon->tagset[selmon->seltags])
 		return;
 	/* scratchpad tags have no per-tag slot */
-	if ((arg->ui & TAGMASK) && !(arg->ui & TAGMASK & ~SPTAGMASK))
+	if ((mask & TAGMASK) && !(mask & TAGMASK & ~SPTAGMASK))
 		return;
 	selmon->seltags ^= 1; /* toggle sel tagset */
-	if (arg->ui & TAGMASK) {
-		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
+	if (mask & TAGMASK) {
+		selmon->tagset[selmon->seltags] = mask & TAGMASK;
 		selmon->pertag->prevtag = selmon->pertag->curtag;
 
-		if (arg->ui == ~0)
+		if (mask == ~0U)
 			selmon->pertag->curtag = 0;
 		else {
-			for (i = 0; !(arg->ui & 1 << i); i++) ;
+			for (i = 0; !(mask & 1 << i); i++) ;
 			selmon->pertag->curtag = i + 1;
 		}
 	} else {
@@ -3291,7 +3313,7 @@ view(const Arg *arg)
 		selmon->pertag->curtag = tmptag;
 	}
 
-	applypertag();
+	applypertag(target);
 }
 
 pid_t

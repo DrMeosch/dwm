@@ -267,7 +267,7 @@ test_pertag_layout_slots(void)
 		m->sellt = 1 - slot;
 		m->lt[0] = m->lt[1] = &layouts[8];
 		m->pertag->sellts[2] = slot;
-		applypertag();
+		applypertag(NULL);
 		CHECK(m->sellt == slot && m->lt[0] == &layouts[0] && m->lt[1] == &layouts[1],
 		      "per-tag restoration lost a layout slot with slot %u selected", slot);
 		CHECK(m->nmaster == 3 && m->mfact == 0.75f,
