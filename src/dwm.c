@@ -667,7 +667,8 @@ buttonpress(XEvent *e)
 
 	click = ClkRootWin;
 	/* focus monitor if necessary */
-	if ((m = wintomon(ev->window)) && m != selmon) {
+	m = ev->window == root ? pointtomon(ev->x_root, ev->y_root) : wintomon(ev->window);
+	if (m && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
 		focus(NULL);
@@ -1359,7 +1360,7 @@ enternotify(XEvent *e)
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
-	m = c ? c->mon : wintomon(ev->window);
+	m = c ? c->mon : (ev->window == root ? pointermon : wintomon(ev->window));
 	if (m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;

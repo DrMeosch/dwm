@@ -108,7 +108,10 @@ placement. On an isolated X server with two side-by-side Xinerama heads, the
 same `input switcher` check distinguishes motion in the same root-window gap
 from crossing between heads, then reopens on the newly selected monitor. It
 also crosses directly between the two top bars in both directions and checks
-that the panel closes before Ctrl is released. Start with the pointer on head 0.
+that the panel closes before Ctrl is released. A queued crossing from a client
+on A into B's root gap and back to A must cancel without activating a row. A
+middle click queued in B's gap must toggle only B's bar, even if the pointer
+has already returned to A. Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 

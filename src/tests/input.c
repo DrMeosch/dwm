@@ -843,6 +843,22 @@ check_switcher_group(Display *dpy, Window root)
 }
 
 static void
+queued_gap_return(Display *dpy, XineramaScreenInfo *heads, int click)
+{
+	XGrabServer(dpy);
+	XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
+	                     heads[1].y_org + heads[1].height - 1, CurrentTime);
+	if (click) {
+		XTestFakeButtonEvent(dpy, Button2, True, CurrentTime);
+		XTestFakeButtonEvent(dpy, Button2, False, CurrentTime);
+	}
+	XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
+	                     heads[0].y_org + heads[0].height - 1, CurrentTime);
+	XUngrabServer(dpy);
+	XFlush(dpy);
+}
+
+static void
 test_switcher(Display *dpy, Window root)
 {
 	XineramaScreenInfo *heads;
@@ -1116,8 +1132,23 @@ test_switcher(Display *dpy, Window root)
 	      "fullscreen switcher attempt changed view or focus");
 
 	if (separate) {
-		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
-		                     heads[0].y_org + heads[0].height - 1, CurrentTime);
+		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
+		XSync(dpy, True);
+		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for queued crossing");
+		queued_gap_return(dpy, heads, 0);
+		CHECK(wait_panel(dpy, root, 0, &panel), "queued crossing and return left the panel armed");
+		switcher_key(dpy, XK_Control_L, False);
+		switcher_tap(dpy, XK_x);
+		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+		   && active_window(dpy, root) == a23 && wait_visible(dpy, a4, heads[0], 0),
+		      "release after queued crossing activated a stale row");
+		queued_gap_return(dpy, heads, 1);
+		for (i = 0; i < 80 && geometry(dpy, b2).y >= b2geom.y; i++)
+			pause_millis(25);
+		CHECK(i < 80 && same_geometry(geometry(dpy, a23), a23geom),
+		      "queued middle click did not hide only B's bar");
+		queued_gap_return(dpy, heads, 1);
+		CHECK(wait_geometry(dpy, b2, b2geom), "second queued click did not restore B's bar");
 		key(dpy, XK_l, 0);
 		CHECK(wait_active(dpy, root, b2), "could not select B with pointer on A");
 		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open on keyboard-selected B");
