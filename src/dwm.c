@@ -248,6 +248,7 @@ static void pop(Client *c);
 static void propertynotify(XEvent *e);
 static void pushstack(const Arg *arg);
 static void quit(const Arg *arg);
+static Monitor *pointtomon(int x, int y);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizeclient(Client *c, int x, int y, int w, int h);
@@ -1353,7 +1354,7 @@ enternotify(XEvent *e)
 	Monitor *m;
 	XCrossingEvent *ev = &e->xcrossing;
 
-	pointermon = recttomon(ev->x_root, ev->y_root, 1, 1);
+	pointermon = pointtomon(ev->x_root, ev->y_root);
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
 	c = wintoclient(ev->window);
@@ -1565,6 +1566,15 @@ grabbuttons(Client *c, int focused)
 	}
 }
 
+static KeySym
+switcherkeysym(KeyCode code, int group)
+{
+	unsigned int consumed;
+	KeySym sym;
+
+	return XkbLookupKeySym(dpy, code, XkbBuildCoreState(0, group), &consumed, &sym) ? sym : NoSymbol;
+}
+
 void
 grabkeys(void)
 {
@@ -1572,7 +1582,7 @@ grabkeys(void)
 	{
 		unsigned int i, j, k;
 		unsigned int modifiers[] = { 0, LockMask, numlockmask, numlockmask|LockMask };
-		int start, end, skip;
+		int start, end, skip, group;
 		KeySym *syms;
 		unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
 		XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
@@ -1591,9 +1601,12 @@ grabkeys(void)
 				mods[j] = (XIGrabModifiers){ ControlMask | modifiers[j], 0 };
 		}
 		for (k = start; k <= end; k++) {
-			if (switcherxi && syms[(k - start) * skip] == switcherkey)
-				XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
-				              False, &mask, LENGTH(mods), mods);
+			for (group = 0; switcherxi && group < XkbNumKbdGroups; group++)
+				if (switcherkeysym(k, group) == switcherkey) {
+					XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
+					              False, &mask, LENGTH(mods), mods);
+					break;
+				}
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
 				if (keys[i].keysym == syms[(k - start) * skip])
@@ -1798,7 +1811,7 @@ motionnotify(XEvent *e)
 
 	if (ev->window != root)
 		return;
-	m = recttomon(ev->x_root, ev->y_root, 1, 1);
+	m = pointtomon(ev->x_root, ev->y_root);
 	if (m != pointermon && m != selmon) {
 		unfocus(selmon->sel, 1);
 		selmon = m;
@@ -1951,6 +1964,17 @@ quit(const Arg *arg)
 {
 	if(arg->i) restart = 1;
 	running = 0;
+}
+
+static Monitor *
+pointtomon(int x, int y)
+{
+	Monitor *m;
+
+	for (m = mons; m; m = m->next)
+		if (x >= m->mx && x < m->mx + m->mw && y >= m->my && y < m->my + m->mh)
+			return m;
+	return selmon;
 }
 
 Monitor *
@@ -2691,12 +2715,12 @@ switcherevent(XEvent *e)
 	if (cookie->evtype != XI_KeyPress && cookie->evtype != XI_KeyRelease)
 		goto done;
 	ev = cookie->data;
-	sym = XKeycodeToKeysym(dpy, (KeyCode)ev->detail, 0);
+	sym = switcherkeysym((KeyCode)ev->detail, ev->group.effective);
 	if (!switcher.mon) {
 		if (ev->evtype == XI_KeyPress && sym == switcherkey)
 			switcherstart(ev);
-		else
-			XIUngrabDevice(dpy, ev->deviceid, ev->time);
+		else if (ev->evtype == XI_KeyPress)
+			XIAllowEvents(dpy, ev->deviceid, XIReplayDevice, ev->time);
 	} else if (ev->evtype == XI_KeyRelease) {
 		if (XkbGetState(dpy, ev->deviceid, &state) != Success)
 			switchercancel();
@@ -3433,7 +3457,7 @@ wintomon(Window w)
 	Monitor *m;
 
 	if (w == root && getrootptr(&x, &y))
-		return recttomon(x, y, 1, 1);
+		return pointtomon(x, y);
 	for (m = mons; m; m = m->next)
 		if (w == m->barwin)
 			return m;

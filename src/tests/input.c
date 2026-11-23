@@ -461,10 +461,17 @@ switcher_key(Display *dpy, KeySym sym, Bool down)
 }
 
 static void
+tap_keycode(Display *dpy, KeyCode code)
+{
+	XTestFakeKeyEvent(dpy, code, True, CurrentTime);
+	XTestFakeKeyEvent(dpy, code, False, CurrentTime);
+	XFlush(dpy);
+}
+
+static void
 switcher_tap(Display *dpy, KeySym sym)
 {
-	switcher_key(dpy, sym, True);
-	switcher_key(dpy, sym, False);
+	tap_keycode(dpy, XKeysymToKeycode(dpy, sym));
 }
 
 static Window
@@ -724,6 +731,57 @@ check_keyboard_scope(Display *dpy, Window root)
 		XIFreeDeviceInfo(devices);
 	XDestroyWindow(dpy, probe);
 	CHECK(wait_active(dpy, root, None), "keyboard scope probe retained focus");
+}
+
+static void
+check_switcher_group(Display *dpy, Window root)
+{
+	KeySym groups[][4] = {
+		{ XK_Tab, XK_ISO_Left_Tab, XK_F3, XK_F3 },
+		{ XK_F1, XK_F1, XK_Tab, XK_ISO_Left_Tab },
+		{ XK_c, XK_C, XK_j, XK_J },
+		{ XK_v, XK_V, XK_k, XK_K },
+		{ XK_F2, XK_F2, XK_Escape, XK_Escape }
+	};
+	KeyCode codes[5];
+	Window first, middle, origin;
+	Geometry panel = {0};
+	XkbStateRec state;
+	int i;
+
+	for (i = 0; i < 5; i++)
+		codes[i] = XKeysymToKeycode(dpy, groups[i][0]);
+	for (i = 0; i < 5; i++)
+		XChangeKeyboardMapping(dpy, codes[i], 4, groups[i], 1);
+	first = create_client(dpy, root, "layout first", 0);
+	CHECK(wait_active(dpy, root, first), "first layout client was not selected");
+	middle = create_client(dpy, root, "layout second", 0);
+	CHECK(wait_active(dpy, root, middle), "second layout client was not selected");
+	origin = create_client(dpy, root, "layout origin", 0);
+	CHECK(wait_active(dpy, root, origin), "layout origin was not selected");
+	for (i = 0; i < 2; i++) {
+		CHECK(XkbLockGroup(dpy, XkbUseCoreKbd, i) && XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
+		   && state.group == i, "could not select keyboard group %d", i);
+		switcher_key(dpy, XK_Control_L, True);
+		tap_keycode(dpy, codes[1 - i]);
+		CHECK(wait_for_input(dpy, origin, KeyPress, codes[1 - i], ControlMask),
+		      "group %d intercepted the other group's opener", i);
+		switcher_key(dpy, XK_Control_L, False);
+	}
+	for (i = 2; i < 5; i++) {
+		switcher_key(dpy, XK_Control_L, True);
+		tap_keycode(dpy, codes[1]);
+		CHECK(wait_panel(dpy, root, 1, &panel), "second group's Ctrl+Tab did not open");
+		if (i == 3)
+			tap_keycode(dpy, codes[2]);
+		tap_keycode(dpy, codes[i]);
+		if (i == 4)
+			CHECK(wait_panel(dpy, root, 0, &panel), "second group's Escape did not cancel");
+		switcher_key(dpy, XK_Control_L, False);
+		CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, i == 2 ? first : origin),
+		      "second group's %s left the wrong window focused", XKeysymToString(groups[i][2]));
+	}
+	XkbLockGroup(dpy, XkbUseCoreKbd, 0);
 }
 
 static void
@@ -1008,8 +1066,18 @@ test_switcher(Display *dpy, Window root)
 		      "reopening after pointer monitor selection did not stay on B");
 		switcher_tap(dpy, XK_Escape);
 		switcher_key(dpy, XK_Control_L, False);
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1, heads[1].y_org + 1, CurrentTime);
+		for (i = 0; i < 2; i++) {
+			CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[1 - i]),
+			      "could not open on the monitor under the pointer's bar");
+			XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[i].x_org + 1, heads[i].y_org + 1, CurrentTime);
+			CHECK(wait_panel(dpy, root, 0, &panel), "bar-to-bar crossing left the panel armed");
+			switcher_key(dpy, XK_Control_L, False);
+			CHECK(wait_active(dpy, root, i ? b2 : a23), "bar-to-bar crossing selected the wrong window");
+		}
 		puts("X11 switcher side-by-side placement and pointer crossing checked");
 	}
+	check_switcher_group(dpy, root);
 out:
 	switcher_key(dpy, XK_Control_L, False);
 	XFree(heads);

@@ -97,11 +97,15 @@ With two visible windows, latched Ctrl must leave focus and typing at the origin
 The check also tests a focus round trip from root, an unmanaged popup, or a client child. It also covers both
 Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
 monitor, the fullscreen lock, an application keyboard grab and Ctrl+j/k delivery
-after dismissal.
+after dismissal. A second XKB group relocates Tab, j, k and Escape. The fixture
+checks that the alternate keys work and that Ctrl with the inactive group's
+Tab keycode reaches the application.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with two side-by-side Xinerama heads, the
 same `input switcher` check distinguishes motion in the same root-window gap
-from crossing between heads, then reopens on the newly selected monitor. Start with the pointer on head 0.
+from crossing between heads, then reopens on the newly selected monitor. It
+also crosses directly between the two top bars in both directions and checks
+that the panel closes before Ctrl is released. Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 
