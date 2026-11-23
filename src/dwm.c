@@ -225,6 +225,7 @@ static int drawstatus(char *text, size_t len, int x, int draw);
 static void enternotify(XEvent *e);
 static void expose(XEvent *e);
 static void focus(Client *c);
+static void focusclient(Client *c, int setinput);
 static void focusin(XEvent *e);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
@@ -267,7 +268,7 @@ static int sendevent(Client *c, Atom proto);
 static void sendmon(Client *c, Monitor *m);
 static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
-static void setfocus(Client *c);
+static void setfocus(Client *c, int setinput);
 static void setfullscreen(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
@@ -1407,6 +1408,12 @@ expose(XEvent *e)
 void
 focus(Client *c)
 {
+	focusclient(c, 1);
+}
+
+static void
+focusclient(Client *c, int setinput)
+{
 	if (!c || !ISVISIBLE(c)) {
 		for (c = selmon->stack; c && (!ISVISIBLE(c) || (c->issticky && !selmon->sel->issticky)); c = c->snext);
 
@@ -1429,7 +1436,7 @@ focus(Client *c)
 		grabbuttons(c, 1);
 		XSetWindowBorder(dpy, c->win, scheme[SchemeSel][ColBorder].pixel);
 		if (!switcher.mon)
-			setfocus(c);
+			setfocus(c, setinput);
 	} else if (!switcher.mon) {
 		XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 		XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
@@ -1448,7 +1455,7 @@ focusin(XEvent *e)
 		return;
 	if (selmon->sel && ev->window != selmon->sel->win) {
 		switchercancel();
-		setfocus(selmon->sel);
+		setfocus(selmon->sel, 1);
 	}
 }
 
@@ -1604,10 +1611,7 @@ grabswitchertab(void)
 	int first, last, k;
 	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
 	XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
-	XIGrabModifiers any = { XIAnyModifier, 0 }, mods[] = {
-		{ ControlMask, 0 }, { ControlMask | LockMask, 0 },
-		{ ControlMask | numlockmask, 0 }, { ControlMask | numlockmask | LockMask, 0 }
-	};
+	XIGrabModifiers any = { XIAnyModifier, 0 };
 	XkbStateRec state;
 
 	XIUngrabKeycode(dpy, switcherkeyboard, XIAnyKeycode, root, 1, &any);
@@ -1617,9 +1621,14 @@ grabswitchertab(void)
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
 	for (k = first; k <= last; k++)
-		if (switcherkeysym(k, state.group) == XK_Tab)
+		if (switcherkeysym(k, state.group) == XK_Tab) {
+			XIGrabModifiers mods[] = {
+				{ ControlMask, 0 }, { ControlMask | LockMask, 0 },
+				{ ControlMask | numlockmask, 0 }, { ControlMask | numlockmask | LockMask, 0 }
+			};
 			XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
 			              False, &mask, LENGTH(mods), mods);
+		}
 }
 
 void
@@ -1679,8 +1688,6 @@ keypress(XEvent *e)
 	KeySym keysym;
 	XKeyEvent *ev;
 
-	if (switcher.mon)
-		return;
 	ev = &e->xkey;
 	keysym = XKeycodeToKeysym(dpy, (KeyCode)ev->keycode, 0);
 	for (i = 0; i < LENGTH(keys); i++)
@@ -1839,25 +1846,30 @@ monocle(Monitor *m)
 void
 motionnotify(XEvent *e)
 {
-	Monitor *m;
+	Monitor *m, *workmon, *target = NULL;
 	XMotionEvent *ev = &e->xmotion;
-	int selectmon;
 
 	if (ev->window != root)
 		return;
 	m = pointtomon(ev->x_root, ev->y_root);
-	selectmon = switcher.mon ? m != pointermon && m != selmon
-	                         : rootmotionmon && m != rootmotionmon;
+	workmon = recttomon(ev->x_root, ev->y_root, 1, 1);
+	if (switcher.mon) {
+		if (m != pointermon && m != selmon)
+			target = m;
+	} else if (rootmotionmon && workmon != rootmotionmon) {
+		target = workmon;
+	}
 	if (suppressedmon) {
 		checksuppressedcrossing(m);
 		suppressedmon = NULL;
 	}
-	if (selectmon) {
+	if (target) {
 		unfocus(selmon->sel, 1);
-		selmon = m;
+		selmon = target;
 		focus(NULL);
 	}
-	pointermon = rootmotionmon = m;
+	pointermon = m;
+	rootmotionmon = workmon;
 }
 
 void
@@ -2282,10 +2294,11 @@ sendevent(Client *c, Atom proto)
 }
 
 void
-setfocus(Client *c)
+setfocus(Client *c, int setinput)
 {
 	if (!c->neverfocus) {
-		XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
+		if (setinput)
+			XSetInputFocus(dpy, c->win, RevertToPointerRoot, CurrentTime);
 		XChangeProperty(dpy, root, netatom[NetActiveWindow],
 			XA_WINDOW, 32, PropModeReplace,
 			(unsigned char *) &(c->win), 1);
@@ -2647,12 +2660,23 @@ switchercommit(void)
 		switchercancel();
 		return;
 	}
+	if (!c->neverfocus) {
+		xcb_void_cookie_t cookie = xcb_set_input_focus_checked(xcon, XCB_INPUT_FOCUS_POINTER_ROOT,
+		                                                      win, XCB_CURRENT_TIME);
+		xcb_generic_error_t *error = xcb_request_check(xcon, cookie);
+
+		if (error) {
+			free(error);
+			switchercancel();
+			return;
+		}
+	}
 	switcherclose();
 	if (!ISVISIBLE(c)) {
 		normal = c->tags & TAGMASK & ~SPTAGMASK;
 		viewmask(normal & -normal, c);
 	} else {
-		focus(c);
+		focusclient(c, 0);
 		restack(m);
 	}
 	switcherungrab();
@@ -2931,7 +2955,7 @@ applypertag(Client *target)
 	if (selmon->showbar != p->showbars[tag])
 		togglebar(NULL);
 
-	focus(target);
+	focusclient(target, !target);
 	arrange(selmon);
 }
 

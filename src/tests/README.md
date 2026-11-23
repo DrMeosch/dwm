@@ -97,7 +97,8 @@ keyboard focus. Move and resize drags must finish when the opener arrives
 before button release. On an empty monitor, holding the opener must show no
 panel and leave the keyboard available for an application grab. The panel must stay above an
 overlapping floating client after restacking, then close if that client gains
-the fullscreen lock. An independent master keyboard must remain free to bind Ctrl+Tab.
+the fullscreen lock. An independent master keyboard must remain free to bind
+Ctrl+Tab and use Super+j while the panel is open.
 With two visible windows, latched Ctrl must leave focus and typing at the origin.
 The check also tests a focus round trip from root, an unmanaged popup, or a client child. It also covers both
 Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
@@ -106,13 +107,15 @@ after dismissal. Tab queued after a listed window closes must not reopen the pan
 or swallow the next printable key. A second XKB group relocates Tab, j, k and
 Escape. The fixture checks that the alternate keys work and that an application
 can both register and receive the Ctrl shortcut on the inactive group's Tab keycode.
+If two keycodes map to Tab, a conflicting Ctrl+CapsLock grab on the first must not
+prevent plain Ctrl+Tab from opening the panel on the second.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with Xinerama head 0 to the left of head 1,
 start with the pointer on head 0. The same `input switcher` check distinguishes
 motion in the same root-window gap from crossing between heads, then reopens
-on the newly selected monitor. It
-also crosses directly between the two top bars in both directions and checks
-that the panel closes before Ctrl is released. A queued crossing from a client
+on the newly selected monitor. Moving from A's root gap into B's top bar with
+the panel closed must leave A selected. With the panel open, crossing directly
+between the two top bars in either direction must close it before Ctrl is released. A queued crossing from a client
 on A into B's root gap and back to A must cancel without activating a row. A
 middle click queued in B's gap must toggle only B's bar, even if the pointer
 has already returned to A. Closing an unlisted scratchpad while the pointer

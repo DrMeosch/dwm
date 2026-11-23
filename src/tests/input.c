@@ -747,6 +747,38 @@ check_floating_switcher(Display *dpy, Window root, Window parent, XineramaScreen
 	CHECK(wait_active(dpy, root, parent), "removing drag fixture did not restore focus");
 }
 
+static int
+wait_configure_ack(Display *dpy, Window tiled)
+{
+	XEvent ev;
+	int i;
+
+	XResizeWindow(dpy, tiled, 1, 1);
+	for (i = 0; i < 80; i++) {
+		while (XCheckTypedWindowEvent(dpy, tiled, ConfigureNotify, &ev))
+			if (ev.xconfigure.send_event)
+				return 1;
+		pause_millis(25);
+	}
+	return 0;
+}
+
+static int
+wait_tab_release_handled(Display *dpy, Window tiled)
+{
+	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	char keys[32];
+	int i;
+
+	for (i = 0; i < 80; i++) {
+		XQueryKeymap(dpy, keys);
+		if (!(keys[tab / 8] & (1 << (tab % 8))))
+			return wait_configure_ack(dpy, tiled);
+		pause_millis(25);
+	}
+	return 0;
+}
+
 static void
 check_keyboard_scope(Display *dpy, Window root)
 {
@@ -755,7 +787,10 @@ check_keyboard_scope(Display *dpy, Window root)
 	unsigned char bits[XIMaskLen(XI_KeyPress)] = {0};
 	XIEventMask mask = { 0, sizeof bits, bits };
 	XIDeviceInfo *devices;
-	Window probe;
+	XDevice keyboard = {0};
+	Window probe, origin;
+	Geometry panel = {0};
+	KeyCode super = XKeysymToKeycode(dpy, XK_Super_L), j = XKeysymToKeycode(dpy, XK_j);
 	int i, n, major = 2, minor = 0;
 
 	if (XIQueryVersion(dpy, &major, &minor) != Success || XIChangeHierarchy(dpy, &change, 1) != Success) {
@@ -764,23 +799,44 @@ check_keyboard_scope(Display *dpy, Window root)
 	}
 	probe = create_client(dpy, root, "keyboard scope probe", 0);
 	CHECK(wait_active(dpy, root, probe), "keyboard scope probe was not managed");
-	devices = XIQueryDevice(dpy, XIAllMasterDevices, &n);
+	devices = XIQueryDevice(dpy, XIAllDevices, &n);
 	for (i = 0; devices && i < n; i++) {
-		if (devices[i].use != XIMasterKeyboard || strcmp(devices[i].name, "switcher-test keyboard"))
-			continue;
-		mask.deviceid = devices[i].deviceid;
+		if (!strcmp(devices[i].name, "switcher-test keyboard"))
+			mask.deviceid = devices[i].deviceid;
+		if (!strcmp(devices[i].name, "switcher-test XTEST keyboard"))
+			keyboard.device_id = devices[i].deviceid;
+	}
+	if (devices)
+		XIFreeDeviceInfo(devices);
+	CHECK(mask.deviceid && keyboard.device_id, "independent test keyboard was not found");
+	if (mask.deviceid) {
 		XISetMask(bits, XI_KeyPress);
 		CHECK(XIGrabKeycode(dpy, mask.deviceid, XKeysymToKeycode(dpy, XK_Tab), root, GrabModeAsync,
 		                    GrabModeAsync, False, &mask, 1, &mod) == 0,
 		      "dwm reserved Ctrl+Tab on an independent keyboard");
+		if (keyboard.device_id) {
+			origin = create_client(dpy, root, "keyboard scope origin", 0);
+			CHECK(wait_active(dpy, root, origin) && XISetFocus(dpy, mask.deviceid, origin, CurrentTime) == Success,
+			      "could not focus the independent keyboard's origin");
+			XSync(dpy, True);
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, True, NULL, 0, CurrentTime);
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, False, NULL, 0, CurrentTime);
+			CHECK(wait_configure_ack(dpy, origin), "independent keyboard did not settle before opener");
+			CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && wait_tab_release_handled(dpy, origin)
+			   && switcher_panel(dpy, root, &panel), "panel did not stay open before independent binding");
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, True, NULL, 0, CurrentTime);
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, j, True, NULL, 0, CurrentTime);
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, j, False, NULL, 0, CurrentTime);
+			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, False, NULL, 0, CurrentTime);
+			CHECK(wait_active(dpy, root, probe) && wait_panel(dpy, root, 0, &panel),
+			      "independent Super+j did not focus another client and cancel the switcher");
+			switcher_key(dpy, XK_Control_L, False);
+			XDestroyWindow(dpy, origin);
+		}
 		change.remove = (XIRemoveMasterInfo){ .type = XIRemoveMaster, .deviceid = mask.deviceid,
 		                                     .return_mode = XIFloating };
 		XIChangeHierarchy(dpy, &change, 1);
-		break;
 	}
-	CHECK(mask.deviceid, "independent test keyboard was not found");
-	if (devices)
-		XIFreeDeviceInfo(devices);
 	XDestroyWindow(dpy, probe);
 	CHECK(wait_active(dpy, root, None), "keyboard scope probe retained focus");
 }
@@ -852,33 +908,24 @@ check_switcher_group(Display *dpy, Window root)
 		CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, i == 2 ? first : origin),
 		      "second group's %s left the wrong window focused", XKeysymToString(groups[i][2]));
 	}
+	mod.modifiers = ControlMask | LockMask;
+	CHECK(codes[0] < codes[1] && !XIGrabKeycode(dpy, mask.deviceid, codes[0], root, GrabModeAsync,
+	                                         GrabModeAsync, False, &mask, 1, &mod),
+	      "could not reserve Ctrl+CapsLock on the lower Tab keycode");
+	groups[0][2] = XK_Tab;
+	groups[0][3] = XK_ISO_Left_Tab;
+	XChangeKeyboardMapping(dpy, codes[0], 4, groups[0], 1);
+	XSync(dpy, True);
+	CHECK(wait_configure_ack(dpy, origin), "keyboard mapping change was not acknowledged");
+	switcher_key(dpy, XK_Control_L, True);
+	tap_keycode(dpy, codes[1]);
+	CHECK(wait_panel(dpy, root, 1, &panel), "grab refusal on one Tab keycode disabled Ctrl+Tab on another");
+	tap_keycode(dpy, codes[4]);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel) && active_window(dpy, root) == origin,
+	      "could not cancel the second Tab keycode's panel");
+	XIUngrabKeycode(dpy, mask.deviceid, codes[0], root, 1, &mod);
 	XkbLockGroup(dpy, XkbUseCoreKbd, 0);
-}
-
-static int
-wait_tab_release_handled(Display *dpy, Window tiled)
-{
-	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
-	char keys[32];
-	XEvent ev;
-	int i;
-
-	for (i = 0; i < 80; i++) {
-		XQueryKeymap(dpy, keys);
-		if (!(keys[tab / 8] & (1 << (tab % 8))))
-			break;
-		pause_millis(25);
-	}
-	if (i == 80)
-		return 0;
-	XResizeWindow(dpy, tiled, 1, 1);
-	for (i = 0; i < 80; i++) {
-		while (XCheckTypedWindowEvent(dpy, tiled, ConfigureNotify, &ev))
-			if (ev.xconfigure.send_event)
-				return 1;
-		pause_millis(25);
-	}
-	return 0;
 }
 
 static void
@@ -1303,7 +1350,13 @@ test_switcher(Display *dpy, Window root)
 		CHECK(wait_active(dpy, root, b2), "could not restore B's selection");
 		key(dpy, XK_h, 0);
 		CHECK(wait_active(dpy, root, a23), "could not return to A before pointer crossing");
-		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for pointer crossing");
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
+		                     heads[0].y_org + heads[0].height - 1, CurrentTime);
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1, heads[1].y_org + 1, CurrentTime);
+		CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[0])
+		   && active_window(dpy, root) == a23, "closed pointer motion into B's bar selected B");
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
+		                     heads[0].y_org + heads[0].height - 1, CurrentTime);
 		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
 		                     heads[1].y_org + heads[1].height - 1, CurrentTime);
 		CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, b2),
