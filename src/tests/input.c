@@ -512,16 +512,35 @@ open_switcher(Display *dpy, Window root, KeySym ctrl, Geometry *outer)
 }
 
 static void
-queued_switch(Display *dpy, KeySym ctrl, KeySym step, int steps)
+queued_switch(Display *dpy, KeySym ctrl, KeySym step, int steps, Window target)
 {
+	XEvent e;
+	KeyCode printable = XKeysymToKeycode(dpy, XK_x);
+	int i;
+
+	XSync(dpy, True);
 	XGrabServer(dpy);
 	switcher_key(dpy, ctrl, True);
 	switcher_tap(dpy, XK_Tab);
 	while (steps-- > 0)
 		switcher_tap(dpy, step);
 	switcher_key(dpy, ctrl, False);
+	switcher_tap(dpy, XK_x);
 	XUngrabServer(dpy);
 	XFlush(dpy);
+	for (i = 0; i < 80; i++) {
+		while (XCheckMaskEvent(dpy, KeyPressMask, &e)) {
+			CHECK(!step || e.xkey.keycode != XKeysymToKeycode(dpy, step),
+			      "queued navigation reached a client");
+			if (e.xkey.keycode == printable) {
+				CHECK(e.xkey.window == target && !(e.xkey.state & ControlMask),
+				      "queued x went to %#lx instead of %#lx", e.xkey.window, target);
+				return;
+			}
+		}
+		pause_millis(25);
+	}
+	CHECK(0, "no client received queued x after activation");
 }
 
 static int
@@ -612,6 +631,42 @@ check_view(Display *dpy, Window root, Window previous, unsigned long tags, unsig
 }
 
 static void
+switcher_drags(Display *dpy, Window root, Window parent)
+{
+	Window dialog = XCreateSimpleWindow(dpy, root, 0, 0, 160, 100, 0, 0, 0);
+	Geometry before, after, panel = {0};
+	int i, button;
+
+	XSetTransientForHint(dpy, dialog, parent);
+	XMapWindow(dpy, dialog);
+	CHECK(wait_active(dpy, root, dialog), "drag fixture was not focused");
+	for (button = Button1; button <= Button3; button += 2) {
+		before = geometry(dpy, dialog);
+		XWarpPointer(dpy, None, dialog, 0, 0, 0, 0, before.w / 2, before.h / 2);
+		switcher_key(dpy, XK_Super_L, True);
+		XTestFakeButtonEvent(dpy, button, True, CurrentTime);
+		for (i = 0; i < 20; i++) {
+			XTestFakeRelativeMotionEvent(dpy, 12, 8, 25);
+			after = geometry(dpy, dialog);
+			if (button == Button1 ? before.x != after.x && before.y != after.y
+			                      : before.w != after.w && before.h != after.h)
+				break;
+		}
+		CHECK(i < 20, "button %d did not drag the window", button);
+		switcher_key(dpy, XK_Super_L, False);
+		switcher_key(dpy, XK_Control_L, True);
+		switcher_tap(dpy, XK_Tab);
+		XTestFakeButtonEvent(dpy, button, False, CurrentTime);
+		CHECK(wait_panel(dpy, root, 1, &panel), "queued opener blocked button %d release", button);
+		switcher_tap(dpy, XK_Escape);
+		switcher_key(dpy, XK_Control_L, False);
+		CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel after drag");
+	}
+	XDestroyWindow(dpy, dialog);
+	CHECK(wait_active(dpy, root, parent), "removing drag fixture did not restore focus");
+}
+
+static void
 test_switcher(Display *dpy, Window root)
 {
 	XineramaScreenInfo *heads;
@@ -621,6 +676,7 @@ test_switcher(Display *dpy, Window root)
 	Window panelwin, child, popup, unrelated;
 	XSetWindowAttributes popupattrs = { .override_redirect = True };
 	XEvent event = {0};
+	XkbStateRec state;
 
 	heads = XineramaQueryScreens(dpy, &n);
 	CHECK(heads && n == 2 && (heads[0].width != heads[1].width || heads[0].height != heads[1].height
@@ -635,10 +691,34 @@ test_switcher(Display *dpy, Window root)
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
+	popup = XCreateWindow(dpy, root, 0, 0, 8, 8, 0, CopyFromParent, InputOutput,
+	                      CopyFromParent, CWOverrideRedirect, &popupattrs);
+	XMapWindow(dpy, popup);
+	for (i = 0; i < 2; i++) {
+		Window origin = i ? popup : root;
+		XSetInputFocus(dpy, origin, RevertToPointerRoot, CurrentTime);
+		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open from %#lx", origin);
+		XSetInputFocus(dpy, i ? root : popup, RevertToPointerRoot, CurrentTime);
+		XSetInputFocus(dpy, origin, RevertToPointerRoot, CurrentTime);
+		CHECK(wait_panel(dpy, root, 0, &panel), "focus round trip from %#lx left panel open", origin);
+		switcher_key(dpy, XK_Control_L, False);
+		CHECK(wait_visible(dpy, a23, heads[0], 0), "focus round trip revealed a hidden client");
+	}
+	XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+	XDestroyWindow(dpy, popup);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "sole client did not open a panel");
 	height_one = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_active(dpy, root, a23), "sole hidden client was not activated");
+	CHECK(XkbLatchModifiers(dpy, XkbUseCoreKbd, ControlMask, ControlMask)
+	   && XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
+	   && (state.latched_mods & ControlMask) && !(state.base_mods & ControlMask),
+	      "could not latch Ctrl with neither Ctrl key held");
+	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+	   && !switcher_panel(dpy, root, &panel), "latched Ctrl opened the switcher or kept the keyboard");
+	switcher_drags(dpy, root, a23);
 	key(dpy, XK_1, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "could not restore fixture view");
 	a2 = switcher_client(dpy, root, "Inbox - tag 2", 2, 0);
@@ -692,21 +772,16 @@ test_switcher(Display *dpy, Window root)
 	      "committing an already visible window replaced the current view");
 
 	check_view(dpy, root, a12, 9, 0);
-	queued_switch(dpy, XK_Control_L, NoSymbol, 0);
+	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a4);
 	CHECK(wait_active(dpy, root, a4), "queued Ctrl+Tab did not activate the previous window");
-	XSync(dpy, True);
-	queued_switch(dpy, XK_Control_R, XK_k, 2);
+	queued_switch(dpy, XK_Control_R, XK_k, 2, a23);
 	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, a23),
 	      "reverse wrap did not reach the one row for the multi-tag window");
 	CHECK(wait_visible(dpy, a2, heads[0], 1) && wait_visible(dpy, a4, heads[0], 0)
 	   && wait_visible(dpy, a1, heads[0], 0), "hidden multi-tag target did not reveal just tag 2");
-	while (XCheckMaskEvent(dpy, KeyPressMask, &event))
-		CHECK(event.xkey.keycode != XKeysymToKeycode(dpy, XK_k), "queued Ctrl+k reached a client");
-	queued_switch(dpy, XK_Control_L, XK_j, 5);
+	queued_switch(dpy, XK_Control_L, XK_j, 5, a4);
 	CHECK(wait_active(dpy, root, a4), "hidden activation promoted an unchosen window");
-	while (XCheckMaskEvent(dpy, KeyPressMask, &event))
-		CHECK(event.xkey.keycode != XKeysymToKeycode(dpy, XK_j), "queued Ctrl+j reached a client");
-	queued_switch(dpy, XK_Control_L, NoSymbol, 0);
+	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
 	CHECK(wait_active(dpy, root, a23), "could not return to the hidden target");
 	check_view(dpy, root, a23, 2, 0);
 	CHECK(clientinfo_is(dpy, a23, 6, 0) && clientinfo_is(dpy, a12, 3, 0),
@@ -719,6 +794,7 @@ test_switcher(Display *dpy, Window root)
 	a23geom = geometry(dpy, a23);
 	key(dpy, XK_l, 0);
 	CHECK(wait_active(dpy, root, b1), "monitor B did not remember its selection");
+	check_view(dpy, root, b1, 1, 1);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[1]),
 	      "reopened panel was not centered inside monitor B");
 	height_b = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
@@ -733,6 +809,7 @@ test_switcher(Display *dpy, Window root)
 	      "monitor B activation changed monitor A's view or layout");
 	key(dpy, XK_h, 0);
 	CHECK(wait_active(dpy, root, a23), "monitor A did not remember its selection");
+	check_view(dpy, root, a23, 2, 0);
 
 	/* Leave Tab held after Escape long enough for auto-repeat to try to reopen. */
 	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 50), "could not set the test repeat rate");
@@ -786,7 +863,7 @@ test_switcher(Display *dpy, Window root)
 	XDestroyWindow(dpy, unrelated);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_active(dpy, root, a4), "unrelated configure, manage or unmanage dismissed A's panel");
-	queued_switch(dpy, XK_Control_L, NoSymbol, 0);
+	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
 	CHECK(wait_active(dpy, root, a23), "could not restore A's selection");
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for target removal");
 	XDestroyWindow(dpy, a12);
@@ -828,7 +905,7 @@ test_switcher(Display *dpy, Window root)
 		XTestFakeRelativeMotionEvent(dpy, 1, 0, CurrentTime);
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_active(dpy, root, b1), "same-monitor root motion dismissed B's panel");
-		queued_switch(dpy, XK_Control_L, NoSymbol, 0);
+		queued_switch(dpy, XK_Control_L, NoSymbol, 0, b2);
 		CHECK(wait_active(dpy, root, b2), "could not restore B's selection");
 		key(dpy, XK_h, 0);
 		CHECK(wait_active(dpy, root, a23), "could not return to A before pointer crossing");

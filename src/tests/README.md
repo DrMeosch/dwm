@@ -87,11 +87,14 @@ navigation and wrapping, committing a visible window without changing the
 multi-tag view, revealing the lowest tag of a hidden multi-tag window, and
 leaving the other monitor's view, layout and remembered selection alone. It
 measures one, three and five rows against a single highlighted row. New clients
-probe the exact tag masks inherited after activation. Queued Ctrl+Tab and j/k
-sequences run without waiting for the panel. The check also covers both Ctrl
-keys, Escape with repeat, stale targets, external focus leaving a client child
-and returning, unrelated updates on the other monitor, the fullscreen lock,
-an application keyboard grab and Ctrl+j/k delivery after dismissal.
+probe the exact tag masks on both the activated and untouched monitors. Queued
+Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
+client. Move and resize drags must finish when the opener arrives before button
+release. The check distinguishes held Ctrl from latched Ctrl and tests a focus
+round trip from root, an unmanaged popup, or a client child. It also covers both
+Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
+monitor, the fullscreen lock, an application keyboard grab and Ctrl+j/k delivery
+after dismissal.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with two side-by-side Xinerama heads, the
 same `input switcher` check distinguishes motion in the same root-window gap
