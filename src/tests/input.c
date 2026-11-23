@@ -991,6 +991,50 @@ queued_gap_return(Display *dpy, XineramaScreenInfo *heads, int click)
 }
 
 static void
+check_hidden_mixed_scratchpad(Display *dpy, Window root, XineramaScreenInfo head)
+{
+	Window editor, pad;
+	Geometry panel = {0};
+	XClassHint hint = { "spterm", "St" };
+	int one_row;
+
+	editor = create_client(dpy, root, "Scratchpad test editor", 0);
+	CHECK(wait_active(dpy, root, editor), "could not focus the scratchpad test editor");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open the one-row panel");
+	one_row = panel.h;
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "one-row panel did not close");
+
+	pad = XCreateSimpleWindow(dpy, root, 40, 40, 180, 120, 0, 0, 0);
+	XStoreName(dpy, pad, "Terminal scratchpad");
+	XSetClassHint(dpy, pad, &hint);
+	XMapWindow(dpy, pad);
+	CHECK(wait_visible(dpy, pad, head, 0), "terminal scratchpad did not start hidden");
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, pad), "terminal scratchpad did not show");
+	switcher_key(dpy, XK_Control_L, True);
+	key(dpy, XK_2, XK_Shift_L); /* Add tag 2 while keeping the scratchpad tag. */
+	switcher_key(dpy, XK_Control_L, False);
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, editor) && wait_visible(dpy, pad, head, 0)
+	   && clientinfo_is(dpy, pad, ScratchTerm | 2, head.screen_number),
+	      "terminal scratchpad did not hide with both tags intact");
+
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel.h == one_row,
+	      "hidden mixed-tag scratchpad added a switcher row (height %d, expected %d)", panel.h, one_row);
+	switcher_key(dpy, XK_Control_L, False);
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_panel(dpy, root, 0, &panel)
+	   && wait_for_input(dpy, editor, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+	   && active_window(dpy, root) == editor && wait_visible(dpy, pad, head, 0),
+	      "Ctrl release revealed the mixed-tag scratchpad or took input from the editor");
+	key(dpy, XK_1, 0);
+	XDestroyWindow(dpy, pad);
+	XDestroyWindow(dpy, editor);
+	CHECK(wait_active(dpy, root, None), "scratchpad test did not leave an empty monitor");
+}
+
+static void
 test_switcher(Display *dpy, Window root)
 {
 	XineramaScreenInfo *heads;
@@ -1029,6 +1073,7 @@ test_switcher(Display *dpy, Window root)
 		XUngrabKeyboard(dpy, CurrentTime);
 	switcher_key(dpy, XK_Tab, False);
 	switcher_key(dpy, XK_Control_L, False);
+	check_hidden_mixed_scratchpad(dpy, root, heads[0]);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");

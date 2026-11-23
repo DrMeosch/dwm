@@ -87,9 +87,11 @@ navigation and wrapping, committing a visible window without changing the
 multi-tag view, revealing the lowest tag of a hidden multi-tag window, and
 leaving the other monitor's view, layout and remembered selection alone. It
 measures row counts against the one-window panel, including the extra row
-when a scratchpad is shown. It checks that the highlighted band follows j and k
-through both wrap directions while the original window retains focus. New clients probe the ordinary tags; two scratchpad-only
-windows on each monitor reveal the scratchpad bits. Hidden activation must restore
+when a scratchpad is shown. A hidden scratchpad with an ordinary tag must not
+add a row or be revealed on Ctrl release. The highlighted band must follow j
+and k through both wrap directions while the original window retains focus.
+New clients probe the ordinary tags; two scratchpad-only windows on each monitor
+reveal the scratchpad bits. Hidden activation must restore
 recorded monocle geometry on one destination and tiled geometry on the other. Queued
 Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
 client. A plain resize must change a floating client's geometry without losing
