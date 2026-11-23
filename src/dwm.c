@@ -1624,9 +1624,9 @@ grabkeys(void)
 {
 	updatenumlockmask();
 	{
-		unsigned int i, j, k;
+		unsigned int i, j;
 		unsigned int modifiers[] = { 0, LockMask, numlockmask, numlockmask|LockMask };
-		int start, end, skip;
+		int start, end, skip, k;
 		KeySym *syms;
 
 		XUngrabKey(dpy, AnyKey, AnyModifier, root);
@@ -2050,6 +2050,7 @@ resizeclient(Client *c, int x, int y, int w, int h)
 static void
 suppressenters(void)
 {
+	/* Suppress enter-driven focus in dispatch order: draining here can skip a queued Ctrl+Tab. */
 	enterbefore = XNextRequest(dpy);
 	XSync(dpy, False);
 }

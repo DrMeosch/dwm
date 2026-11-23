@@ -136,16 +136,24 @@ Zooms/cycles focused window to/from master area.
 Focus next/previous window.
 .TP
 .B Ctrl\-Tab
-Open the window switcher on the selected monitor. It lists a title and tags for
-each window on that monitor in recent focus-stack order, starting on the most
-recent other window. With Ctrl held, press j or k to move the highlight down or
-up, wrapping at the ends without changing focus. Release the last Ctrl key to
-activate the highlighted window, or press Escape to cancel. If the window is
-already visible, the current view stays as it is. Otherwise dwm reveals its
-lowest-numbered ordinary tag on that monitor. Hidden scratchpads are not listed,
-and fullscreen focus lock still applies. Ctrl\-Tab is reserved for dwm even in
-applications that use it for tab switching. Ctrl\-j/k still go to applications
-when the switcher is closed.
+List windows across all tags on the selected monitor, most recently focused first.
+Each row shows one managed window's title and tags. Managed dialogs, sticky
+windows and shown scratchpads are included; hidden scratchpads and the hidden
+side of a swallowed pair are omitted. The highlight starts on the most recent
+other window, or the only window if there is just one. No panel opens if the
+list is empty or the focused window has the fullscreen focus lock.
+.IP
+While holding Ctrl, press j or k to move the highlight down or up, wrapping at
+the ends without changing focus. Release the last Ctrl key to focus the
+highlighted window, or press Escape to cancel. A change of focus or selected
+monitor, or the removal of a listed window, also cancels the switch.
+Only the core keyboard's Ctrl\-Tab shortcut is grabbed globally for the switcher.
+Ctrl\-j/k remain available to applications when the panel is closed.
+.IP
+Selecting a visible window leaves the current view unchanged. For a hidden
+window, dwm shows its lowest-numbered ordinary tag on its own monitor. Neither
+operation retags or moves the window or changes another monitor's view, layout
+or remembered selection.
 .TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.

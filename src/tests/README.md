@@ -1,8 +1,8 @@
 # Regression checks
 
-From the repository root, run `make test` with GCC or Clang, C99 support,
-`pkg-config`, the configured X11, Xext, Xi, Xft, fontconfig, XCB, and Xinerama development
-headers/libraries, and the system math library available. The test target
+From the repository root, run `make test` with GCC or Clang in C99 mode,
+`pkg-config`, the development headers and libraries configured in
+[`config.mk`](../config.mk), and the system math library. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, including exact bottom-stack and centered-floating
 master geometry in portrait and landscape with a floating client, core
@@ -92,9 +92,10 @@ through both wrap directions while the original window retains focus. New client
 windows on each monitor reveal the scratchpad bits. Hidden activation must restore
 recorded monocle geometry on one destination and tiled geometry on the other. Queued
 Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
-client. Move and resize drags must finish when the opener arrives before button
-release. On an empty monitor, holding the opener must show no panel and leave
-the keyboard available for an application grab. The panel must stay above an
+client. A plain resize must change a floating client's geometry without losing
+keyboard focus. Move and resize drags must finish when the opener arrives
+before button release. On an empty monitor, holding the opener must show no
+panel and leave the keyboard available for an application grab. The panel must stay above an
 overlapping floating client after restacking, then close if that client gains
 the fullscreen lock. An independent master keyboard must remain free to bind Ctrl+Tab.
 With two visible windows, latched Ctrl must leave focus and typing at the origin.
@@ -105,9 +106,10 @@ after dismissal. A second XKB group relocates Tab, j, k and Escape. The fixture
 checks that the alternate keys work and that an application can both register
 and receive the Ctrl shortcut on the inactive group's Tab keycode.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
-placement. On an isolated X server with two side-by-side Xinerama heads, the
-same `input switcher` check distinguishes motion in the same root-window gap
-from crossing between heads, then reopens on the newly selected monitor. It
+placement. On an isolated X server with Xinerama head 0 to the left of head 1,
+start with the pointer on head 0. The same `input switcher` check distinguishes
+motion in the same root-window gap from crossing between heads, then reopens
+on the newly selected monitor. It
 also crosses directly between the two top bars in both directions and checks
 that the panel closes before Ctrl is released. A queued crossing from a client
 on A into B's root gap and back to A must cancel without activating a row. A
@@ -120,13 +122,12 @@ must map and then close while Ctrl is still down. Without an opener, the same
 restack must leave focus and monitor selection on A when B consumes motion,
 while motion into B's root gap still selects B. With the pointer initially on B
 and A selected by keyboard, a suppressed enter into A before the opener and a
-return to B after it must cancel without revealing A's hidden row. A plain mouse resize must
-change the floating client's geometry and leave it able to receive typing.
+return to B after it must cancel without revealing A's hidden row.
 Queuing the release and crossing during restack must cancel when the crossing comes first,
 but reveal and focus the hidden target when the last Ctrl release comes first.
 For release-first, the fixture waits for logical Tab release and a subsequent
 dwm configure reply, then checks that Ctrl is logically up before moving the pointer.
-Start with the pointer on head 0.
+
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 
