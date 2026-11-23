@@ -659,10 +659,31 @@ record_layout(Display *dpy, Window first, Window second, Geometry *a, Geometry *
 	CHECK(0, "windows did not settle into the expected %s layout", monocle ? "monocle" : "tiled");
 }
 
-static void
-switcher_drags(Display *dpy, Window root, Window parent)
+static int
+above_window(Display *dpy, Window root, Window upper, Window lower)
 {
-	Window dialog = XCreateSimpleWindow(dpy, root, 0, 0, 160, 100, 0, 0, 0);
+	Window parent, *children = NULL;
+	unsigned int n;
+	int seen = 0, above = 0;
+
+	if (XQueryTree(dpy, root, &root, &parent, &children, &n)) {
+		for (unsigned int i = 0; i < n; i++) {
+			if (children[i] == lower)
+				seen = 1;
+			if (children[i] == upper)
+				above = seen;
+		}
+		XFree(children);
+	}
+	return above;
+}
+
+static void
+check_floating_switcher(Display *dpy, Window root, Window parent, XineramaScreenInfo head)
+{
+	Window scratch, panelwin, dialog = XCreateSimpleWindow(dpy, root, 0, 0, 160, 100, 0, 0, 0);
+	XEvent request = { .xclient = { .type = ClientMessage, .window = dialog,
+		.message_type = XInternAtom(dpy, "_NET_WM_STATE", False), .format = 32 } };
 	Geometry before, after, panel = {0};
 	int i, button;
 
@@ -691,6 +712,24 @@ switcher_drags(Display *dpy, Window root, Window parent)
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel after drag");
 	}
+	scratch = switcher_client(dpy, root, "hidden restack witness", ScratchCalc, head.screen_number);
+	CHECK(wait_visible(dpy, scratch, head, 0), "restack witness was not hidden");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for floating restack");
+	panelwin = switcher_panel(dpy, root, &panel);
+	XDestroyWindow(dpy, scratch);
+	XMoveResizeWindow(dpy, dialog, 20, 20, head.width - 40, head.height - 40);
+	after = (Geometry){ head.x_org + 20, head.y_org + 20, head.width - 40, head.height - 40 };
+	CHECK(wait_geometry(dpy, dialog, after) && panel.x >= after.x && panel.y >= after.y
+	   && panel.x + panel.w <= after.x + after.w && panel.y + panel.h <= after.y + after.h,
+	      "floating client did not overlap the panel after restacking");
+	CHECK(above_window(dpy, root, panelwin, dialog), "floating restack covered the live panel");
+	request.xclient.data.l[0] = 1;
+	request.xclient.data.l[1] = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	XSendEvent(dpy, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &request);
+	CHECK(wait_geometry(dpy, dialog, (Geometry){ head.x_org, head.y_org, head.width, head.height })
+	   && wait_panel(dpy, root, 0, &panel), "newly fullscreen origin kept the switcher armed");
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(active_window(dpy, root) == dialog, "fullscreen cancellation changed selection");
 	XDestroyWindow(dpy, dialog);
 	CHECK(wait_active(dpy, root, parent), "removing drag fixture did not restore focus");
 }
@@ -743,12 +782,22 @@ check_switcher_group(Display *dpy, Window root)
 		{ XK_v, XK_V, XK_k, XK_K },
 		{ XK_F2, XK_F2, XK_Escape, XK_Escape }
 	};
+	XkbDeviceInfoPtr keyboard = XkbGetDeviceInfo(dpy, 0, XkbUseCoreKbd, XkbDfltXIClass, XkbDfltXIId);
+	XIGrabModifiers mod = { ControlMask, 0 };
+	unsigned char bits[XIMaskLen(XI_KeyPress)] = {0};
+	XIEventMask mask = { 0, sizeof bits, bits };
 	KeyCode codes[5];
 	Window first, middle, origin;
 	Geometry panel = {0};
 	XkbStateRec state;
-	int i;
+	int i, attempt;
 
+	CHECK(keyboard, "could not identify the core keyboard for the shortcut grab");
+	if (!keyboard)
+		return;
+	mask.deviceid = keyboard->device_spec;
+	XkbFreeDeviceInfo(keyboard, XkbXI_AllDeviceFeaturesMask, True);
+	XISetMask(bits, XI_KeyPress);
 	for (i = 0; i < 5; i++)
 		codes[i] = XKeysymToKeycode(dpy, groups[i][0]);
 	for (i = 0; i < 5; i++)
@@ -762,6 +811,15 @@ check_switcher_group(Display *dpy, Window root)
 	for (i = 0; i < 2; i++) {
 		CHECK(XkbLockGroup(dpy, XkbUseCoreKbd, i) && XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
 		   && state.group == i, "could not select keyboard group %d", i);
+		for (attempt = 0; attempt < 80; attempt++) {
+			if (!XIGrabKeycode(dpy, mask.deviceid, codes[1 - i], root, GrabModeAsync,
+			                   GrabModeAsync, False, &mask, 1, &mod))
+				break;
+			pause_millis(25);
+		}
+		CHECK(attempt < 80, "group %d reserved the inactive group's root shortcut", i);
+		if (attempt < 80)
+			XIUngrabKeycode(dpy, mask.deviceid, codes[1 - i], root, 1, &mod);
 		switcher_key(dpy, XK_Control_L, True);
 		tap_keycode(dpy, codes[1 - i]);
 		CHECK(wait_for_input(dpy, origin, KeyPress, codes[1 - i], ControlMask),
@@ -808,6 +866,20 @@ test_switcher(Display *dpy, Window root)
 	}
 	separate = heads[0].x_org + heads[0].width <= heads[1].x_org;
 	check_keyboard_scope(dpy, root);
+	switcher_key(dpy, XK_Control_L, True);
+	switcher_key(dpy, XK_Tab, True);
+	XSync(dpy, False);
+	for (i = 0; i < 80; i++) {
+		if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "empty monitor retained the keyboard grab");
+	CHECK(!switcher_panel(dpy, root, &panel), "empty monitor opened a panel");
+	if (i < 80)
+		XUngrabKeyboard(dpy, CurrentTime);
+	switcher_key(dpy, XK_Tab, False);
+	switcher_key(dpy, XK_Control_L, False);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
@@ -830,7 +902,7 @@ test_switcher(Display *dpy, Window root)
 	height_one = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_active(dpy, root, a23), "sole hidden client was not activated");
-	switcher_drags(dpy, root, a23);
+	check_floating_switcher(dpy, root, a23, heads[0]);
 	a2 = switcher_client(dpy, root, "Inbox - tag 2", 2, 0);
 	CHECK(wait_active(dpy, root, a2), "second visible row was not selected");
 	CHECK(XkbLatchModifiers(dpy, XkbUseCoreKbd, ControlMask, ControlMask)

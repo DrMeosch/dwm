@@ -148,7 +148,6 @@ static const char *brightness_down_with_shuft[] = { "sb-brightnessctl", "set", "
 
 /* key definitions */
 #define MODKEY Mod4Mask
-static const KeySym switcherkey = XK_Tab; /* Ctrl + this key opens the window switcher */
 #define TAGKEYS(KEY,TAG) \
 	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
 	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \

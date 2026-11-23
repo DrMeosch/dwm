@@ -92,14 +92,17 @@ windows on each monitor reveal the scratchpad bits. Hidden activation must resto
 recorded monocle geometry on one destination and tiled geometry on the other. Queued
 Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
 client. Move and resize drags must finish when the opener arrives before button
-release. An independent master keyboard must remain free to bind Ctrl+Tab.
+release. On an empty monitor, holding the opener must show no panel and leave
+the keyboard available for an application grab. The panel must stay above an
+overlapping floating client after restacking, then close if that client gains
+the fullscreen lock. An independent master keyboard must remain free to bind Ctrl+Tab.
 With two visible windows, latched Ctrl must leave focus and typing at the origin.
 The check also tests a focus round trip from root, an unmanaged popup, or a client child. It also covers both
 Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
 monitor, the fullscreen lock, an application keyboard grab and Ctrl+j/k delivery
 after dismissal. A second XKB group relocates Tab, j, k and Escape. The fixture
-checks that the alternate keys work and that Ctrl with the inactive group's
-Tab keycode reaches the application.
+checks that the alternate keys work and that an application can both register
+and receive the Ctrl shortcut on the inactive group's Tab keycode.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with two side-by-side Xinerama heads, the
 same `input switcher` check distinguishes motion in the same root-window gap

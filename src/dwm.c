@@ -249,6 +249,7 @@ static void propertynotify(XEvent *e);
 static void pushstack(const Arg *arg);
 static void quit(const Arg *arg);
 static Monitor *pointtomon(int x, int y);
+static void raiseclient(Client *c);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
 static void resizeclient(Client *c, int x, int y, int w, int h);
@@ -380,7 +381,7 @@ static Fnt *selfonts;
 static Monitor *mons, *selmon, *pointermon;
 static Window root, wmcheckwin;
 
-static int switcherxi, switcherkeyboard;
+static int switcherxi, switcherkeyboard, switcherxkb;
 static struct {
 	Monitor *mon;
 	Window win, focus, origin;
@@ -1575,6 +1576,30 @@ switcherkeysym(KeyCode code, int group)
 	return XkbLookupKeySym(dpy, code, XkbBuildCoreState(0, group), &consumed, &sym) ? sym : NoSymbol;
 }
 
+static void
+grabswitchertab(void)
+{
+	int first, last, k;
+	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
+	XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
+	XIGrabModifiers any = { XIAnyModifier, 0 }, mods[] = {
+		{ ControlMask, 0 }, { ControlMask | LockMask, 0 },
+		{ ControlMask | numlockmask, 0 }, { ControlMask | numlockmask | LockMask, 0 }
+	};
+	XkbStateRec state;
+
+	XIUngrabKeycode(dpy, switcherkeyboard, XIAnyKeycode, root, 1, &any);
+	if (XkbGetState(dpy, switcherkeyboard, &state) != Success)
+		return;
+	XDisplayKeycodes(dpy, &first, &last);
+	XISetMask(bits, XI_KeyPress);
+	XISetMask(bits, XI_KeyRelease);
+	for (k = first; k <= last; k++)
+		if (switcherkeysym(k, state.group) == XK_Tab)
+			XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
+			              False, &mask, LENGTH(mods), mods);
+}
+
 void
 grabkeys(void)
 {
@@ -1582,31 +1607,17 @@ grabkeys(void)
 	{
 		unsigned int i, j, k;
 		unsigned int modifiers[] = { 0, LockMask, numlockmask, numlockmask|LockMask };
-		int start, end, skip, group;
+		int start, end, skip;
 		KeySym *syms;
-		unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
-		XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
-		XIGrabModifiers mods[LENGTH(modifiers)], any = { XIAnyModifier, 0 };
 
 		XUngrabKey(dpy, AnyKey, AnyModifier, root);
 		XDisplayKeycodes(dpy, &start, &end);
 		syms = XGetKeyboardMapping(dpy, start, end - start + 1, &skip);
 		if (!syms)
 			return;
-		if (switcherxi) {
-			XIUngrabKeycode(dpy, switcherkeyboard, XIAnyKeycode, root, 1, &any);
-			XISetMask(bits, XI_KeyPress);
-			XISetMask(bits, XI_KeyRelease);
-			for (j = 0; j < LENGTH(modifiers); j++)
-				mods[j] = (XIGrabModifiers){ ControlMask | modifiers[j], 0 };
-		}
+		if (switcherxi)
+			grabswitchertab();
 		for (k = start; k <= end; k++) {
-			for (group = 0; switcherxi && group < XkbNumKbdGroups; group++)
-				if (switcherkeysym(k, group) == switcherkey) {
-					XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
-					              False, &mask, LENGTH(mods), mods);
-					break;
-				}
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
 				if (keys[i].keysym == syms[(k - start) * skip])
@@ -1745,7 +1756,7 @@ manage(Window w, XWindowAttributes *wa)
 	if (!c->isfloating)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
 	if (c->isfloating)
-		XRaiseWindow(dpy, c->win);
+		raiseclient(c);
 	attach(c);
 	attachstack(c);
 	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
@@ -2070,6 +2081,17 @@ resizemouse(const Arg *arg)
 	}
 }
 
+static void
+raiseclient(Client *c)
+{
+	XWindowChanges wc = { .sibling = switcher.win, .stack_mode = Below };
+
+	if (switcher.win)
+		XConfigureWindow(dpy, c->win, CWSibling|CWStackMode, &wc);
+	else
+		XRaiseWindow(dpy, c->win);
+}
+
 void
 restack(Monitor *m)
 {
@@ -2081,7 +2103,7 @@ restack(Monitor *m)
 	if (!m->sel)
 		return;
 	if (m->sel->isfloating || !m->lt[m->sellt]->arrange)
-		XRaiseWindow(dpy, m->sel->win);
+		raiseclient(m->sel);
 	if (m->lt[m->sellt]->arrange) {
 		wc.stack_mode = Below;
 		wc.sibling = m->barwin;
@@ -2114,7 +2136,10 @@ run(void)
 		/* XPending also drains events Xlib left queued in XCB, which poll cannot see. */
 		while (XPending(dpy)) {
 			XNextEvent(dpy, &ev);
-			if (handler[ev.type])
+			if (switcherxi && ev.type == switcherxkb) {
+				if (((XkbEvent *)&ev)->any.xkb_type == XkbStateNotify)
+					grabswitchertab();
+			} else if (ev.type < LASTEvent && handler[ev.type])
 				handler[ev.type](&ev); /* call handler */
 		}
 		if (!running)
@@ -2237,6 +2262,8 @@ void
 setfullscreen(Client *c, int fullscreen)
 {
 	if (fullscreen && !c->isfullscreen) {
+		if (lockfullscreen && c->win == switcher.origin)
+			switchercancel();
 		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
 			PropModeReplace, (unsigned char*)&netatom[NetWMFullscreen], 1);
 		c->isfullscreen = 1;
@@ -2245,7 +2272,7 @@ setfullscreen(Client *c, int fullscreen)
 		c->bw = 0;
 		c->isfloating = 1;
 		resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
-		XRaiseWindow(dpy, c->win);
+		raiseclient(c);
 	} else if (!fullscreen && c->isfullscreen){
 		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
 			PropModeReplace, (unsigned char*)0, 0);
@@ -2409,6 +2436,8 @@ setup(void)
 	if (!XQueryExtension(dpy, "XInputExtension", &switcherxi, &event, &error)
 	|| XIQueryVersion(dpy, &major, &minor) != Success
 	|| !XShapeQueryVersion(dpy, &major, &minor) || (major == 1 && minor < 1)
+	|| !XkbQueryExtension(dpy, NULL, &switcherxkb, NULL, NULL, NULL)
+	|| !XkbSelectEventDetails(dpy, XkbUseCoreKbd, XkbStateNotify, XkbGroupStateMask, XkbGroupStateMask)
 	|| !(keyboard = XkbGetDeviceInfo(dpy, 0, XkbUseCoreKbd, XkbDfltXIClass, XkbDfltXIId)))
 		switcherxi = 0;
 	else {
@@ -2717,7 +2746,7 @@ switcherevent(XEvent *e)
 	ev = cookie->data;
 	sym = switcherkeysym((KeyCode)ev->detail, ev->group.effective);
 	if (!switcher.mon) {
-		if (ev->evtype == XI_KeyPress && sym == switcherkey)
+		if (ev->evtype == XI_KeyPress && sym == XK_Tab)
 			switcherstart(ev);
 		else if (ev->evtype == XI_KeyPress)
 			XIAllowEvents(dpy, ev->deviceid, XIReplayDevice, ev->time);
