@@ -6,7 +6,7 @@ Based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm) of [dwm](http
 
 > What are the bindings?
 
-See the keyboard commands in [dwm(1)](dwm.1). The configurable bindings are in [config.h](config.h); the window switcher shortcut is built in.
+See the keyboard commands in [dwm(1)](dwm.1) and the configurable bindings in [config.h](config.h).
 
 ## Patches and features
 
