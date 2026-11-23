@@ -2025,6 +2025,23 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	XSync(dpy, False);
 }
 
+static void
+drainenters(void)
+{
+	Monitor *m;
+	XEvent ev;
+
+	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev)) {
+		if (!switcher.mon || ev.xcrossing.send_event || ev.xcrossing.mode != NotifyNormal)
+			continue;
+		m = pointtomon(ev.xcrossing.x_root, ev.xcrossing.y_root);
+		if (m != pointermon && m != switcher.mon)
+			switchercancel();
+		else
+			pointermon = m;
+	}
+}
+
 void
 resizemouse(const Arg *arg)
 {
@@ -2074,7 +2091,7 @@ resizemouse(const Arg *arg)
 	} while (ev.type != ButtonRelease);
 	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
 	XUngrabPointer(dpy, CurrentTime);
-	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+	drainenters();
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
@@ -2097,7 +2114,6 @@ void
 restack(Monitor *m)
 {
 	Client *c;
-	XEvent ev;
 	XWindowChanges wc;
 
 	drawbar(m);
@@ -2115,7 +2131,7 @@ restack(Monitor *m)
 			}
 	}
 	XSync(dpy, False);
-	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+	drainenters();
 }
 
 void

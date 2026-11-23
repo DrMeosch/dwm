@@ -1134,6 +1134,22 @@ test_switcher(Display *dpy, Window root)
 	if (separate) {
 		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
 		XSync(dpy, True);
+		CHECK(wait_visible(dpy, pads[0][1], heads[0], 0), "restack witness was not hidden");
+		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask);
+		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
+		XGrabServer(dpy);
+		XDestroyWindow(dpy, pads[0][1]);
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
+		XUngrabServer(dpy);
+		XSync(dpy, False);
+		CHECK(XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event), "B client did not consume motion");
+		CHECK(wait_panel(dpy, root, 0, &panel), "restack swallowed cross-monitor cancellation");
+		switcher_key(dpy, XK_Control_L, False);
+		switcher_tap(dpy, XK_x);
+		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+		   && wait_visible(dpy, a4, heads[0], 0), "release after restack activated a stale row");
+		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
+		XSync(dpy, True);
 		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for queued crossing");
 		queued_gap_return(dpy, heads, 0);
 		CHECK(wait_panel(dpy, root, 0, &panel), "queued crossing and return left the panel armed");

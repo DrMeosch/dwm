@@ -111,7 +111,10 @@ also crosses directly between the two top bars in both directions and checks
 that the panel closes before Ctrl is released. A queued crossing from a client
 on A into B's root gap and back to A must cancel without activating a row. A
 middle click queued in B's gap must toggle only B's bar, even if the pointer
-has already returned to A. Start with the pointer on head 0.
+has already returned to A. Closing an unlisted scratchpad while the pointer
+crosses into a B client that consumes motion must dismiss the panel before
+Ctrl release without changing focus or revealing the highlighted hidden tag.
+Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 
