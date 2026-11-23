@@ -689,12 +689,14 @@ check_floating_switcher(Display *dpy, Window root, Window parent, XineramaScreen
 	XEvent request = { .xclient = { .type = ClientMessage, .window = dialog,
 		.message_type = XInternAtom(dpy, "_NET_WM_STATE", False), .format = 32 } };
 	Geometry before, after, panel = {0};
-	int i, button;
+	int i, button, drag;
 
+	XSelectInput(dpy, dialog, KeyPressMask);
 	XSetTransientForHint(dpy, dialog, parent);
 	XMapWindow(dpy, dialog);
 	CHECK(wait_active(dpy, root, dialog), "drag fixture was not focused");
-	for (button = Button1; button <= Button3; button += 2) {
+	for (drag = 0; drag < 3; drag++) {
+		button = drag == 1 ? Button1 : Button3;
 		before = geometry(dpy, dialog);
 		XWarpPointer(dpy, None, dialog, 0, 0, 0, 0, before.w / 2, before.h / 2);
 		switcher_key(dpy, XK_Super_L, True);
@@ -708,6 +710,13 @@ check_floating_switcher(Display *dpy, Window root, Window parent, XineramaScreen
 		}
 		CHECK(i < 20, "button %d did not drag the window", button);
 		switcher_key(dpy, XK_Super_L, False);
+		if (!drag) {
+			XTestFakeButtonEvent(dpy, button, False, CurrentTime);
+			switcher_tap(dpy, XK_x);
+			CHECK(wait_for_input(dpy, dialog, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+			   && active_window(dpy, root) == dialog, "plain resize lost client focus");
+			continue;
+		}
 		switcher_key(dpy, XK_Control_L, True);
 		switcher_tap(dpy, XK_Tab);
 		XTestFakeButtonEvent(dpy, button, False, CurrentTime);
@@ -1140,19 +1149,25 @@ test_switcher(Display *dpy, Window root)
 	      "fullscreen switcher attempt changed view or focus");
 
 	if (separate) {
-		enum { Held, CrossingFirst, ReleaseFirst } order;
+		enum { Closed, Pending, Held, CrossingFirst, ReleaseFirst } order;
 
-		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask);
+		XSelectInput(dpy, b2, KeyPressMask | PointerMotionMask | FocusChangeMask);
 		XSelectInput(dpy, a4, KeyPressMask | FocusChangeMask);
-		for (order = Held; order <= ReleaseFirst; order++) {
+		XSelectInput(dpy, root, SubstructureNotifyMask);
+		for (order = Closed; order <= ReleaseFirst; order++) {
 			unrelated = order == Held ? pads[0][1] : switcher_client(dpy, root, "restack witness", ScratchCalc, 0);
 			XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
 			CHECK(wait_visible(dpy, unrelated, heads[0], 0) && wait_active(dpy, root, a23)
 			   && wait_visible(dpy, a4, heads[0], 0), "restack did not start with target and witness hidden");
-			CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
+			if (order >= Held)
+				CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
 			XSync(dpy, True);
 			XGrabServer(dpy);
 			XDestroyWindow(dpy, unrelated);
+			if (order == Pending) {
+				switcher_key(dpy, XK_Control_L, True);
+				switcher_tap(dpy, XK_Tab);
+			}
 			if (order == ReleaseFirst)
 				switcher_key(dpy, XK_Control_L, False);
 			XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
@@ -1161,8 +1176,17 @@ test_switcher(Display *dpy, Window root)
 			XUngrabServer(dpy);
 			XSync(dpy, False);
 			CHECK(XCheckTypedWindowEvent(dpy, b2, MotionNotify, &event), "B client did not consume motion");
-			CHECK(wait_panel(dpy, root, 0, &panel), "restack left the panel armed");
-			if (order == Held)
+			if (order == Pending) {
+				for (i = 0; i < 80 && !XCheckTypedWindowEvent(dpy, root, MapNotify, &event); i++)
+					pause_millis(25);
+				CHECK(i < 80 && event.xmap.override_redirect, "pending opener did not map the panel");
+			} else if (order == Closed) {
+				CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[0]),
+				      "closed restack changed the selected monitor");
+				switcher_tap(dpy, XK_Escape);
+			}
+			CHECK(wait_panel(dpy, root, 0, &panel), "restack left the panel armed in order %d", order);
+			if (order <= Held)
 				switcher_key(dpy, XK_Control_L, False);
 			if (order == ReleaseFirst) {
 				CHECK(wait_visible(dpy, a4, heads[0], 1), "later crossing discarded the hidden target");
@@ -1184,6 +1208,9 @@ test_switcher(Display *dpy, Window root)
 		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for queued crossing");
 		queued_gap_return(dpy, heads, 0);
 		CHECK(wait_panel(dpy, root, 0, &panel), "queued crossing and return left the panel armed");
+		for (i = 0; i < 80 && !XCheckTypedWindowEvent(dpy, b2, FocusIn, &event); i++)
+			pause_millis(25);
+		CHECK(i < 80 && wait_active(dpy, root, a23), "queued crossing did not visit B and return focus to A");
 		switcher_key(dpy, XK_Control_L, False);
 		switcher_tap(dpy, XK_x);
 		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)

@@ -2038,16 +2038,10 @@ resizeclient(Client *c, int x, int y, int w, int h)
 }
 
 static void
-drainenters(int sync)
+suppressenters(void)
 {
-	XEvent ev;
-
-	if (switcher.mon)
-		enterbefore = NextRequest(dpy);
-	if (sync || switcher.mon)
-		XSync(dpy, False);
-	if (!switcher.mon)
-		while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+	enterbefore = XNextRequest(dpy);
+	XSync(dpy, False);
 }
 
 void
@@ -2099,7 +2093,7 @@ resizemouse(const Arg *arg)
 	} while (ev.type != ButtonRelease);
 	XWarpPointer(dpy, None, c->win, 0, 0, 0, 0, c->w + c->bw - 1, c->h + c->bw - 1);
 	XUngrabPointer(dpy, CurrentTime);
-	drainenters(0);
+	suppressenters();
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
@@ -2138,7 +2132,7 @@ restack(Monitor *m)
 				wc.sibling = c->win;
 			}
 	}
-	drainenters(1);
+	suppressenters();
 }
 
 void

@@ -115,7 +115,11 @@ middle click queued in B's gap must toggle only B's bar, even if the pointer
 has already returned to A. Closing an unlisted scratchpad while the pointer
 crosses into a B client that consumes motion must dismiss the panel before
 Ctrl release without changing focus or revealing the highlighted hidden tag.
-Queuing both actions during restack must cancel when the crossing comes first,
+With Ctrl+Tab queued between the scratchpad removal and crossing, the panel
+must map and then close while Ctrl is still down. Without an opener, the same
+restack must leave focus and monitor selection on A. A plain mouse resize must
+change the floating client's geometry and leave it able to receive typing.
+Queuing the release and crossing during restack must cancel when the crossing comes first,
 but reveal and focus the hidden target when the last Ctrl release comes first.
 Start with the pointer on head 0.
 Autostart is disabled only in the `dwm` test build, so no configured desktop
