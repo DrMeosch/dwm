@@ -2580,7 +2580,7 @@ setclienttagprop(Client *c)
 static int
 switchereligible(Client *c)
 {
-	return ISVISIBLE(c) || ((c->tags & TAGMASK) && !(c->tags & SPTAGMASK));
+	return ISVISIBLE(c) || (c->tags & TAGMASK & ~SPTAGMASK);
 }
 
 static void

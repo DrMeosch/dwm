@@ -993,7 +993,7 @@ queued_gap_return(Display *dpy, XineramaScreenInfo *heads, int click)
 static void
 check_hidden_mixed_scratchpad(Display *dpy, Window root, XineramaScreenInfo head)
 {
-	Window editor, pad;
+	Window editor, pad, probe;
 	Geometry panel = {0};
 	XClassHint hint = { "spterm", "St" };
 	int one_row;
@@ -1001,34 +1001,49 @@ check_hidden_mixed_scratchpad(Display *dpy, Window root, XineramaScreenInfo head
 	editor = create_client(dpy, root, "Scratchpad test editor", 0);
 	CHECK(wait_active(dpy, root, editor), "could not focus the scratchpad test editor");
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open the one-row panel");
-	one_row = panel.h;
+	one_row = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel), "one-row panel did not close");
 
 	pad = XCreateSimpleWindow(dpy, root, 40, 40, 180, 120, 0, 0, 0);
 	XStoreName(dpy, pad, "Terminal scratchpad");
 	XSetClassHint(dpy, pad, &hint);
+	XSelectInput(dpy, pad, KeyPressMask);
 	XMapWindow(dpy, pad);
-	CHECK(wait_visible(dpy, pad, head, 0), "terminal scratchpad did not start hidden");
+	CHECK(wait_visible(dpy, pad, head, 0) && clientinfo_is(dpy, pad, ScratchTerm, head.screen_number),
+	      "terminal scratchpad did not start hidden with only its scratchpad tag");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
+	   && geometry(dpy, switcher_panel(dpy, root, &panel)).h == one_row,
+	      "hidden scratchpad-only window added a switcher row");
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "scratchpad-only panel did not close");
+
 	key(dpy, XK_Return, XK_Shift_L);
 	CHECK(wait_active(dpy, root, pad), "terminal scratchpad did not show");
 	switcher_key(dpy, XK_Control_L, True);
-	key(dpy, XK_2, XK_Shift_L); /* Add tag 2 while keeping the scratchpad tag. */
+	key(dpy, XK_2, XK_Shift_L);
+	key(dpy, XK_3, XK_Shift_L);
 	switcher_key(dpy, XK_Control_L, False);
 	key(dpy, XK_Return, XK_Shift_L);
 	CHECK(wait_active(dpy, root, editor) && wait_visible(dpy, pad, head, 0)
-	   && clientinfo_is(dpy, pad, ScratchTerm | 2, head.screen_number),
-	      "terminal scratchpad did not hide with both tags intact");
+	   && clientinfo_is(dpy, pad, ScratchTerm | 6, head.screen_number),
+	      "terminal scratchpad did not hide with its ordinary tags intact");
 
-	CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel.h == one_row,
-	      "hidden mixed-tag scratchpad added a switcher row (height %d, expected %d)", panel.h, one_row);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
+	   && geometry(dpy, switcher_panel(dpy, root, &panel)).h == 2 * one_row,
+	      "hidden mixed-tag scratchpad did not add a switcher row");
 	switcher_key(dpy, XK_Control_L, False);
 	switcher_tap(dpy, XK_x);
 	CHECK(wait_panel(dpy, root, 0, &panel)
-	   && wait_for_input(dpy, editor, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
-	   && active_window(dpy, root) == editor && wait_visible(dpy, pad, head, 0),
-	      "Ctrl release revealed the mixed-tag scratchpad or took input from the editor");
+	   && wait_for_input(dpy, pad, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+	   && active_window(dpy, root) == pad && wait_visible(dpy, pad, head, 1),
+	      "Ctrl release did not activate the hidden mixed-tag scratchpad");
+	probe = create_client(dpy, root, "Scratchpad view probe", 0);
+	CHECK(wait_active(dpy, root, probe) && clientinfo_is(dpy, probe, 2, head.screen_number),
+	      "mixed-tag scratchpad activation did not reveal only tag 2");
+	XDestroyWindow(dpy, probe);
 	key(dpy, XK_1, 0);
+	CHECK(wait_active(dpy, root, editor), "scratchpad test did not restore tag 1");
 	XDestroyWindow(dpy, pad);
 	XDestroyWindow(dpy, editor);
 	CHECK(wait_active(dpy, root, None), "scratchpad test did not leave an empty monitor");
@@ -1481,6 +1496,7 @@ test_switcher(Display *dpy, Window root)
 		      "reopening after pointer monitor selection did not stay on B");
 		switcher_tap(dpy, XK_Escape);
 		switcher_key(dpy, XK_Control_L, False);
+		CHECK(wait_panel(dpy, root, 0, &panel), "B's panel did not close before the bar crossing test");
 		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1, heads[1].y_org + 1, CurrentTime);
 		for (i = 0; i < 2; i++) {
 			CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[1 - i]),
