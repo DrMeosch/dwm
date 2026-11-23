@@ -379,7 +379,7 @@ static Clr **scheme;
 static Display *dpy;
 static Drw *drw;
 static Fnt *selfonts;
-static Monitor *mons, *selmon, *pointermon, *suppressedmon, *rootmotionmon;
+static Monitor *mons, *selmon, *pointermon, *rootmotionmon;
 static unsigned long enterbefore;
 static Window root, wmcheckwin;
 
@@ -1354,13 +1354,6 @@ drawbars(void)
 		drawbar(m);
 }
 
-static void
-checksuppressedcrossing(Monitor *m)
-{
-	if (switcher.mon && m != switcher.mon && m != (suppressedmon ? suppressedmon : pointermon))
-		switchercancel();
-}
-
 void
 enternotify(XEvent *e)
 {
@@ -1371,13 +1364,13 @@ enternotify(XEvent *e)
 	if (ev->serial < enterbefore) {
 		if (!ev->send_event && ev->mode == NotifyNormal) {
 			m = pointtomon(ev->x_root, ev->y_root);
-			checksuppressedcrossing(m);
-			suppressedmon = m;
+			if (switcher.mon && m != switcher.mon && m != pointermon)
+				switchercancel();
+			pointermon = m;
 		}
 		return;
 	}
 	enterbefore = 0;
-	suppressedmon = NULL;
 	pointermon = pointtomon(ev->x_root, ev->y_root);
 	if ((ev->mode != NotifyNormal || ev->detail == NotifyInferior) && ev->window != root)
 		return;
@@ -1854,14 +1847,10 @@ motionnotify(XEvent *e)
 	m = pointtomon(ev->x_root, ev->y_root);
 	workmon = recttomon(ev->x_root, ev->y_root, 1, 1);
 	if (switcher.mon) {
-		if (m != pointermon && m != selmon)
+		if (m != switcher.mon && m != pointermon)
 			target = m;
 	} else if (rootmotionmon && workmon != rootmotionmon) {
 		target = workmon;
-	}
-	if (suppressedmon) {
-		checksuppressedcrossing(m);
-		suppressedmon = NULL;
 	}
 	if (target) {
 		unfocus(selmon->sel, 1);
@@ -3178,9 +3167,13 @@ updategeom(void)
 		}
 	}
 	if (dirty) {
-		selmon = mons;
-		suppressedmon = NULL;
-		pointermon = selmon = wintomon(root);
+		int x, y;
+
+		pointermon = selmon = mons;
+		if (getrootptr(&x, &y)) {
+			pointermon = pointtomon(x, y);
+			selmon = recttomon(x, y, 1, 1);
+		}
 	}
 	return dirty;
 }
@@ -3188,16 +3181,16 @@ updategeom(void)
 void
 updatenumlockmask(void)
 {
-	unsigned int i, j;
+	int i, j;
 	XModifierKeymap *modmap;
+	KeyCode numlock = XKeysymToKeycode(dpy, XK_Num_Lock);
 
 	numlockmask = 0;
-	if (!(modmap = XGetModifierMapping(dpy)))
+	if (!numlock || !(modmap = XGetModifierMapping(dpy)))
 		return;
 	for (i = 0; i < 8; i++)
 		for (j = 0; j < modmap->max_keypermod; j++)
-			if (modmap->modifiermap[i * modmap->max_keypermod + j]
-				== XKeysymToKeycode(dpy, XK_Num_Lock))
+			if (modmap->modifiermap[i * modmap->max_keypermod + j] == numlock)
 				numlockmask = (1 << i);
 	XFreeModifiermap(modmap);
 }
@@ -3551,12 +3544,9 @@ wintoclient(Window w)
 Monitor *
 wintomon(Window w)
 {
-	int x, y;
 	Client *c;
 	Monitor *m;
 
-	if (w == root && getrootptr(&x, &y))
-		return pointtomon(x, y);
 	for (m = mons; m; m = m->next)
 		if (w == m->barwin)
 			return m;

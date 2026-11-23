@@ -108,7 +108,9 @@ or swallow the next printable key. A second XKB group relocates Tab, j, k and
 Escape. The fixture checks that the alternate keys work and that an application
 can both register and receive the Ctrl shortcut on the inactive group's Tab keycode.
 If two keycodes map to Tab, a conflicting Ctrl+CapsLock grab on the first must not
-prevent plain Ctrl+Tab from opening the panel on the second.
+prevent plain Ctrl+Tab from opening the panel on the second. With Num Lock
+removed from the test keymap, plain Ctrl+Tab must still open the panel and
+Ctrl+AltGr+Tab must reach the application.
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with Xinerama head 0 to the left of head 1,
 start with the pointer on head 0. The same `input switcher` check distinguishes
@@ -128,7 +130,8 @@ If the last root motion was in A's gap and a B client consumed motion on entry,
 moving from that client to B's root gap during restack must still select B.
 With the pointer initially on B and A selected by keyboard, a suppressed enter
 into A before the opener and a return to B after it must cancel without revealing
-A's hidden row.
+A's hidden row. If the suppressed enter into B happens before the opener,
+subsequent motion from a B client into B's gap must leave A's panel open.
 Queuing the release and crossing during restack must cancel when the crossing comes first,
 but reveal and focus the hidden target when the last Ctrl release comes first.
 For release-first, the fixture waits for logical Tab release and a subsequent

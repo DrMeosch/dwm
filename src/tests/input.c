@@ -842,6 +842,51 @@ check_keyboard_scope(Display *dpy, Window root)
 }
 
 static void
+check_switcher_without_numlock(Display *dpy, Window root, Window origin)
+{
+	KeyCode numlock = XKeysymToKeycode(dpy, XK_Num_Lock);
+	KeyCode altgr = XKeysymToKeycode(dpy, XK_ISO_Level3_Shift);
+	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	KeySym replacement = XK_F12;
+	Display *reader;
+	XModifierKeymap *modmap;
+	XkbStateRec state;
+	Geometry panel = {0};
+	int i, padded = 0;
+
+	CHECK(numlock && altgr && tab, "Num Lock regression requires Num Lock, AltGr and Tab keycodes");
+	if (!numlock || !altgr || !tab)
+		return;
+	XChangeKeyboardMapping(dpy, numlock, 1, &replacement, 1);
+	XSync(dpy, True);
+	CHECK(wait_configure_ack(dpy, origin), "Num Lock mapping change was not acknowledged");
+	reader = XOpenDisplay(DisplayString(dpy));
+	CHECK(reader && !XKeysymToKeycode(reader, XK_Num_Lock), "test keymap still contains Num Lock");
+	if (reader)
+		XCloseDisplay(reader);
+	if ((modmap = XGetModifierMapping(dpy))) {
+		for (i = 0; i < modmap->max_keypermod; i++)
+			padded |= modmap->modifiermap[Mod5MapIndex * modmap->max_keypermod + i] == 0;
+		XFreeModifiermap(modmap);
+	}
+	CHECK(padded, "test keymap requires an empty slot in Mod5");
+	switcher_key(dpy, XK_Control_L, True);
+	XTestFakeKeyEvent(dpy, altgr, True, CurrentTime);
+	CHECK(XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
+	   && (state.base_mods & (ControlMask | Mod5Mask)) == (ControlMask | Mod5Mask),
+	      "AltGr did not activate Mod5 with Ctrl");
+	tap_keycode(dpy, tab);
+	CHECK(wait_for_input(dpy, origin, KeyPress, tab, ControlMask) && !switcher_panel(dpy, root, &panel),
+	      "Ctrl+AltGr+Tab did not reach the application without Num Lock");
+	XTestFakeKeyEvent(dpy, altgr, False, CurrentTime);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "plain Ctrl+Tab stopped working without Num Lock");
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel without Num Lock");
+}
+
+static void
 check_switcher_group(Display *dpy, Window root)
 {
 	KeySym groups[][4] = {
@@ -926,6 +971,7 @@ check_switcher_group(Display *dpy, Window root)
 	      "could not cancel the second Tab keycode's panel");
 	XIUngrabKeycode(dpy, mask.deviceid, codes[0], root, 1, &mod);
 	XkbLockGroup(dpy, XkbUseCoreKbd, 0);
+	check_switcher_without_numlock(dpy, root, origin);
 }
 
 static void
@@ -1237,6 +1283,30 @@ test_switcher(Display *dpy, Window root)
 		XSelectInput(dpy, a4, KeyPressMask | FocusChangeMask);
 		XSelectInput(dpy, root, SubstructureNotifyMask | PointerMotionMask);
 		XSelectInput(dpy, a23, KeyPressMask | PointerMotionMask | StructureNotifyMask);
+		unrelated = switcher_client(dpy, root, "same-head restack witness", ScratchCalc, 0);
+		CHECK(wait_visible(dpy, unrelated, heads[0], 0), "same-head restack witness was not hidden");
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[0].x_org + 1,
+		                     heads[0].y_org + heads[0].height - 1, CurrentTime);
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
+		                     heads[1].y_org + heads[1].height - 1, CurrentTime);
+		CHECK(wait_active(dpy, root, b2), "could not seed root motion on B");
+		XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
+		CHECK(wait_active(dpy, root, a23), "could not return to A by client-only motion");
+		XSync(dpy, True);
+		XGrabServer(dpy);
+		XDestroyWindow(dpy, unrelated);
+		XWarpPointer(dpy, None, b2, 0, 0, 0, 0, 20, 20);
+		switcher_key(dpy, XK_Control_L, True);
+		switcher_tap(dpy, XK_Tab);
+		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
+		                     heads[1].y_org + heads[1].height - 1, CurrentTime);
+		XUngrabServer(dpy);
+		CHECK(wait_configure_ack(dpy, a23) && switcher_panel(dpy, root, &panel) && panel_on(panel, heads[0])
+		   && active_window(dpy, root) == a23, "same-head motion on B canceled the queued opener on A");
+		switcher_tap(dpy, XK_Escape);
+		switcher_key(dpy, XK_Control_L, False);
+		CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel after same-head motion");
+
 		for (order = RootMotion; order <= ReleaseFirst; order++) {
 			unrelated = order == Held ? pads[0][1] : switcher_client(dpy, root, "restack witness", ScratchCalc, 0);
 			XWarpPointer(dpy, None, a23, 0, 0, 0, 0, 20, 20);
