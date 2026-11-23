@@ -86,12 +86,15 @@ Xinerama heads. It checks each panel's monitor and row count, recent-first
 navigation and wrapping, committing a visible window without changing the
 multi-tag view, revealing the lowest tag of a hidden multi-tag window, and
 leaving the other monitor's view, layout and remembered selection alone. It
-measures one, three and five rows against a single highlighted row. New clients
-probe the exact tag masks on both the activated and untouched monitors. Queued
+measures row counts against a single highlighted row, including the extra row
+when a scratchpad is shown. New clients probe the ordinary tags; two scratchpad-only
+windows on each monitor reveal the scratchpad bits. Hidden activation must restore
+recorded monocle geometry on one destination and tiled geometry on the other. Queued
 Ctrl+Tab and j/k sequences end with a printable key that must reach the chosen
 client. Move and resize drags must finish when the opener arrives before button
-release. The check distinguishes held Ctrl from latched Ctrl and tests a focus
-round trip from root, an unmanaged popup, or a client child. It also covers both
+release. An independent master keyboard must remain free to bind Ctrl+Tab.
+With two visible windows, latched Ctrl must leave focus and typing at the origin.
+The check also tests a focus round trip from root, an unmanaged popup, or a client child. It also covers both
 Ctrl keys, Escape with repeat, stale targets, unrelated updates on the other
 monitor, the fullscreen lock, an application keyboard grab and Ctrl+j/k delivery
 after dismissal.

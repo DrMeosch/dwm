@@ -5,6 +5,7 @@
 #include <X11/Xproto.h>
 #include <X11/keysym.h>
 #include <X11/extensions/XTest.h>
+#include <X11/extensions/XInput2.h>
 #include <X11/extensions/Xinerama.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -619,15 +620,36 @@ clientinfo_is(Display *dpy, Window win, unsigned long tags, unsigned long monito
 	return matches;
 }
 
+enum { ScratchTerm = 1U << 9, ScratchCalc = 1U << 10 };
+
 static void
-check_view(Display *dpy, Window root, Window previous, unsigned long tags, unsigned long monitor)
+check_view(Display *dpy, Window root, Window previous, unsigned long tags,
+           XineramaScreenInfo head, Window pads[2])
 {
 	Window probe = create_client(dpy, root, "view probe", 0);
 
-	CHECK(wait_active(dpy, root, probe) && clientinfo_is(dpy, probe, tags, monitor),
-	      "new window did not inherit tag mask %lu on monitor %lu", tags, monitor);
+	CHECK(wait_active(dpy, root, probe) && clientinfo_is(dpy, probe, tags & (ScratchTerm - 1), head.screen_number),
+	      "new window did not inherit the ordinary tags of %#lx on monitor %d", tags, head.screen_number);
+	for (int i = 0; i < 2; i++)
+		CHECK(clientinfo_is(dpy, pads[i], ScratchTerm << i, head.screen_number)
+		   && wait_visible(dpy, pads[i], head, !!(tags & (ScratchTerm << i))),
+		      "scratchpad %d disagrees with view %#lx on monitor %d", i, tags, head.screen_number);
 	XDestroyWindow(dpy, probe);
 	CHECK(wait_active(dpy, root, previous), "removing view probe did not restore focus");
+}
+
+static void
+record_layout(Display *dpy, Window first, Window second, Geometry *a, Geometry *b, int monocle)
+{
+	for (int i = 0; i < 80; i++) {
+		*a = geometry(dpy, first);
+		*b = geometry(dpy, second);
+		if (a->w > 0 && b->w > 0 && (monocle ? same_geometry(*a, *b)
+		    : a->x + a->w <= b->x || b->x + b->w <= a->x))
+			return;
+		pause_millis(25);
+	}
+	CHECK(0, "windows did not settle into the expected %s layout", monocle ? "monocle" : "tiled");
 }
 
 static void
@@ -667,11 +689,50 @@ switcher_drags(Display *dpy, Window root, Window parent)
 }
 
 static void
+check_keyboard_scope(Display *dpy, Window root)
+{
+	XIAnyHierarchyChangeInfo change = { .add = { XIAddMaster, "switcher-test", True, True } };
+	XIGrabModifiers mod = { ControlMask, 0 };
+	unsigned char bits[XIMaskLen(XI_KeyPress)] = {0};
+	XIEventMask mask = { 0, sizeof bits, bits };
+	XIDeviceInfo *devices;
+	Window probe;
+	int i, n, major = 2, minor = 0;
+
+	if (XIQueryVersion(dpy, &major, &minor) != Success || XIChangeHierarchy(dpy, &change, 1) != Success) {
+		CHECK(0, "could not create independent test keyboard");
+		return;
+	}
+	probe = create_client(dpy, root, "keyboard scope probe", 0);
+	CHECK(wait_active(dpy, root, probe), "keyboard scope probe was not managed");
+	devices = XIQueryDevice(dpy, XIAllMasterDevices, &n);
+	for (i = 0; devices && i < n; i++) {
+		if (devices[i].use != XIMasterKeyboard || strcmp(devices[i].name, "switcher-test keyboard"))
+			continue;
+		mask.deviceid = devices[i].deviceid;
+		XISetMask(bits, XI_KeyPress);
+		CHECK(XIGrabKeycode(dpy, mask.deviceid, XKeysymToKeycode(dpy, XK_Tab), root, GrabModeAsync,
+		                    GrabModeAsync, False, &mask, 1, &mod) == 0,
+		      "dwm reserved Ctrl+Tab on an independent keyboard");
+		change.remove = (XIRemoveMasterInfo){ .type = XIRemoveMaster, .deviceid = mask.deviceid,
+		                                     .return_mode = XIFloating };
+		XIChangeHierarchy(dpy, &change, 1);
+		break;
+	}
+	CHECK(mask.deviceid, "independent test keyboard was not found");
+	if (devices)
+		XIFreeDeviceInfo(devices);
+	XDestroyWindow(dpy, probe);
+	CHECK(wait_active(dpy, root, None), "keyboard scope probe retained focus");
+}
+
+static void
 test_switcher(Display *dpy, Window root)
 {
 	XineramaScreenInfo *heads;
 	Window a1, a2, a4, a12, a23, b1, b1other, b2;
-	Geometry panel = {0}, b1geom, b1othergeom, a23geom;
+	Window pads[2][2];
+	Geometry panel = {0}, b1geom, b1othergeom, a23geom, a2geom, b2geom, b2othergeom;
 	int i, n = 0, separate, height_a, height_b, height_one, row;
 	Window panelwin, child, popup, unrelated;
 	XSetWindowAttributes popupattrs = { .override_redirect = True };
@@ -688,6 +749,7 @@ test_switcher(Display *dpy, Window root)
 		return;
 	}
 	separate = heads[0].x_org + heads[0].width <= heads[1].x_org;
+	check_keyboard_scope(dpy, root);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
@@ -710,36 +772,52 @@ test_switcher(Display *dpy, Window root)
 	height_one = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_active(dpy, root, a23), "sole hidden client was not activated");
+	switcher_drags(dpy, root, a23);
+	a2 = switcher_client(dpy, root, "Inbox - tag 2", 2, 0);
+	CHECK(wait_active(dpy, root, a2), "second visible row was not selected");
 	CHECK(XkbLatchModifiers(dpy, XkbUseCoreKbd, ControlMask, ControlMask)
 	   && XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
 	   && (state.latched_mods & ControlMask) && !(state.base_mods & ControlMask),
 	      "could not latch Ctrl with neither Ctrl key held");
 	switcher_tap(dpy, XK_Tab);
 	switcher_tap(dpy, XK_x);
-	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
-	   && !switcher_panel(dpy, root, &panel), "latched Ctrl opened the switcher or kept the keyboard");
-	switcher_drags(dpy, root, a23);
+	CHECK(wait_for_input(dpy, a2, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+	   && active_window(dpy, root) == a2 && !switcher_panel(dpy, root, &panel),
+	      "latched Ctrl activated the other row or kept the keyboard");
+	key(dpy, XK_u, XK_Shift_L);
+	record_layout(dpy, a23, a2, &a23geom, &a2geom, 1);
 	key(dpy, XK_1, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "could not restore fixture view");
-	a2 = switcher_client(dpy, root, "Inbox - tag 2", 2, 0);
+	for (i = 0; i < 2; i++) {
+		pads[i][0] = switcher_client(dpy, root, "Terminal scratchpad", ScratchTerm, i);
+		pads[i][1] = switcher_client(dpy, root, "Calculator scratchpad", ScratchCalc, i);
+		CHECK(wait_visible(dpy, pads[i][0], heads[i], 0) && wait_visible(dpy, pads[i][1], heads[i], 0),
+		      "scratchpad witnesses did not start hidden on monitor %d", i);
+	}
 	a12 = switcher_client(dpy, root, "Notes - tags 1 + 2", 3, 0);
 	a1 = switcher_client(dpy, root, "Project plan - tag 1", 1, 0);
 	b2 = switcher_client(dpy, root, "Reference - tag 2", 2, 1);
-	b1other = switcher_client(dpy, root, "Chat - tag 1", 1, 1);
-	b1 = switcher_client(dpy, root, "Editor - tag 1", 1, 1);
-	CHECK(wait_active(dpy, root, a1) && wait_visible(dpy, b1, heads[1], 1),
+	b1other = switcher_client(dpy, root, "Chat - tags 1 + 2", 3, 1);
+	CHECK(wait_active(dpy, root, a1) && wait_visible(dpy, b1other, heads[1], 1),
 	      "switcher fixture was not placed on two monitors");
 	key(dpy, XK_l, 0);
-	CHECK(wait_active(dpy, root, b1), "could not select monitor B");
+	CHECK(wait_active(dpy, root, b1other), "could not select monitor B");
+	key(dpy, XK_2, 0);
+	CHECK(wait_visible(dpy, b2, heads[1], 1), "could not show B's tiled tag");
+	record_layout(dpy, b2, b1other, &b2geom, &b2othergeom, 0);
+	key(dpy, XK_1, 0);
+	CHECK(wait_visible(dpy, b2, heads[1], 0), "could not leave B's tiled tag");
+	b1 = switcher_client(dpy, root, "Editor - tag 1", 1, 1);
+	CHECK(wait_active(dpy, root, b1), "could not focus editor on B");
 	key(dpy, XK_u, XK_Shift_L);
-	for (i = 0; i < 80; i++) {
-		b1geom = geometry(dpy, b1);
-		b1othergeom = geometry(dpy, b1other);
-		if (same_geometry(b1othergeom, b1geom))
-			break;
-		pause_millis(25);
-	}
-	CHECK(i < 80, "could not set monitor B's layout to monocle");
+	record_layout(dpy, b1, b1other, &b1geom, &b1othergeom, 1);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not measure B's ordinary rows");
+	height_b = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	key(dpy, XK_apostrophe, 0);
+	CHECK(wait_active(dpy, root, pads[1][1]), "could not show B's calculator");
+	queued_switch(dpy, XK_Control_L, NoSymbol, 0, b1);
 	key(dpy, XK_h, 0);
 	CHECK(wait_active(dpy, root, a1), "could not return to monitor A");
 
@@ -771,7 +849,7 @@ test_switcher(Display *dpy, Window root)
 	CHECK(wait_visible(dpy, a4, heads[0], 1) && wait_visible(dpy, a23, heads[0], 0),
 	      "committing an already visible window replaced the current view");
 
-	check_view(dpy, root, a12, 9, 0);
+	check_view(dpy, root, a12, 9, heads[0], pads[0]);
 	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a4);
 	CHECK(wait_active(dpy, root, a4), "queued Ctrl+Tab did not activate the previous window");
 	queued_switch(dpy, XK_Control_R, XK_k, 2, a23);
@@ -779,11 +857,17 @@ test_switcher(Display *dpy, Window root)
 	      "reverse wrap did not reach the one row for the multi-tag window");
 	CHECK(wait_visible(dpy, a2, heads[0], 1) && wait_visible(dpy, a4, heads[0], 0)
 	   && wait_visible(dpy, a1, heads[0], 0), "hidden multi-tag target did not reveal just tag 2");
+	CHECK(wait_geometry(dpy, a23, a23geom) && wait_geometry(dpy, a2, a2geom),
+	      "hidden activation did not restore A's monocle layout");
 	queued_switch(dpy, XK_Control_L, XK_j, 5, a4);
 	CHECK(wait_active(dpy, root, a4), "hidden activation promoted an unchosen window");
 	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
 	CHECK(wait_active(dpy, root, a23), "could not return to the hidden target");
-	check_view(dpy, root, a23, 2, 0);
+	check_view(dpy, root, a23, 2, heads[0], pads[0]);
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, pads[0][0]), "could not show A's terminal scratchpad");
+	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a23);
+	check_view(dpy, root, a23, 2 | ScratchTerm, heads[0], pads[0]);
 	CHECK(clientinfo_is(dpy, a23, 6, 0) && clientinfo_is(dpy, a12, 3, 0),
 	      "activation retagged or migrated a monitor A client");
 	CHECK(same_geometry(geometry(dpy, b1), b1geom)
@@ -791,25 +875,30 @@ test_switcher(Display *dpy, Window root)
 	   && wait_visible(dpy, b2, heads[1], 0), "monitor A activation changed monitor B's view or layout");
 
 	/* Count rows by their uniform height, including multi-tag windows only once. */
-	a23geom = geometry(dpy, a23);
 	key(dpy, XK_l, 0);
 	CHECK(wait_active(dpy, root, b1), "monitor B did not remember its selection");
-	check_view(dpy, root, b1, 1, 1);
+	check_view(dpy, root, b1, 1 | ScratchCalc, heads[1], pads[1]);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[1]),
 	      "reopened panel was not centered inside monitor B");
-	height_b = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
-	CHECK(row > 0 && height_b == 3 * row, "expected three rows on B, got height %d", height_b);
-	switcher_tap(dpy, XK_j); /* b1other -> b2 */
+	CHECK(row > 0 && height_b == 3 * row, "expected three rows on B with both scratchpads hidden");
+	CHECK(geometry(dpy, switcher_panel(dpy, root, &panel)).h == 4 * row,
+	      "shown calculator did not add one row on B");
+	switcher_tap(dpy, XK_j);
+	switcher_tap(dpy, XK_j);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, b2)
 	   && wait_visible(dpy, b1, heads[1], 0) && clientinfo_is(dpy, b2, 2, 1),
 	      "monitor B activation did not reveal its own hidden client");
-	check_view(dpy, root, b2, 2, 1);
+	CHECK(wait_geometry(dpy, b2, b2geom) && wait_geometry(dpy, b1other, b2othergeom),
+	      "hidden activation did not restore B's tiled layout");
+	check_view(dpy, root, b2, 2, heads[1], pads[1]);
 	CHECK(same_geometry(geometry(dpy, a23), a23geom) && wait_visible(dpy, a1, heads[0], 0),
 	      "monitor B activation changed monitor A's view or layout");
 	key(dpy, XK_h, 0);
 	CHECK(wait_active(dpy, root, a23), "monitor A did not remember its selection");
-	check_view(dpy, root, a23, 2, 0);
+	check_view(dpy, root, a23, 2 | ScratchTerm, heads[0], pads[0]);
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_visible(dpy, pads[0][0], heads[0], 0), "could not hide A's scratchpad");
 
 	/* Leave Tab held after Escape long enough for auto-repeat to try to reopen. */
 	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 50), "could not set the test repeat rate");

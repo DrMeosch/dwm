@@ -379,7 +379,7 @@ static Fnt *selfonts;
 static Monitor *mons, *selmon, *pointermon;
 static Window root, wmcheckwin;
 
-static int switcherxi;
+static int switcherxi, switcherkeyboard;
 static struct {
 	Monitor *mon;
 	Window win, focus, origin;
@@ -389,7 +389,7 @@ static struct {
 		char title[sizeof ((Client *)0)->name];
 	} *rows;
 	size_t count, selected, first, shown;
-	int keyboard, width, rowheight;
+	int width, rowheight;
 } switcher;
 
 static xcb_connection_t *xcon;
@@ -1565,34 +1565,6 @@ grabbuttons(Client *c, int focused)
 	}
 }
 
-static void
-grabswitcherkeys(KeySym *syms, int start, int end, int skip, unsigned int *modifiers, int nmods)
-{
-	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
-	XIEventMask mask = { 0, sizeof bits, bits };
-	XIGrabModifiers any = { XIAnyModifier, 0 }, mods[nmods];
-	int i, k, n;
-	XIDeviceInfo *devices = XIQueryDevice(dpy, XIAllMasterDevices, &n);
-
-	if (!devices)
-		return;
-	XISetMask(bits, XI_KeyPress);
-	XISetMask(bits, XI_KeyRelease);
-	for (i = 0; i < nmods; i++)
-		mods[i] = (XIGrabModifiers){ ControlMask | modifiers[i], 0 };
-	for (i = 0; i < n; i++) {
-		if (devices[i].use != XIMasterKeyboard)
-			continue;
-		mask.deviceid = devices[i].deviceid;
-		XIUngrabKeycode(dpy, mask.deviceid, XIAnyKeycode, root, 1, &any);
-		for (k = start; k <= end; k++)
-			if (syms[(k - start) * skip] == switcherkey)
-				XIGrabKeycode(dpy, mask.deviceid, k, root, GrabModeSync, GrabModeAsync,
-				              False, &mask, nmods, mods);
-	}
-	XIFreeDeviceInfo(devices);
-}
-
 void
 grabkeys(void)
 {
@@ -1602,15 +1574,26 @@ grabkeys(void)
 		unsigned int modifiers[] = { 0, LockMask, numlockmask, numlockmask|LockMask };
 		int start, end, skip;
 		KeySym *syms;
+		unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
+		XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
+		XIGrabModifiers mods[LENGTH(modifiers)], any = { XIAnyModifier, 0 };
 
 		XUngrabKey(dpy, AnyKey, AnyModifier, root);
 		XDisplayKeycodes(dpy, &start, &end);
 		syms = XGetKeyboardMapping(dpy, start, end - start + 1, &skip);
 		if (!syms)
 			return;
-		if (switcherxi)
-			grabswitcherkeys(syms, start, end, skip, modifiers, LENGTH(modifiers));
+		if (switcherxi) {
+			XIUngrabKeycode(dpy, switcherkeyboard, XIAnyKeycode, root, 1, &any);
+			XISetMask(bits, XI_KeyPress);
+			XISetMask(bits, XI_KeyRelease);
+			for (j = 0; j < LENGTH(modifiers); j++)
+				mods[j] = (XIGrabModifiers){ ControlMask | modifiers[j], 0 };
+		}
 		for (k = start; k <= end; k++) {
+			if (switcherxi && syms[(k - start) * skip] == switcherkey)
+				XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
+				              False, &mask, LENGTH(mods), mods);
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
 				if (keys[i].keysym == syms[(k - start) * skip])
@@ -2316,6 +2299,7 @@ void
 setup(void)
 {
 	int i, event, error, major = 2, minor = 0;
+	XkbDeviceInfoPtr keyboard;
 	XSetWindowAttributes wa;
 	Atom utf8string;
 
@@ -2400,13 +2384,12 @@ setup(void)
 	/* XI2 marks repeat presses; Shape 1.1 makes the panel transparent to input. */
 	if (!XQueryExtension(dpy, "XInputExtension", &switcherxi, &event, &error)
 	|| XIQueryVersion(dpy, &major, &minor) != Success
-	|| !XShapeQueryVersion(dpy, &major, &minor) || (major == 1 && minor < 1))
+	|| !XShapeQueryVersion(dpy, &major, &minor) || (major == 1 && minor < 1)
+	|| !(keyboard = XkbGetDeviceInfo(dpy, 0, XkbUseCoreKbd, XkbDfltXIClass, XkbDfltXIId)))
 		switcherxi = 0;
 	else {
-		unsigned char bits[XIMaskLen(XI_HierarchyChanged)] = {0};
-		XIEventMask mask = { XIAllDevices, sizeof bits, bits };
-		XISetMask(bits, XI_HierarchyChanged);
-		XISelectEvents(dpy, root, &mask, 1);
+		switcherkeyboard = keyboard->device_spec;
+		XkbFreeDeviceInfo(keyboard, XkbXI_AllDeviceFeaturesMask, True);
 	}
 	grabkeys();
 	focus(NULL);
@@ -2526,7 +2509,7 @@ static void
 switcherwatch(int enable)
 {
 	unsigned char bits[XIMaskLen(XI_FocusOut)] = {0};
-	XIEventMask mask = { XIAllMasterDevices, sizeof bits, bits };
+	XIEventMask mask = { switcherkeyboard, sizeof bits, bits };
 
 	if (enable)
 		XISetMask(bits, XI_FocusOut);
@@ -2547,7 +2530,7 @@ static void
 switchercancel(void)
 {
 	if (switcher.mon) {
-		XIUngrabDevice(dpy, switcher.keyboard, CurrentTime);
+		XIUngrabDevice(dpy, switcherkeyboard, CurrentTime);
 		switcherclose();
 	}
 }
@@ -2560,9 +2543,8 @@ switchercommit(void)
 	XWindowAttributes wa;
 	Client *c;
 	unsigned int normal;
-	int keyboard = switcher.keyboard;
 
-	if (XIGetFocus(dpy, keyboard, &actualfocus) != Success
+	if (XIGetFocus(dpy, switcherkeyboard, &actualfocus) != Success
 	|| actualfocus != switcher.focus || m != selmon
 	|| (m->sel && m->sel->isfullscreen && lockfullscreen)
 	|| !(c = wintoclient(win)) || c->mon != m || !switchereligible(c)
@@ -2578,7 +2560,7 @@ switchercommit(void)
 		focus(c);
 		restack(m);
 	}
-	XIUngrabDevice(dpy, keyboard, CurrentTime);
+	XIUngrabDevice(dpy, switcherkeyboard, CurrentTime);
 }
 
 static void
@@ -2656,7 +2638,6 @@ switcherstart(XIDeviceEvent *ev)
 	                GrabModeAsync, False, &mask) != GrabSuccess)
 		goto refuse;
 	switcher.mon = m;
-	switcher.keyboard = ev->deviceid;
 	switcher.origin = m->sel ? m->sel->win : None;
 	switcherwatch(1);
 
@@ -2698,19 +2679,9 @@ switcherevent(XEvent *e)
 
 	if (!switcherxi || cookie->extension != switcherxi || !XGetEventData(dpy, cookie))
 		return;
-	if (cookie->evtype == XI_HierarchyChanged) {
-		XIHierarchyEvent *hierarchy = cookie->data;
-		for (int i = 0; switcher.mon && i < hierarchy->num_info; i++)
-			if (hierarchy->info[i].deviceid == switcher.keyboard
-			&& (hierarchy->info[i].flags & XIMasterRemoved))
-				switcherclose();
-		if (hierarchy->flags & XIMasterAdded)
-			grabkeys();
-		goto done;
-	}
 	if (cookie->evtype == XI_FocusOut) {
 		XIFocusOutEvent *out = cookie->data;
-		if (switcher.mon && out->deviceid == switcher.keyboard
+		if (switcher.mon
 		&& out->event == (switcher.focus > PointerRoot ? switcher.focus : root)
 		&& (out->mode == XINotifyNormal || out->mode == XINotifyWhileGrabbed)
 		&& out->detail != XINotifyPointer)
@@ -2721,8 +2692,8 @@ switcherevent(XEvent *e)
 		goto done;
 	ev = cookie->data;
 	sym = XKeycodeToKeysym(dpy, (KeyCode)ev->detail, 0);
-	if (!switcher.mon || ev->deviceid != switcher.keyboard) {
-		if (!switcher.mon && ev->evtype == XI_KeyPress && sym == switcherkey)
+	if (!switcher.mon) {
+		if (ev->evtype == XI_KeyPress && sym == switcherkey)
 			switcherstart(ev);
 		else
 			XIUngrabDevice(dpy, ev->deviceid, ev->time);
@@ -2740,7 +2711,7 @@ switcherevent(XEvent *e)
 		switcher.selected = switcher.selected ? switcher.selected - 1 : switcher.count - 1;
 		switcherdraw();
 	}
-	if (switcher.mon && ev->deviceid == switcher.keyboard)
+	if (switcher.mon)
 		XIAllowEvents(dpy, ev->deviceid, XISyncDevice, ev->time);
 done:
 	XFreeEventData(dpy, cookie);
