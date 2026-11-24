@@ -81,7 +81,8 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 Both theme scripts set the status bar and window switcher to 90% opacity
 when an X11 compositor honors their opacity hints.
 
-Apply these optional settings to the live Xresources database, then send `SIGUSR2` to dwm.
+Apply the fixed bar override and any switcher settings to the live Xresources
+database, then send `SIGUSR2` to dwm.
 
 ```sh
 xrdb -global -override <<'XRESOURCES'

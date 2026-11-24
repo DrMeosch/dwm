@@ -494,8 +494,8 @@ is missing, invalid, or non-positive, dwm uses the configured fallback, which
 is 2 pixels by default.
 .TP
 .B dwm.baropacity
-Set the opacity of every dwm bar as a whole percent from 0 (invisible) to 100
-(opaque). A missing or invalid value restores the palette's default.
+The value 90 sets every dwm bar to 90% opacity. A missing or unsupported value
+restores the palette's default.
 This setting requires an X11 compositor that honors _NET_WM_WINDOW_OPACITY
 on override-redirect windows.
 .TP
@@ -522,16 +522,16 @@ reapplied.
 printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
 .fi
 .PP
-When only bar opacity or switcher style changes, dwm updates the affected
-windows, including an open switcher panel.
-The reload preserves client focus, window layout, and the live system monitor
-and smart gaps toggles.
-.PP
-If other dwm resource settings change or the requested appearance settings
-are already active, dwm runs an ordinary reload. It reapplies any configured
+When the requested switcher style is already active or a setting such as the
+palette or border width changes, dwm runs an ordinary reload. It reapplies any
+configured
 .BR dwm.showsysmon " and " dwm.smartgaps
 values and refreshes client focus and layout when it installs the palette.
 An absent resource leaves its live toggle in its current state.
+.PP
+A switcher style change outside an ordinary reload updates an open panel and
+preserves client focus, window layout, and the live system monitor and smart
+gaps toggles. The bar opacity hint is applied independently in either case.
 .PP
 If color allocation fails on a combined theme and switcher reload, reload the
 same resources again to retry the pending switcher style. On that retry, the

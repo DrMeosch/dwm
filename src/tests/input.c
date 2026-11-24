@@ -603,7 +603,8 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\n"
 		        "dwm.switcheropacity: 80\ndwm.baropacity: 90\n",
 		  "#123456", "#abcdef", 0xccccccccUL, 0xe6666665UL },
-		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
+		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\n"
+		        "dwm.switcheropacity: 100\ndwm.baropacity: 0\n",
 		  "#123456", "#abcdef", 0xffffffffUL, -1 },
 		{ Failed, "dwm.switcheropacity: 80\n", "#123456", "#abcdef", 0xffffffffUL, -1 },
 		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL, -1 },
@@ -612,7 +613,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		{ Dark, "dwm.selbordercolor: #476a8c\ndwm.switcheropacity: 20\n",
 		  "#d0c0a0", "#102030", 0x33333333UL, -1 },
 		{ Dark, "", "#d0c0a0", "#102030", -1, -1 },
-		{ Light, "", "#555b6e", "#f6e8ee", -1, 0xeb851eb8UL },
+		{ Light, "dwm.baropacity: 75\n", "#555b6e", "#f6e8ee", -1, 0xeb851eb8UL },
 		{ Light, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\n"
 		         "dwm.switcheropacity: 80\ndwm.baropacity: 90\n",
 		  "#123456", "#abcdef", 0xccccccccUL, 0xe6666665UL },
@@ -763,15 +764,16 @@ static void
 test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 {
 	static const char resources[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n"
-	                                "dwm.showsysmon: 0\ndwm.smartgaps: 0\ndwm.switcheropacity: 80\n";
+	                                "dwm.showsysmon: 0\ndwm.smartgaps: 0\ndwm.switcheropacity: 90\n";
 	static const char ordinary[] = "dwm.color0: #102031\ndwm.color4: #d0c0a0\n"
-	                               "dwm.switcheropacity: 80\ndwm.smartgaps: 0\ndwm.showsysmon: %d\n";
+	                               "dwm.switcheropacity: 90\ndwm.smartgaps: 0\ndwm.showsysmon: %d\n";
+	static const char baroverride[] = "dwm.baropacity: 90\n";
 	const Geometry moved = {30, 60, 180, 120};
 	XClassHint hint = { "spterm", "St" };
 	Window tile, pad, child, focused, probe, win;
 	Geometry panel = {0}, gapped, gapless;
 	int i, revert;
-	char database[sizeof ordinary];
+	char database[sizeof ordinary + sizeof baroverride];
 
 	wait_sysmon(dpy, root, 0);
 	key(dpy, XK_b, XK_Shift_L);
@@ -816,7 +818,7 @@ test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 	CHECK(same_geometry(geometry(dpy, tile), gapless), "closed-panel reload restored outer gaps");
 	wait_sysmon(dpy, root, 1);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
-	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, 0xccccccccUL),
+	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, 0xe6666665UL),
 	      "next switcher panel did not use the reloaded opacity");
 	switcher_tap(dpy, XK_Escape);
 	switcher_key(dpy, XK_Control_L, False);
@@ -837,7 +839,7 @@ test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 		wait_sysmon(dpy, root, i);
 	}
 	CHECK(wait_geometry(dpy, tile, gapped), "ordinary theme reload did not restore outer gaps");
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < 3; i++) {
 		key(dpy, XK_b, XK_Shift_L);
 		wait_sysmon(dpy, root, 0);
 		XMoveWindow(dpy, pad, moved.x, moved.y);
@@ -845,6 +847,8 @@ test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 		XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
 		XGetInputFocus(dpy, &focused, &revert);
 		CHECK(focused == child, "could not focus the scratchpad child before ordinary reload %d", i);
+		if (i == 2)
+			strcat(database, baroverride);
 		if (i)
 			set_resources(dpy, root, database);
 		XSync(dpy, False);
