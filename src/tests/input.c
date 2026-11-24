@@ -608,7 +608,8 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL },
 		{ Failed, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
 		  "#d0c0a0", "#102030", -1 },
-		{ Dark, "dwm.switcheropacity: 20\n", "#d0c0a0", "#102030", 0x33333333UL },
+		{ Dark, "dwm.selbordercolor: #476a8c\ndwm.switcheropacity: 20\n",
+		  "#d0c0a0", "#102030", 0x33333333UL },
 		{ Dark, "", "#d0c0a0", "#102030", -1 },
 		{ Light, "", "#555b6e", "#f6e8ee", -1 },
 		{ Light, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
@@ -642,6 +643,8 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		goto close;
 	}
 	for (i = 0; i < sizeof styles / sizeof styles[0]; i++) {
+		int recovering = styles[i].theme != Failed && i > 0 && styles[i - 1].theme == Failed;
+
 		if (styles[i].resources) {
 			snprintf(database, sizeof database, "%sdwm.showsysmon: 0\ndwm.smartgaps: 0\n%s",
 			         themes[styles[i].theme], styles[i].resources);
@@ -649,7 +652,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 			XSync(dpy, False);
 			CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal the test dwm");
 		}
-		if (styles[i].theme == Failed || (i > 0 && styles[i - 1].theme == Failed)) {
+		if (styles[i].theme == Failed || recovering) {
 			const int width = styles[i].theme == Failed ? 3 : 2;
 
 			for (k = 0; k < 80; k++) {
@@ -668,6 +671,22 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		XGetInputFocus(dpy, &focused, &revert);
 		CHECK(focused == child && active_window(dpy, root) == second,
 		      "appearance change disturbed focus at stage %zu", i);
+		if (recovering) {
+			Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+			XColor border, exact;
+			XImage *image;
+
+			if (XAllocNamedColor(dpy, cmap, "#476a8c", &border, &exact)) {
+				image = XGetImage(dpy, second, -1, 0, 1, 1, AllPlanes, ZPixmap);
+				CHECK(image && XGetPixel(image, 0, 0) == border.pixel,
+				      "theme recovery did not repaint the selected client border");
+				if (image)
+					XDestroyImage(image);
+				XFreeColors(dpy, cmap, &border.pixel, 1, 0);
+			} else {
+				CHECK(0, "could not allocate the recovery border color");
+			}
+		}
 		if (styles[i].theme == Failed) {
 			switcher_tap(dpy, XK_Escape);
 			switcher_key(dpy, XK_Control_L, False);
