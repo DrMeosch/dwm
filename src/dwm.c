@@ -409,6 +409,7 @@ static xcb_connection_t *xcon;
 static char appliedfg[sizeof normfgcolor], appliedbg[sizeof normbgcolor];
 static char appliedswitcherfg[sizeof switcherfgcolor], appliedswitcherbg[sizeof switcherbgcolor];
 static int appliedswitcheropacity;
+static int baropacity, appliedbaropacity;
 
 /* the sampler would fall back to its own interval, which dwm's staleness limit does not follow */
 typedef char sysmonintervalinrange[SYSMONINTERVAL >= SYSMON_MININTERVAL
@@ -2459,6 +2460,7 @@ setup(void)
 	strcpy(appliedswitcherfg, switcherfgcolor);
 	strcpy(appliedswitcherbg, switcherbgcolor);
 	appliedswitcheropacity = switcheropacity;
+	appliedbaropacity = baropacity;
 	/* init bars */
 	updatebars();
 	updatestatus();
@@ -3627,7 +3629,8 @@ xrdb(const Arg *arg)
 	int refresh, new_lightbar;
 
 	(void)arg;
-	refresh = load_xresources() || (switcheropacity == appliedswitcheropacity
+	refresh = load_xresources() || (baropacity == appliedbaropacity
+	          && switcheropacity == appliedswitcheropacity
 	          && !strcasecmp(switcherfgcolor, appliedswitcherfg)
 	          && !strcasecmp(switcherbgcolor, appliedswitcherbg));
 	if (refresh) {
@@ -3662,15 +3665,20 @@ xrdb(const Arg *arg)
 		switcherdraw();
 	}
 
-	if (!refresh)
-		return;
-	strcpy(appliedfg, normfgcolor);
-	strcpy(appliedbg, normbgcolor);
-	lightbar = new_lightbar;
-	for (m = mons; m; m = m->next)
-		updatebaropacity(m);
-	focus(NULL);
-	arrange(NULL);
+	if (refresh) {
+		strcpy(appliedfg, normfgcolor);
+		strcpy(appliedbg, normbgcolor);
+		lightbar = new_lightbar;
+	}
+	if (refresh || baropacity != appliedbaropacity) {
+		appliedbaropacity = baropacity;
+		for (m = mons; m; m = m->next)
+			updatebaropacity(m);
+	}
+	if (refresh) {
+		focus(NULL);
+		arrange(NULL);
+	}
 }
 
 static int
@@ -3708,9 +3716,12 @@ createscheme(size_t index, int light, int use_loaded_palette)
 static void
 updatebaropacity(Monitor *m)
 {
-	if (lightbar)
+	unsigned long opacity = appliedbaropacity < 0 ? lightbaropacity
+	                     : 0xffffffffULL * appliedbaropacity / 100;
+
+	if (appliedbaropacity >= 0 || lightbar)
 		XChangeProperty(dpy, m->barwin, opacityatom, XA_CARDINAL, 32,
-		                PropModeReplace, (const unsigned char *)&lightbaropacity, 1);
+		                PropModeReplace, (const unsigned char *)&opacity, 1);
 	else
 		/* Restore the compositor's original handling, including its own rules. */
 		XDeleteProperty(dpy, m->barwin, opacityatom);
@@ -3805,13 +3816,13 @@ loadstatuspalette(XrmDatabase db)
 }
 
 static int
-loadswitcheropacity(XrmDatabase db)
+loadopacity(XrmDatabase db, const char *name, const char *class)
 {
 	XrmValue value;
 	char *type, *end;
 	long percent;
 
-	if (!db || !XrmGetResource(db, "dwm.switcheropacity", "Dwm.Switcheropacity", &type, &value)
+	if (!db || !XrmGetResource(db, name, class, &type, &value)
 	|| !value.addr || strcmp(type, "String"))
 		return -1;
 	percent = strtol(value.addr, &end, 10);
@@ -3863,7 +3874,8 @@ load_xresources(void)
 	loadstatuspalette(db);
 
 	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
-	switcheropacity = loadswitcheropacity(db);
+	baropacity = loadopacity(db, "dwm.baropacity", "Dwm.Baropacity");
+	switcheropacity = loadopacity(db, "dwm.switcheropacity", "Dwm.Switcheropacity");
 	if (db) {
 		resource_load(db, "switcherfgcolor", STRING, switcherfgcolor, sizeof switcherfgcolor);
 		resource_load(db, "switcherbgcolor", STRING, switcherbgcolor, sizeof switcherbgcolor);

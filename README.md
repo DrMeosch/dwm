@@ -76,12 +76,16 @@ docs/dwm-light.sh    # light theme
 
 Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked. The merge also sets `dmenu.color0` and `dmenu.color4` to the theme's `dwm.color0` and `dwm.color4`; dmenu builds that read Xresources at launch (such as the LARBS one) pick the theme up the next time they start.
 
-### Window switcher appearance
+### Status bar and window switcher appearance
+
+Both theme scripts set the status bar and window switcher to 90% opacity
+when an X11 compositor honors their opacity hints.
 
 Apply these optional settings to the live Xresources database, then send `SIGUSR2` to dwm.
 
 ```sh
 xrdb -global -override <<'XRESOURCES'
+dwm.baropacity: 90
 dwm.switcherfgcolor: #f4e9da
 dwm.switcherbgcolor: #263248
 dwm.switcheropacity: 92

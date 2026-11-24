@@ -99,8 +99,9 @@ an already-applied opacity replay reapply configured sysmon and refresh the
 scratchpad's focus and layout. The open panel check retries a switcher style
 after a failed theme, verifies the reopened panel and a subsequent reset, and
 checks that theme recovery restores both client borders from 3 to 2 pixels and
-repaints the selected border with the recovery color. The check verifies both
-light bars' opacity hints before and after switcher customization and reset.
+repaints the selected border with the recovery color. The check verifies
+both bars' opacity hints in both palettes, including an override and a reset
+to the palette defaults.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
@@ -225,6 +226,7 @@ theme. After each run `xrdb -query` must show `dmenu.color0` and
 `dmenu.color4` equal to `dwm.color0` and `dwm.color4`, so a dmenu started later
 gets the theme colors. With every step succeeding, each script must exit zero,
 stay silent and send the low-urgency "Switched to <theme> theme" notification.
+Each script must replace the bar and switcher opacity resources with 90%.
 
 The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,

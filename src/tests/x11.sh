@@ -288,6 +288,8 @@ theme_fail() {
 run_theme() {
 	: >"$tmp/stub.log"
 	rm -f "$tmp/notify.args"
+	# Replace any values left by the previous theme so both scripts must set both hints.
+	printf '%s\n' 'dwm.baropacity: 75' 'dwm.switcheropacity: 75' | xrdb -merge
 	rc=0
 	STUB_LOG=$tmp/stub.log STUB_NOTIFY=$tmp/notify.args STUB_DWM_PID=$dwm_pid \
 		STUB_EXIT=$2 STUB_NOTIFY_EXIT=$3 PATH=$stubs:$PATH \
@@ -296,6 +298,10 @@ run_theme() {
 		grep -q "^$step " "$tmp/stub.log" || theme_fail "dwm-$1.sh did not run $step"
 	done
 	[ -s "$tmp/notify.args" ] || theme_fail "dwm-$1.sh sent no notification"
+	for surface in bar switcher; do
+		got=$(xrdb -query | sed -n "s/^dwm\\.${surface}opacity:[[:space:]]*//p")
+		[ "$got" = 90 ] || theme_fail "dwm-$1.sh set ${surface} opacity to '$got' instead of 90"
+	done
 	# dmenu reads dmenu.color0/4 from Xresources at launch, so the merge must
 	# carry the same palette as dwm.color0/4
 	for n in 0 4; do

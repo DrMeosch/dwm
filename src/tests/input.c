@@ -595,28 +595,30 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 	static const struct {
 		int theme;
 		const char *resources, *fg, *bg;
-		long long opacity;
+		long long opacity, baropacity;
 	} styles[] = {
-		{ Dark, NULL, "#fedcba", "#563412", 0xffffffffUL },
+		{ Dark, NULL, "#fedcba", "#563412", 0xffffffffUL, -1 },
 		{ Dark, "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
-		  "#d0c0a0", "#102030", -1 },
-		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
-		  "#123456", "#abcdef", 0xccccccccUL },
+		  "#d0c0a0", "#102030", -1, -1 },
+		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\n"
+		        "dwm.switcheropacity: 80\ndwm.baropacity: 90\n",
+		  "#123456", "#abcdef", 0xccccccccUL, 0xe6666665UL },
 		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
-		  "#123456", "#abcdef", 0xffffffffUL },
-		{ Failed, "dwm.switcheropacity: 80\n", "#123456", "#abcdef", 0xffffffffUL },
-		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL },
+		  "#123456", "#abcdef", 0xffffffffUL, -1 },
+		{ Failed, "dwm.switcheropacity: 80\n", "#123456", "#abcdef", 0xffffffffUL, -1 },
+		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL, -1 },
 		{ Failed, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
-		  "#d0c0a0", "#102030", -1 },
+		  "#d0c0a0", "#102030", -1, -1 },
 		{ Dark, "dwm.selbordercolor: #476a8c\ndwm.switcheropacity: 20\n",
-		  "#d0c0a0", "#102030", 0x33333333UL },
-		{ Dark, "", "#d0c0a0", "#102030", -1 },
-		{ Light, "", "#555b6e", "#f6e8ee", -1 },
-		{ Light, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
-		  "#123456", "#abcdef", 0xccccccccUL },
+		  "#d0c0a0", "#102030", 0x33333333UL, -1 },
+		{ Dark, "", "#d0c0a0", "#102030", -1, -1 },
+		{ Light, "", "#555b6e", "#f6e8ee", -1, 0xeb851eb8UL },
+		{ Light, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\n"
+		         "dwm.switcheropacity: 80\ndwm.baropacity: 90\n",
+		  "#123456", "#abcdef", 0xccccccccUL, 0xe6666665UL },
 		{ Light, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
-		  "#555b6e", "#f6e8ee", -1 },
-		{ Dark, "", "#d0c0a0", "#102030", -1 },
+		  "#555b6e", "#f6e8ee", -1, 0xeb851eb8UL },
+		{ Dark, "", "#d0c0a0", "#102030", -1, -1 },
 	};
 	const unsigned long client_opacity = 0x99999999UL;
 	Window first, second, child, focused, probe, win, parent, *children = NULL;
@@ -708,9 +710,9 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 
 				if (children[j] == win)
 					continue;
-				if (styles[i].theme == Light && XGetClassHint(dpy, children[j], &hint)) {
+				if (XGetClassHint(dpy, children[j], &hint)) {
 					if (!strcmp(hint.res_class, "dwm") && !strcmp(hint.res_name, "dwm")) {
-						expected = 0xeb851eb8UL;
+						expected = styles[i].baropacity;
 						bars++;
 					}
 					XFree(hint.res_name);
@@ -722,7 +724,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 			XFree(children);
 			children = NULL;
 		}
-		CHECK(styles[i].theme != Light || bars == 2, "could not verify both light bars at stage %zu", i);
+		CHECK(bars == 2, "could not verify both bars at stage %zu", i);
 	}
 close:
 	switcher_tap(dpy, XK_Escape);
