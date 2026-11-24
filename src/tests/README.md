@@ -192,8 +192,8 @@ The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
 reaching it. The script runs fullscreen-properties, titles, focus-hints,
-size-hints, fullscreen, fullscreen-state-preservation and initial-fullscreen-exit
-fixtures even if one
+size-hints, fullscreen, fullscreen-state-preservation, initial-fullscreen-exit
+and fullscreen-message-formats fixtures even if one
 fails, then exits nonzero before later integration checks if any failed.
 
 On a fresh single-monitor display, `x11 fullscreen-state-preservation` checks
@@ -238,7 +238,27 @@ enabled without production fixes or expected-failure masks. Fixed-size clients,
 floating exit positions, hidden tags and monitor changes during fullscreen are
 not covered by this fixture.
 
-Run any one of the seven state fixtures with its own private Xvfb and test dwm,
+On a fresh single-monitor display, `x11 fullscreen-message-formats` checks
+72 `_NET_WM_STATE` requests across tiled and dialog-style floating clients,
+formats 8/16/32, both fullscreen atom slots, and ADD/REMOVE/TOGGLE from both
+normal and fullscreen states. The 8/16-bit payloads are 20 native bytes chosen
+to resemble the `data.l` representation, not valid EWMH fields. They must be
+ignored, while equivalent 32-bit requests must work. Every case starts with
+valid requests to reset the target independently and checks the reset, state,
+geometry, borders and focus. Marked tiled ConfigureRequest replies synchronize
+the assertions, the pointer stays on the bar, and all clients are destroyed.
+
+Sixty-four assertions currently fail on the validated native 64-bit X11
+environment: 32 malformed requests change fullscreen state and geometry.
+`clientmessage()` reads `data.l` without validating `format == 32`. The 24
+valid-format controls and 16 malformed no-op requests pass, along with focus,
+resets and cleanup. These genuine failures remain enabled without production
+fixes or expected-failure masks. This fixture does not send target resizes
+while fullscreen or seed unrelated state properties, so earlier fullscreen
+defects cannot cause these failures. Cross-endian payloads, other invalid
+formats and malformed `_NET_ACTIVE_WINDOW` requests are not covered.
+
+Run any one of the eight state fixtures with its own private Xvfb and test dwm,
 without the earlier switcher checks or later integration checks:
 
 ```sh
@@ -247,7 +267,7 @@ DWM_X11_STATE_FIXTURE=fullscreen-state-preservation sh src/tests/x11.sh "$PWD"
 
 The selector accepts `fullscreen-properties`, `titles`, `focus-hints`,
 `size-hints`, `fullscreen`, `fullscreen-state-preservation` and
-`initial-fullscreen-exit`; an unknown value
+`initial-fullscreen-exit` and `fullscreen-message-formats`; an unknown value
 fails before launching processes. With no selector, `make test` retains all
 checks, including the new fixture. See [`BUG_REPORT.md`](../../BUG_REPORT.md)
 for reproduced defects and the status of the full suite.

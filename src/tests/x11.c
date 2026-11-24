@@ -859,6 +859,92 @@ check_fullscreen_messages(Display *dpy, Window root)
 	}
 }
 
+/* Malformed formats carry matching bytes, but only format 32 is an EWMH request. */
+static void
+check_fullscreen_message_formats(Display *dpy, Window root)
+{
+	static const struct { long action; int initial; const char *name; } cases[] = {
+		{ 1, 0, "ADD while normal" },
+		{ 1, 1, "ADD while fullscreen" },
+		{ 0, 0, "REMOVE while normal" },
+		{ 0, 1, "REMOVE while fullscreen" },
+		{ 2, 0, "TOGGLE while normal" },
+		{ 2, 1, "TOGGLE while fullscreen" },
+	};
+	static const int formats[] = { 8, 16, 32 };
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Atom unrelated = XInternAtom(dpy, "_DWM_TEST_UNRELATED_STATE", False);
+	Window barrier, win, pair[2], focused;
+	XWindowAttributes normal = {0};
+	XEvent ev;
+	char step[128];
+	long payload[5];
+	int floating, second, revert, expected;
+	size_t i, j;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1100, 5);
+	for (floating = 0; floating < 2; floating++) {
+		const char *kind = floating ? "floating" : "tiled";
+
+		barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+		XSelectInput(dpy, barrier, StructureNotifyMask);
+		XMapWindow(dpy, barrier);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "message formats barrier was not managed");
+		win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+		XStoreName(dpy, win, "fullscreen-message-formats");
+		if (floating)
+			XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+			                (unsigned char *)&dialog, 1);
+		XMapWindow(dpy, win);
+		XFlush(dpy);
+		pair[0] = barrier; pair[1] = win;
+		CHECK(wait_clients(dpy, root, pair, 2, win), "%s message formats target was not managed", kind);
+		focus_roundtrip(dpy, barrier, "message formats mapping");
+		CHECK(XGetWindowAttributes(dpy, win, &normal), "cannot inspect %s initial geometry", kind);
+		for (j = 0; j < sizeof formats / sizeof formats[0]; j++)
+			for (second = 0; second < 2; second++)
+				for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+					snprintf(step, sizeof step, "format %d slot %d %s", formats[j], second + 1, cases[i].name);
+					/* Reset through valid requests so failures cannot contaminate later cases. */
+					fullscreen_request(dpy, root, win, barrier, 0, fullscreen, None);
+					if (cases[i].initial)
+						fullscreen_request(dpy, root, win, barrier, 1, fullscreen, None);
+					check_fullscreen_state(dpy, win, &normal, cases[i].initial, kind, "reset control");
+					memset(&ev, 0, sizeof ev);
+					ev.xclient.type = ClientMessage;
+					ev.xclient.window = win;
+					ev.xclient.message_type = state;
+					ev.xclient.format = formats[j];
+					payload[0] = cases[i].action;
+					payload[1] = second ? unrelated : fullscreen;
+					payload[2] = second ? fullscreen : None;
+					payload[3] = payload[4] = 0;
+					/* For 8/16, serialize 20 bytes, not 32-bit EWMH fields. These
+					 * deliberately resemble data.l to catch unchecked union reads. */
+					if (formats[j] == 32)
+						memcpy(ev.xclient.data.l, payload, sizeof payload);
+					else
+						memcpy(ev.xclient.data.b, payload, sizeof ev.xclient.data.b);
+					CHECK(XSendEvent(dpy, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &ev),
+					      "%s %s: could not send client message", kind, step);
+					focus_roundtrip(dpy, barrier, step);
+					expected = formats[j] != 32 ? cases[i].initial
+					         : cases[i].action == 1 || (cases[i].action == 2 && !cases[i].initial);
+					check_fullscreen_state(dpy, win, &normal, expected, kind, step);
+					XGetInputFocus(dpy, &focused, &revert);
+					CHECK(focused == win, "%s %s: message changed focus", kind, step);
+				}
+		XDestroyWindow(dpy, win);
+		XDestroyWindow(dpy, barrier);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, NULL, 0, root), "message formats fixture did not clean up its clients");
+	}
+}
+
 /* Compare pre-map fullscreen with the same client's ordinary map/exit path.
  * Floating positions may differ, but size, border and floating behavior must not. */
 static void
@@ -1769,6 +1855,13 @@ main(int argc, char *argv[])
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 initial fullscreen-exit checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+	if (argc == 2 && !strcmp(argv[1], "fullscreen-message-formats")) {
+		check_fullscreen_message_formats(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 fullscreen message-format checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 	/* x11 fullscreen: client messages preserve state, geometry and floating mode */

@@ -10,7 +10,7 @@ These findings were reproduced against the current production sources in a
 
 Run from the repository root with the build dependencies in `src/config.mk`,
 `jq`, `pkg-config`, Xvfb, `xdpyinfo` and `xrdb` installed. XTEST development
-files were available during validation, but these seven state fixtures use Xlib
+files were available during validation, but these eight state fixtures use Xlib
 and do not require physical input or XTEST.
 
 Each command below compiles temporary test binaries, starts its own 1200x800
@@ -219,10 +219,54 @@ The selectors allow reproduction even when the earlier switcher test blocks
   intentionally not asserted. No resize is issued while fullscreen, isolating
   this finding from defect 3.
 
+## 9. Malformed client-message formats change fullscreen state
+
+- **Severity:** Medium. An incorrectly encoded application request can enter or
+  exit fullscreen unexpectedly. This is a protocol-validation defect, not an
+  authorization bypass: X11 clients can already send valid fullscreen requests.
+- **Affected production file:** `src/dwm.c`, `clientmessage()`.
+- **Failing test:** `src/tests/x11.c`,
+  `check_fullscreen_message_formats()`; **64 failing assertions** (state and
+  geometry for 32 malformed requests that should not change the window).
+- **Reproduce:**
+  ```sh
+  DWM_X11_STATE_FIXTURE=fullscreen-message-formats sh src/tests/x11.sh "$PWD"
+  ```
+  Map a tiled barrier and a tiled or dialog-style floating target. Establish
+  normal or fullscreen state with valid 32-bit messages. Send a ClientMessage
+  of type `_NET_WM_STATE` with format 8 or 16, containing 20 payload bytes that
+  resemble `data.l` action and fullscreen atom values in either atom slot.
+  Specifically, copy the first 20 bytes of the native `long[5]` array
+  `{action, fullscreen, None, 0, 0}` or
+  `{action, unrelated, fullscreen, 0, 0}` into `ev.xclient.data.b` before
+  `XSendEvent()` to the root with the substructure masks. Send ADD or TOGGLE
+  while normal, or REMOVE or TOGGLE while fullscreen. A marked tiled
+  ConfigureRequest reply orders the assertion after dwm handles the message.
+- **Expected:** `_NET_WM_STATE` requests have format 32. Ignore other formats,
+  preserving state, geometry, borders and focus regardless of payload bytes.
+- **Actual:** On the validated native 64-bit X11 environment, both malformed
+  formats act like valid requests. For example, tiled format 8 slot 1 ADD
+  changes the property from absent to fullscreen and geometry to
+  `(0,0) 1200x800 border 0`; format 16 REMOVE clears fullscreen and restores
+  `(416,33) 751x755 border 1`. Both atom slots and both client types fail.
+- **Cause:** `clientmessage()` reads `cme->data.l` without checking
+  `cme->format == 32`. Bytes from the other union representations are
+  interpreted as EWMH action and atom values.
+- **Coverage and controls:** All three actions from both starting states,
+  formats 8/16/32, both atom slots and both client types: 72 requests total.
+  All 24 equivalent format-32 controls and 16 malformed no-op requests pass.
+  Valid requests reset state before every case, and reset assertions pass,
+  preventing a malformed ADD from concealing a malformed REMOVE. Focus,
+  border/geometry controls, marked round trips and client cleanup pass.
+  No unrelated state property is seeded, and no resize is sent to the target
+  while fullscreen, isolating this defect from findings 1 and 3. Payloads are
+  intentionally native union-shaped; cross-endian clients, invalid formats
+  other than 8/16 and malformed `_NET_ACTIVE_WINDOW` requests are not covered.
+
 ## Validation status and limits
 
-- The seven state fixtures reproduce **75 total failing assertions**:
-  24 + 15 + 8 + 3 + 16 + 1 + 8. They complete and clean up their clients/servers.
+- The eight state fixtures reproduce **139 total failing assertions**:
+  24 + 15 + 8 + 3 + 16 + 1 + 8 + 64. They complete and clean up their clients/servers.
 - The iteration 1 baseline `make test` passed the headless regression and build/documentation
   checks and the X11 switcher appearance/live-reload check, then exited nonzero
   during switcher navigation before reaching the state fixtures. Its output
@@ -250,6 +294,17 @@ The selectors allow reproduction even when the earlier switcher test blocks
   client compiled with `-std=c99 -pedantic -Wall -Wextra -Werror`; shell syntax
   and diff-whitespace checks passed. No production source was modified, no
   commits were made, and no test processes remain running.
+- Iteration 3 default `make test` passed every headless check, both XTEST
+  switcher checks and the event-loop check, then reproduced **139 failures**
+  across all eight state fixtures (make exit status 2). Isolated
+  `DWM_X11_STATE_FIXTURE=fullscreen-message-formats make test` passed the
+  headless and event-loop checks and reproduced **64 failures**, matching the
+  direct isolated script run. No relevant dependency checks skipped.
+  `make -B` succeeded, the Xlib client compiled with
+  `-std=c99 -pedantic -Wall -Wextra -Werror`, and shell syntax and
+  diff-whitespace checks passed. No production code was changed, no commits
+  were made, and no test processes remain running. Later integration checks
+  remain blocked by the preserved state failures.
 - Long-title truncation, alternate title encodings, fixed-size initial
   fullscreen clients, floating exit positions, physical input and side-by-side
   monitor behavior are not covered by the new fixture.
