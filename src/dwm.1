@@ -443,9 +443,9 @@ code. This keeps it fast, secure and simple.
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors, border width, bar opacity, and window switcher appearance from Xresources
-without changing the selected tags. When switching bar themes, merge the four
-theme values before requesting the reload.
+Reload colors, border width, bar opacity, and window switcher appearance from
+Xresources without changing the selected tags. To change the bar palette and
+client borders directly, merge their Xresources values before reloading.
 dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
 the status palette dwm.color0 to dwm.color15 does the same,
 and the selected border and width reset to their fallbacks, so missing theme
@@ -454,9 +454,7 @@ drawn through the same palette on every monitor. In the light palette, the
 status area uses the selected pale-pink background; normal bar areas use a
 lighter pink, and selected tags and titles use the selected background. In the
 dark palette, all bar backgrounds follow dwm.color0 and dwm.color4 supplies
-text only. By default, the bar requests 92% opacity in the light palette and
-leaves opacity up to the compositor in the dark palette. Both shipped theme
-scripts set the bar and switcher opacity to 90%.
+text only.
 .PP
 For the light palette:
 .nf
@@ -494,10 +492,9 @@ is missing, invalid, or non-positive, dwm uses the configured fallback, which
 is 2 pixels by default.
 .TP
 .B dwm.baropacity
-The value 90 sets every dwm bar to 90% opacity. A missing or unsupported value
-restores the palette's default.
-This setting requires an X11 compositor that honors _NET_WM_WINDOW_OPACITY
-on override-redirect windows.
+Set this to 90 to request 90% opacity on every dwm bar. A missing or unsupported
+value restores the palette's default. The light palette requests 92% opacity.
+The dark palette removes the opacity hint and leaves opacity up to the compositor.
 .TP
 .BR dwm.switcherfgcolor ", " dwm.switcherbgcolor
 Set the switcher's foreground and background to #rrggbb colors. The border
@@ -507,19 +504,32 @@ invalid override inherits the corresponding normal bar color.
 .B dwm.switcheropacity
 Set the switcher's opacity as a whole percent from 0 (invisible) to 100 (opaque).
 If the value is missing or invalid, dwm leaves the opacity up to the
-compositor's normal rules. This setting requires a compositor that honors
+compositor's normal rules.
+.PP
+Both opacity settings require an X11 compositor that honors
 _NET_WM_WINDOW_OPACITY on override-redirect windows. With no compositor, the
-panel is opaque.
+bar and switcher are opaque.
 .PP
 Pass the opacity and switcher entries you want to change to
 .B xrdb \-global \-override
 to update those entries in the global Xresources database, then send SIGUSR2
 to dwm. When the panel is closed, Super\-F5 also reloads Xresources.
+.nf
+printf '%s\en' \\
+  'dwm.baropacity: 90' \\
+  'dwm.switcherfgcolor: #f4e9da' \\
+  'dwm.switcherbgcolor: #263248' \\
+  'dwm.switcheropacity: 92' | xrdb \-global \-override
+pkill \-USR2 \-x dwm
+.fi
+.PP
 To reset a live override, apply an empty value for that key before reloading.
 Remove the saved override from your Xresources file to keep it from being
 reapplied.
 .nf
-printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
+printf '%s\en' 'dwm.baropacity:' 'dwm.switcheropacity:' \\
+  | xrdb \-global \-override
+pkill \-USR2 \-x dwm
 .fi
 .PP
 When the requested switcher style is already active or a setting such as the
