@@ -1154,7 +1154,8 @@ check_fullscreen_state_preservation(Display *dpy, Window root)
 	}
 }
 
-/* Arrange through the configured Super+t binding after the application's resize.
+/* Arrange through the configured Super+Shift+z binding after the application's
+ * resize. It reselects the default layout, so dwm's layout slots stay unchanged.
  * The tiled client provides a reply even if the floating size did not change. */
 static void
 check_hint_resize(Display *dpy, Window root, Window win, Window barrier,
@@ -1175,8 +1176,8 @@ check_hint_resize(Display *dpy, Window root, Window win, Window barrier,
 	ev.xkey.display = dpy;
 	ev.xkey.window = ev.xkey.root = root;
 	ev.xkey.same_screen = True;
-	ev.xkey.state = Mod4Mask;
-	ev.xkey.keycode = XKeysymToKeycode(dpy, XK_t);
+	ev.xkey.state = Mod4Mask | ShiftMask;
+	ev.xkey.keycode = XKeysymToKeycode(dpy, XK_z);
 	/* dwm grabs keys rather than selecting KeyPressMask on root. */
 	CHECK(ev.xkey.keycode && XSendEvent(dpy, root, False, SubstructureRedirectMask, &ev),
 	      "%s: could not request a layout pass", step);
