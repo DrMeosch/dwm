@@ -24,18 +24,6 @@ static int topbar             = 1;        /* 0 means bottom bar */
 static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize=10:antialias=true:autohint=true"  };
 static const char *selfontweight = "semibold"; /* fontconfig weight of the selected tag; NULL or "" (or a fonts[] entry that sets weight=, or style= naming a face the family really has) keeps the normal font */
 
-// static char normbgcolor[]           = "#222222";
-// static char normbordercolor[]       = "#444444";
-// static char normfgcolor[]           = "#bbbbbb";
-// static char selfgcolor[]            = "#eeeeee";
-// static char selbordercolor[]        = "#770000";
-// static char selbgcolor[]            = "#005577";
-// static char *colors[][3] = {
-//        /*               fg           bg           border   */
-//        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
-//        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
-// };
-
 // https://github.com/dracula/dwm/blob/main/config.h
 #define NORMBGCOLOR_DEFAULT      "#282a36"
 #define NORMBORDERCOLOR_DEFAULT "#444444"
@@ -47,18 +35,13 @@ static const char *selfontweight = "semibold"; /* fontconfig weight of the selec
 static char normbgcolor[COLORLEN]       = NORMBGCOLOR_DEFAULT;
 static char normbordercolor[]  = NORMBORDERCOLOR_DEFAULT;
 static char selbordercolor[]       = SELBORDERCOLOR;
-//static char selbordercolor[]        = "#770000";
 static char normfgcolor[COLORLEN]       = NORMFGCOLOR_DEFAULT;
 static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
 static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
-static const char col_gray1[]        = "#222222";
-static const char col_gray2[]        = "#444444";
-static const char col_gray3[]        = "#bbbbbb";
 
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
-       // [SchemeInv]  = { col_gray1, col_gray3, col_gray2 },
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
