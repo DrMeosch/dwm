@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/Xlib.h>
@@ -7,6 +8,7 @@
 #include <X11/extensions/XTest.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/extensions/Xinerama.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -517,6 +519,120 @@ open_switcher(Display *dpy, Window root, KeySym ctrl, Geometry *outer)
 	switcher_key(dpy, ctrl, True);
 	switcher_tap(dpy, XK_Tab);
 	return wait_panel(dpy, root, 1, outer);
+}
+
+static int
+has_opacity(Display *dpy, Window win, unsigned long expected)
+{
+	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False), type;
+	int format, matches = 0;
+	unsigned long count, remaining;
+	unsigned char *data = NULL;
+
+	if (XGetWindowProperty(dpy, win, opacity, 0, 1, False, XA_CARDINAL,
+	                       &type, &format, &count, &remaining, &data) == Success)
+		matches = expected == 0xffffffffUL ? type == None
+		        : type == XA_CARDINAL && format == 32 && count == 1 && !remaining
+		          && (*(unsigned long *)data & 0xffffffffUL) == expected;
+	if (data)
+		XFree(data);
+	return matches;
+}
+
+static int
+wait_panel_style(Display *dpy, Window win, int rowheight, const char *fg, const char *bg,
+                 unsigned long opacity)
+{
+	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+	XColor colors[2], exact;
+	XImage *image;
+	int i, matches = 0;
+
+	if (!XAllocNamedColor(dpy, cmap, fg, &colors[0], &exact))
+		return 0;
+	if (!XAllocNamedColor(dpy, cmap, bg, &colors[1], &exact)) {
+		XFreeColors(dpy, cmap, &colors[0].pixel, 1, 0);
+		return 0;
+	}
+	for (i = 0; i < 80; i++) {
+		/* Sample the border, then the ordinary and selected row backgrounds. */
+		image = XGetImage(dpy, win, -1, 0, 2, rowheight + 1, AllPlanes, ZPixmap);
+		if (!image)
+			break;
+		matches = XGetPixel(image, 0, 0) == colors[0].pixel
+		       && XGetPixel(image, 1, 0) == colors[1].pixel
+		       && XGetPixel(image, 1, rowheight) == colors[0].pixel
+		       && has_opacity(dpy, win, opacity);
+		XDestroyImage(image);
+		if (matches)
+			break;
+		pause_millis(25);
+	}
+	for (i = 0; i < 2; i++)
+		XFreeColors(dpy, cmap, &colors[i].pixel, 1, 0);
+	return matches;
+}
+
+static void
+test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
+{
+	static const char base[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n";
+	static const struct {
+		const char *resources, *fg, *bg;
+		unsigned long opacity;
+	} styles[] = {
+		{ NULL, "#fedcba", "#563412", 0x33333333UL },
+		{ "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
+		  "#123456", "#abcdef", 0xccccccccUL },
+		{ "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
+		  "#d0c0a0", "#102030", 0xffffffffUL },
+	};
+	const unsigned long client_opacity = 0x99999999UL;
+	Window first, second, win, parent, *children = NULL;
+	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+	Geometry panel = {0};
+	unsigned int j, count;
+	size_t i;
+	char database[256];
+
+	first = create_client(dpy, root, "Appearance one", 0);
+	CHECK(wait_active(dpy, root, first), "first appearance client not focused");
+	XChangeProperty(dpy, first, opacity, XA_CARDINAL, 32, PropModeReplace,
+	                (const unsigned char *)&client_opacity, 1);
+	second = create_client(dpy, root, "Appearance two", 0);
+	CHECK(wait_active(dpy, root, second), "second appearance client not focused");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for appearance check");
+	if (!(win = switcher_panel(dpy, root, &panel)))
+		goto close;
+	for (i = 0; i < sizeof styles / sizeof styles[0]; i++) {
+		if (styles[i].resources) {
+			snprintf(database, sizeof database, "%s%s", base, styles[i].resources);
+			XChangeProperty(dpy, root, XA_RESOURCE_MANAGER, XA_STRING, 8, PropModeReplace,
+			                (const unsigned char *)database, strlen(database));
+			XSync(dpy, False);
+			CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal the test dwm");
+		}
+		CHECK(wait_panel_style(dpy, win, (panel.h - 2) / 2, styles[i].fg, styles[i].bg,
+		                       styles[i].opacity), "wrong switcher appearance at stage %zu", i);
+		CHECK(active_window(dpy, root) == second, "appearance change disturbed focus");
+		CHECK(XQueryTree(dpy, root, &root, &parent, &children, &count),
+		      "could not inspect non-switcher windows");
+		if (children) {
+			for (j = 0; j < count; j++)
+				CHECK(children[j] == win || has_opacity(dpy, children[j],
+				      children[j] == first ? client_opacity : 0xffffffffUL),
+				      "switcher reload altered opacity on window %#lx", children[j]);
+			XFree(children);
+			children = NULL;
+		}
+	}
+close:
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reloaded panel");
+	XDestroyWindow(dpy, first);
+	XDestroyWindow(dpy, second);
+	CHECK(wait_active(dpy, root, None), "appearance clients did not clear focus");
 }
 
 static void
@@ -1532,6 +1648,21 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	root = DefaultRootWindow(dpy);
+	if (argc == 3 && !strcmp(argv[1], "switcher-appearance")) {
+		char *end;
+		long pid = strtol(argv[2], &end, 10);
+
+		if (pid <= 1 || *end || (pid_t)pid != pid) {
+			XCloseDisplay(dpy);
+			return EXIT_FAILURE;
+		}
+		default_xerror = XSetErrorHandler(switcher_xerror);
+		test_switcher_appearance(dpy, root, (pid_t)pid);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 switcher appearance and live reload checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
 	if (argc == 2 && !strcmp(argv[1], "switcher")) {
 		default_xerror = XSetErrorHandler(switcher_xerror);
 		test_switcher(dpy, root);

@@ -76,6 +76,18 @@ docs/dwm-light.sh    # light theme
 
 Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked. The merge also sets `dmenu.color0` and `dmenu.color4` to the theme's `dwm.color0` and `dwm.color4`; dmenu builds that read Xresources at launch (such as the LARBS one) pick the theme up the next time they start.
 
+### Window switcher appearance
+
+Add these optional settings to your Xresources file:
+
+```text
+dwm.switcherfgcolor: #f4e9da
+dwm.switcherbgcolor: #263248
+dwm.switcheropacity: 92
+```
+
+Load them with `xrdb -merge ~/.Xresources` and send `SIGUSR2` to dwm. Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors; the highlighted row inverts the two colors. Opacity is a whole percent from 0 (invisible with a compositor) to 100 (the default, with no opacity hint). It requires a compositor that honors `_NET_WM_WINDOW_OPACITY` on override-redirect windows. Without one, the panel remains opaque. To reset an override, remove it from the file and use `xrdb -load ~/.Xresources` rather than merging before reloading dwm.
+
 ## Testing
 
 Run `make test`. See the [regression check guide](src/tests/README.md) for dependencies, X11 coverage, and how to capture dark/light reload screenshots.

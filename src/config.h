@@ -55,6 +55,11 @@ static const char col_gray1[]        = "#222222";
 static const char col_gray2[]        = "#444444";
 static const char col_gray3[]        = "#bbbbbb";
 
+/* Empty switcher overrides inherit the normal bar colors. */
+static char switcherfgcolor[COLORLEN];
+static char switcherbgcolor[COLORLEN];
+static unsigned int switcheropacity = 100; /* percent */
+
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
@@ -62,6 +67,7 @@ static char *colors[][3] = {
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
+       [SchemeSwitcher] = { switcherfgcolor, switcherbgcolor, switcherfgcolor },
 };
 
 /* status2d ^C<n>^ and ^B<n>^ colors; Xresources dwm.color<n> (pywal etc.) overrides each entry */
@@ -175,6 +181,8 @@ static const char *sysmoncmd[] = { "dwmsysmon", NULL }; /* runs while the system
 ResourcePref resources[] = {
 		{ "color0",		STRING,	normbgcolor, sizeof normbgcolor },
 		{ "color4",		STRING,	normfgcolor, sizeof normfgcolor },
+		{ "switcherfgcolor",	STRING,	switcherfgcolor, sizeof switcherfgcolor },
+		{ "switcherbgcolor",	STRING,	switcherbgcolor, sizeof switcherbgcolor },
 		{ "snap",		INTEGER, &snap, sizeof snap },
 		{ "showbar",		INTEGER, &showbar, sizeof showbar },
 		{ "showsysmon",		INTEGER, &showsysmon, sizeof showsysmon },

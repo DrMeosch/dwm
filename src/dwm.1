@@ -442,8 +442,9 @@ code. This keeps it fast, secure and simple.
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors and border width from Xresources without changing the selected tags.
-Merge all four values for the chosen theme before requesting the reload.
+Reload colors, border width, and window switcher appearance from Xresources
+without changing the selected tags. Merge all four values for the chosen theme
+before requesting the reload.
 dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
 the status palette dwm.color0 to dwm.color15 does the same,
 and the selected border and width reset to their fallbacks, so missing theme
@@ -491,6 +492,22 @@ Sets the window border width in pixels. Use a positive decimal integer up to
 Existing windows receive the new width after a SIGUSR2 reload. If the resource
 is missing, invalid, or non-positive, dwm uses the configured fallback, which
 is 2 pixels by default.
+.TP
+.BR dwm.switcherfgcolor ", " dwm.switcherbgcolor
+Set the switcher's foreground and background to #rrggbb colors. The border
+uses the foreground and the highlighted row swaps the two colors. A missing or
+invalid override inherits the corresponding normal bar color.
+.TP
+.B dwm.switcheropacity
+Set the switcher's opacity as a whole percent from 0 (invisible) to 100 (opaque).
+At 100, or if the value is missing or invalid, dwm leaves the opacity up to the
+compositor's normal rules. A compositor that honors _NET_WM_WINDOW_OPACITY
+on override-redirect windows is required for translucency. Without one,
+the panel remains opaque.
+.PP
+These three resources apply only to the switcher, including an open panel
+on SIGUSR2. To reset a value after removing it from your Xresources file,
+use xrdb -load rather than xrdb -merge before sending SIGUSR2.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

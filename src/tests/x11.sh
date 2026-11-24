@@ -129,9 +129,16 @@ ln -s /bin/true "$tmp/bin/st"
 if [ "$input_available" -eq 1 ]; then
 	# Xvfb overlaps these heads at (0,0); different sizes keep both in dwm.
 	start_xvfb +xinerama -screen 0 1000x750x24 -screen 1 800x600x24
+	xrdb -load <<'XRESOURCES'
+dwm.color0: #102030
+dwm.color4: #d0c0a0
+dwm.switcherfgcolor: #fedcba
+dwm.switcherbgcolor: #563412
+dwm.switcheropacity: 20
+XRESOURCES
 	PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm-switcher.log" 2>&1 &
 	dwm_pid=$!
-	if ! "$tmp/input" switcher; then
+	if ! "$tmp/input" switcher-appearance "$dwm_pid" || ! "$tmp/input" switcher; then
 		cat "$tmp/dwm-switcher.log" >&2
 		exit 1
 	fi

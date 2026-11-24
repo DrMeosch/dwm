@@ -82,8 +82,14 @@ Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.
 
-The XTEST switcher check uses its own private Xvfb with two different-sized
-Xinerama heads. It checks panel placement, row counts, recent-first navigation
+The XTEST switcher checks use a private Xvfb with two different-sized Xinerama
+heads. The appearance check opens the panel with a synthetic Xresources palette,
+then reloads it with SIGUSR2 while the panel is still open. It checks actual
+border and row pixels, the opacity CARDINAL and its removal on reset, no opacity
+hint on bars or apps, and unchanged focus. Xvfb verifies the requested opacity,
+not composited screen output.
+
+The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
 `dwm(1)`](../dwm.1). It measures row counts against the one-window panel for
 shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight

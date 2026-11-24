@@ -83,7 +83,7 @@
 
 /* enums */
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
-enum { SchemeNorm, SchemeInv, SchemeSel, SchemeStatus }; /* color schemes */
+enum { SchemeNorm, SchemeInv, SchemeSel, SchemeStatus, SchemeSwitcher }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetClientList, NetClientInfo, NetLast }; /* EWMH atoms */
@@ -260,7 +260,7 @@ static void run(void);
 static void reloadcolors(void);
 static void updateborderwidth(void);
 static int lightbarpalette(void);
-static Clr *createbarscheme(int index, int light);
+static Clr *createscheme(size_t index, int light);
 static void updatebaropacity(Monitor *m);
 static void runAutostart(void);
 static void scan(void);
@@ -287,6 +287,7 @@ static void spawn(const Arg *arg);
 static int stackpos(const Arg *arg);
 static void switchercancel(void);
 static void switcherdraw(void);
+static void updateswitcheropacity(void);
 static void switcherremoved(Window win);
 static void switcherevent(XEvent *e);
 static void tag(const Arg *arg);
@@ -366,7 +367,7 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[UnmapNotify] = unmapnotify
 };
 static Atom wmatom[WMLast], netatom[NetLast];
-static Atom baropacityatom;
+static Atom opacityatom;
 static Atom sysmonatom, sysmonenabledatom;
 static SysmonValues sysmonval = { .cpu = -1, .temp = -1, .gpu = -1 }; /* last published by dwmsysmon; -1, no fans or no samples when unknown */
 static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
@@ -2386,7 +2387,8 @@ setmfact(const Arg *arg)
 void
 setup(void)
 {
-	int i, event, error, major = 2, minor = 0;
+	int event, error, major = 2, minor = 0;
+	size_t i;
 	XkbDeviceInfoPtr keyboard;
 	XSetWindowAttributes wa;
 	Atom utf8string;
@@ -2429,7 +2431,7 @@ setup(void)
 	netatom[NetClientInfo] = XInternAtom(dpy, "_NET_CLIENT_INFO", False);
 	sysmonatom = XInternAtom(dpy, SYSMON_ATOM, False);
 	sysmonenabledatom = XInternAtom(dpy, SYSMON_ENABLED_ATOM, False);
-	baropacityatom = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+	opacityatom = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
 	/* init cursors */
 	cursor[CurNormal] = drw_cur_create(drw, XC_left_ptr);
 	cursor[CurResize] = drw_cur_create(drw, XC_sizing);
@@ -2438,7 +2440,7 @@ setup(void)
 	lightbar = lightbarpalette();
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++) {
-		if (!(scheme[i] = createbarscheme(i, lightbar))) {
+		if (!(scheme[i] = createscheme(i, lightbar))) {
 			while (i > 0)
 				drw_scm_free(drw, scheme[--i], 3);
 			free(scheme);
@@ -2688,7 +2690,7 @@ switcherdraw(void)
 		switcher.first = switcher.selected - switcher.shown + 1;
 	if (w > oldw || h > oldh)
 		drw_resize(drw, w, h);
-	drw_setscheme(drw, scheme[SchemeNorm]);
+	drw_setscheme(drw, scheme[SchemeSwitcher]);
 	for (i = 0; i < switcher.shown; i++) {
 		row = &switcher.rows[switcher.first + i];
 		label[0] = '[';
@@ -2721,8 +2723,8 @@ switcherstart(XIDeviceEvent *ev)
 	XSetWindowAttributes wa = {
 		.override_redirect = True,
 		.event_mask = ExposureMask,
-		.background_pixel = scheme[SchemeNorm][ColBg].pixel,
-		.border_pixel = scheme[SchemeNorm][ColFg].pixel
+		.background_pixel = scheme[SchemeSwitcher][ColBg].pixel,
+		.border_pixel = scheme[SchemeSwitcher][ColBorder].pixel
 	};
 	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
 	XIEventMask mask = { ev->deviceid, sizeof bits, bits };
@@ -2767,6 +2769,7 @@ switcherstart(XIDeviceEvent *ev)
 	                            m->my + (m->mh - h - 2) / 2, w, h, 1,
 	                            CopyFromParent, InputOutput, CopyFromParent,
 	                            CWOverrideRedirect|CWEventMask|CWBackPixel|CWBorderPixel, &wa);
+	updateswitcheropacity();
 	/* Opening or dismissing under the pointer must not generate focus-follows-mouse. */
 	XShapeCombineRectangles(dpy, switcher.win, ShapeInput, 0, 0, NULL, 0, ShapeSet, Unsorted);
 	XMapRaised(dpy, switcher.win);
@@ -3608,15 +3611,17 @@ xrdb(const Arg *arg)
 {
 	Clr **new_scheme;
 	Monitor *m;
-	int i, new_lightbar;
+	size_t i;
+	int new_lightbar;
 
+	(void)arg;
 	load_xresources();
 	applysysmon();
 	updateborderwidth();
 	new_lightbar = lightbarpalette();
 	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));
 	for (i = 0; i < LENGTH(colors); i++) {
-		if (!(new_scheme[i] = createbarscheme(i, new_lightbar))) {
+		if (!(new_scheme[i] = createscheme(i, new_lightbar))) {
 			while (i > 0)
 				drw_scm_free(drw, new_scheme[--i], 3);
 			free(new_scheme);
@@ -3631,6 +3636,12 @@ xrdb(const Arg *arg)
 	lightbar = new_lightbar;
 	for (m = mons; m; m = m->next)
 		updatebaropacity(m);
+	if (switcher.win) {
+		XSetWindowBackground(dpy, switcher.win, scheme[SchemeSwitcher][ColBg].pixel);
+		XSetWindowBorder(dpy, switcher.win, scheme[SchemeSwitcher][ColBorder].pixel);
+		updateswitcheropacity();
+		switcherdraw();
+	}
 
 	focus(NULL);
 	arrange(NULL);
@@ -3648,30 +3659,45 @@ lightbarpalette(void)
 }
 
 static Clr *
-createbarscheme(int index, int light)
+createscheme(size_t index, int light)
 {
-	char *barcolors[3];
+	char *palette[] = {
+		light || index != SchemeSel ? normfgcolor : selfgcolor,
+		light ? lightbarbg : normbgcolor,
+		colors[index][ColBorder]
+	};
 
-	if (light) {
-		barcolors[ColFg] = normfgcolor;
-		barcolors[ColBg] = lightbarbg;
-	} else {
-		barcolors[ColFg] = index == SchemeSel ? selfgcolor : normfgcolor;
-		barcolors[ColBg] = normbgcolor;
+	if (index == SchemeSwitcher) {
+		if (validcolor(switcherfgcolor) && !switcherfgcolor[7])
+			palette[ColFg] = switcherfgcolor;
+		if (validcolor(switcherbgcolor) && !switcherbgcolor[7])
+			palette[ColBg] = switcherbgcolor;
+		palette[ColBorder] = palette[ColFg];
 	}
-	barcolors[ColBorder] = colors[index][ColBorder];
-	return drw_scm_create(drw, barcolors, 3);
+	return drw_scm_create(drw, palette, LENGTH(palette));
 }
 
 static void
 updatebaropacity(Monitor *m)
 {
 	if (lightbar)
-		XChangeProperty(dpy, m->barwin, baropacityatom, XA_CARDINAL, 32,
+		XChangeProperty(dpy, m->barwin, opacityatom, XA_CARDINAL, 32,
 		                PropModeReplace, (const unsigned char *)&lightbaropacity, 1);
 	else
 		/* Restore the compositor's original handling, including its own rules. */
-		XDeleteProperty(dpy, m->barwin, baropacityatom);
+		XDeleteProperty(dpy, m->barwin, opacityatom);
+}
+
+static void
+updateswitcheropacity(void)
+{
+	unsigned long opacity = 0xffffffffULL * switcheropacity / 100;
+
+	if (switcheropacity < 100)
+		XChangeProperty(dpy, switcher.win, opacityatom, XA_CARDINAL, 32,
+		                PropModeReplace, (const unsigned char *)&opacity, 1);
+	else
+		XDeleteProperty(dpy, switcher.win, opacityatom);
 }
 
 static void
@@ -3748,6 +3774,24 @@ loadstatuspalette(XrmDatabase db)
 	}
 }
 
+static unsigned int
+loadswitcheropacity(XrmDatabase db)
+{
+	XrmValue value;
+	char *type, *end;
+	long percent;
+
+	if (!db || !XrmGetResource(db, "dwm.switcheropacity", "Dwm.Switcheropacity", &type, &value)
+	|| !value.addr || strcmp(type, "String"))
+		return 100;
+	percent = strtol(value.addr, &end, 10);
+	if (end == value.addr)
+		return 100;
+	while (isspace((unsigned char)*end))
+		end++;
+	return !*end && percent >= 0 && percent <= 100 ? percent : 100;
+}
+
 void
 load_xresources(void)
 {
@@ -3759,6 +3803,8 @@ load_xresources(void)
 	/* Missing color resources must restore the compiled palette on every reload. */
 	strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
 	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
+	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
+	switcheropacity = 100;
 	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	loadstatuspalette(NULL);
@@ -3772,6 +3818,7 @@ load_xresources(void)
 			(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
 			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 			loadstatuspalette(db);
+			switcheropacity = loadswitcheropacity(db);
 			XrmDestroyDatabase(db);
 		}
 		XCloseDisplay(display);
