@@ -82,6 +82,51 @@ Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.
 
+Before the input checks, `x11.sh` runs ten window-state fixtures from `x11.c`
+against the same dwm. Each cleans up its clients, and a failing one is reported
+at the end so the remaining X11 checks still run. Set
+`DWM_X11_STATE_FIXTURE=<name>` to run only that fixture: the switcher checks
+before it and every X11 check after it are skipped. `x11.sh` pins a UTF-8
+locale (`C.UTF-8` or the first one available) because the title checks decode
+UTF-8 `_NET_WM_NAME`; without any UTF-8 locale it skips `titles` and says so.
+
+- `fullscreen-properties`: a window mapped with `_NET_WM_STATE_FULLSCREEN`
+  anywhere in its `_NET_WM_STATE` list, including after nine other atoms or
+  twice, starts fullscreen, while an empty or unrelated list, a CARDINAL list
+  or 8- and 16-bit data does not. A fullscreen window keeps the monitor
+  geometry when it asks to be resized; a tiled one keeps its tile and a normal
+  dialog accepts the resize.
+- `fullscreen`: REMOVE, ADD and TOGGLE requests, with the atom in either
+  slot, enter and leave fullscreen for tiled and floating clients without
+  moving focus, and actions 3 and -1 change nothing. Leaving fullscreen
+  restores the size, border and tiled or floating resize behavior.
+- `fullscreen-state-preservation`: with no, one or two other states
+  (`_NET_WM_STATE_STICKY`, `_NET_WM_STATE_DEMANDS_ATTENTION`) set before
+  mapping, entering and leaving fullscreen, from mapping or by request, adds
+  or removes only the fullscreen atom; requests about the other states change
+  nothing.
+- `initial-fullscreen-exit`: a tiled, dialog, transient or rule-floating
+  window mapped fullscreen returns, on REMOVE or TOGGLE, to the size, border
+  and resize behavior of the same window mapped normally.
+- `fullscreen-message-formats`: 8- and 16-bit `_NET_WM_STATE` messages whose
+  bytes resemble a valid request are ignored; the 32-bit ones act.
+- `active-window-messages`: a 32-bit `_NET_ACTIVE_WINDOW` request marks a
+  background client urgent without moving focus or geometry, while 8- and
+  16-bit ones do nothing; focusing the client clears the urgency.
+- `titles`: the bar shows `_NET_WM_NAME` over `WM_NAME`, on mapping and on
+  live changes, and falls back to `WM_NAME`, or to the unnamed title, when
+  the preferred property is emptied or deleted. Each check compares the left
+  half of the bar with a reference rendered live, never with fixed pixels.
+- `urgency-lifecycle`: deleting `WM_HINTS` clears urgency set by the client
+  or by an activation request, so the bar matches the nonurgent reference
+  again, also after a forced redraw.
+- `focus-hints`: every ICCCM input model, including live hint and
+  `WM_TAKE_FOCUS` changes, focuses the client directly or by message as
+  expected, and deleting `WM_HINTS` restores direct focus.
+- `size-hints`: live minimum, maximum, base, increment and aspect hints
+  constrain a floating client, and replacing or deleting `WM_NORMAL_HINTS`
+  removes the old constraints.
+
 The XTEST switcher checks use a private Xvfb with two different-sized Xinerama
 heads. The appearance check opens the panel with a synthetic Xresources palette,
 then reloads it with SIGUSR2 while the panel is still open. It checks actual
