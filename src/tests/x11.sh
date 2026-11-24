@@ -163,8 +163,9 @@ fi
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
-# Both fixtures clean up their clients; report both failures before stopping.
+# These fixtures clean up their clients; report all failures before stopping.
 state_failed=0
+"$tmp/x11" focus-hints || state_failed=1
 "$tmp/x11" size-hints || state_failed=1
 "$tmp/x11" fullscreen || state_failed=1
 [ "$state_failed" -eq 0 ] || exit 1

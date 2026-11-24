@@ -978,6 +978,190 @@ check_size_hints(Display *dpy, Window root)
 	CHECK(wait_clients(dpy, root, NULL, 0, root), "size-hints fixture did not clean up its clients");
 }
 
+/* A marked tiled reply orders focus assertions after key and property events. */
+static void
+focus_roundtrip(Display *dpy, Window barrier, const char *step)
+{
+	static int marker = 1;
+	XEvent ev;
+	int i, replied = 0;
+
+	while (XCheckTypedWindowEvent(dpy, barrier, ConfigureNotify, &ev))
+		;
+	XSetWindowBorderWidth(dpy, barrier, ++marker);
+	XResizeWindow(dpy, barrier, 17, 19);
+	XFlush(dpy);
+	for (i = 0; i < 100 && !replied; i++) {
+		while (XCheckTypedWindowEvent(dpy, barrier, ConfigureNotify, &ev))
+			if (ev.xconfigure.send_event && ev.xconfigure.border_width == marker)
+				replied = 1;
+		if (!replied)
+			pause_millis(25);
+	}
+	CHECK(replied, "%s: dwm did not complete the focus round trip", step);
+}
+
+static void
+focus_next(Display *dpy, Window root, Window barrier, const char *step)
+{
+	XEvent ev = {0};
+
+	ev.xkey.type = KeyPress;
+	ev.xkey.display = dpy;
+	ev.xkey.window = ev.xkey.root = root;
+	ev.xkey.same_screen = True;
+	ev.xkey.state = Mod4Mask;
+	ev.xkey.keycode = XKeysymToKeycode(dpy, XK_j);
+	CHECK(ev.xkey.keycode && XSendEvent(dpy, root, False, SubstructureRedirectMask, &ev),
+	      "%s: could not send Super+j", step);
+	focus_roundtrip(dpy, barrier, step);
+}
+
+static void
+check_focus_result(Display *dpy, Window root, Window win, Window expected,
+                   int takefocus, const char *step)
+{
+	Atom protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
+	Atom take = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
+	Atom active = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False), type;
+	XEvent ev;
+	Window focused;
+	unsigned char *data = NULL;
+	unsigned long n, after;
+	int revert, format, received = 0;
+
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == expected, "%s: keyboard focus is 0x%lx, expected 0x%lx",
+	      step, focused, expected);
+	while (XCheckTypedWindowEvent(dpy, win, ClientMessage, &ev)) {
+		CHECK(ev.xclient.message_type == protocols && ev.xclient.format == 32
+		      && (Atom)ev.xclient.data.l[0] == take,
+		      "%s: unexpected focus protocol message", step);
+		if (ev.xclient.message_type == protocols && ev.xclient.format == 32
+		&& (Atom)ev.xclient.data.l[0] == take)
+			received++;
+	}
+	CHECK((received > 0) == takefocus, "%s: received %d WM_TAKE_FOCUS messages, expected %s",
+	      step, received, takefocus ? "at least one" : "none");
+	if (expected == win) {
+		CHECK(XGetWindowProperty(dpy, root, active, 0, 1, False, XA_WINDOW,
+		                         &type, &format, &n, &after, &data) == Success
+		      && type == XA_WINDOW && format == 32 && n == 1 && !after
+		      && ((Window *)data)[0] == win,
+		      "%s: directly focused client is not _NET_ACTIVE_WINDOW", step);
+		if (data)
+			XFree(data);
+	}
+}
+
+static void
+check_focus_cycle(Display *dpy, Window root, Window win, Window barrier,
+                  int direct, int takefocus, const char *step)
+{
+	XEvent ev;
+	Window focused;
+	int revert;
+
+	focus_next(dpy, root, barrier, step);
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == barrier, "%s: could not focus the other client", step);
+	while (XCheckTypedWindowEvent(dpy, win, ClientMessage, &ev))
+		;
+	focus_next(dpy, root, barrier, step);
+	check_focus_result(dpy, root, win, direct ? win : barrier, takefocus, step);
+}
+
+static void
+check_focus_hints(Display *dpy, Window root)
+{
+	static const struct {
+		const char *name;
+		int input, takefocus;
+	} cases[] = {
+		{ "absent hints", -1, 0 }, { "absent hints with protocol", -1, 1 },
+		{ "missing InputHint", -2, 0 }, { "missing InputHint with protocol", -2, 1 },
+		{ "InputHint true", 1, 0 }, { "InputHint true with protocol", 1, 1 },
+		{ "InputHint false", 0, 0 }, { "InputHint false with protocol", 0, 1 },
+	};
+	Atom take = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
+	Atom protocols = XInternAtom(dpy, "WM_PROTOCOLS", False);
+	Window barrier, win, pair[2], child;
+	XWMHints hints = {0}, *deleted;
+	unsigned int i;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	XSync(dpy, False);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "focus barrier was not managed");
+	for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+		win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+		XStoreName(dpy, win, cases[i].name);
+		if (cases[i].input != -1) {
+			hints.flags = cases[i].input == -2 ? StateHint : InputHint;
+			hints.input = cases[i].input == 1;
+			hints.initial_state = NormalState;
+			XSetWMHints(dpy, win, &hints);
+		}
+		if (cases[i].takefocus)
+			XSetWMProtocols(dpy, win, &take, 1);
+		XMapWindow(dpy, win);
+		XFlush(dpy);
+		pair[0] = barrier; pair[1] = win;
+		CHECK(wait_clients(dpy, root, pair, 2, cases[i].input ? win : barrier),
+		      "%s: mapped client list or focus is incorrect", cases[i].name);
+		focus_roundtrip(dpy, barrier, cases[i].name);
+		check_focus_result(dpy, root, win, cases[i].input ? win : barrier,
+		                   cases[i].takefocus, cases[i].name);
+		check_focus_cycle(dpy, root, win, barrier, cases[i].input != 0,
+		                  cases[i].takefocus, cases[i].name);
+		if (cases[i].input == 0 && cases[i].takefocus) {
+			/* A globally active client handles WM_TAKE_FOCUS by focusing its child. */
+			child = XCreateSimpleWindow(dpy, win, 0, 0, 50, 50, 0, 0, 0);
+			XMapWindow(dpy, child);
+			XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+			focus_roundtrip(dpy, barrier, "application focuses its child");
+			check_focus_result(dpy, root, win, child, 0, "application focuses its child");
+		}
+		/* Change both hints and protocols while the client remains managed. */
+		hints.flags = InputHint;
+		hints.input = False;
+		XSetWMHints(dpy, win, &hints);
+		XSetWMProtocols(dpy, win, &take, 1);
+		check_focus_cycle(dpy, root, win, barrier, 0, 1, "live InputHint false and protocol add");
+		hints.input = True;
+		XSetWMHints(dpy, win, &hints);
+		XDeleteProperty(dpy, win, protocols);
+		check_focus_cycle(dpy, root, win, barrier, 1, 0, "live InputHint true and protocol deletion");
+		hints.input = False;
+		XSetWMHints(dpy, win, &hints);
+		check_focus_cycle(dpy, root, win, barrier, 0, 0, "live InputHint false without protocol");
+		hints.flags = StateHint;
+		XSetWMHints(dpy, win, &hints);
+		check_focus_cycle(dpy, root, win, barrier, 1, 0, "replacement omits InputHint");
+		hints.flags = InputHint;
+		XSetWMHints(dpy, win, &hints);
+		check_focus_cycle(dpy, root, win, barrier, 0, 0, "reinstalled InputHint false");
+		XDeleteProperty(dpy, win, XA_WM_HINTS);
+		check_focus_cycle(dpy, root, win, barrier, 1, 0, "WM_HINTS deletion restores direct focus");
+		deleted = XGetWMHints(dpy, win);
+		CHECK(!deleted, "deleted WM_HINTS is still present on the X server");
+		if (deleted)
+			XFree(deleted);
+		hints.flags = StateHint;
+		XSetWMHints(dpy, win, &hints);
+		check_focus_cycle(dpy, root, win, barrier, 1, 0, "replacement after WM_HINTS deletion");
+		XDestroyWindow(dpy, win);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "focus target did not clean up");
+	}
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "focus fixture did not clean up its clients");
+}
+
 static void
 check_unmanage(Display *dpy, Window root)
 {
@@ -1089,6 +1273,15 @@ main(int argc, char *argv[])
 		check_atom_format(dpy, root);
 		check_client_info(dpy, root);
 		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 focus-hints: ICCCM input models and live focus protocols */
+	if (argc == 2 && !strcmp(argv[1], "focus-hints")) {
+		check_focus_hints(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 focus-hints checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 

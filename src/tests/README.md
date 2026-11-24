@@ -82,6 +82,31 @@ while 8-bit data holding the bytes of that atom, or a single byte, does not.
 `_NET_CLIENT_INFO` set before a window maps is likewise read only as two
 32-bit CARDINALs: 8-bit data leaves the window shown on the current tags, tags
 outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
+On a fresh single-monitor display, `x11 focus-hints` covers eight combinations
+of absent `WM_HINTS`, missing `InputHint`, explicit true/false input hints, and
+presence/absence of `WM_TAKE_FOCUS`. It checks focus on mapping and after
+Super+j cycles to the other client and back, protocol message type/format/atom,
+and `_NET_ACTIVE_WINDOW` for directly focused clients. Live hint changes,
+replacement without `InputHint`, protocol addition and deletion, and recovery
+after hint deletion are checked while the target stays managed. A globally
+active client with `InputHint` false handles a received `WM_TAKE_FOCUS` by
+focusing its child; dwm must preserve that focus without sending another request.
+Keys are sent directly to dwm, without XTEST or desktop commands; uniquely
+marked tiled ConfigureRequest replies synchronize assertions, and the pointer
+stays on the bar. The fixture does not validate focus-message timestamps or
+simulate physical input.
+
+Deleting `WM_HINTS` after setting `InputHint` false must restore the default
+direct-focus behavior. This currently fails for all eight initial combinations:
+keyboard focus and `_NET_ACTIVE_WINDOW` remain on the other client despite the
+property being absent. `propertynotify()` ignores PropertyDelete, and
+`updatewmhints()` also leaves cached `neverfocus` unchanged when `XGetWMHints()`
+returns NULL. A replacement property without `InputHint` restores focus
+correctly. The sixteen deletion assertions remain enabled with no production
+fix or expected-failure mask. Run `x11 focus-hints` against an isolated
+`DWM_TEST` dwm with no other clients if the earlier XTEST switcher checks prevent
+`x11.sh` from reaching this fixture.
+
 On the fresh single-monitor display, `x11 fullscreen` sends `_NET_WM_STATE`
 client messages to both tiled and dialog-style floating clients. It checks
 add/remove/toggle, repeated add and remove, the fullscreen atom in either slot,
@@ -116,8 +141,9 @@ window stays constrained to 140x100 instead of 217x173 because
 The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
-reaching it. The script runs both size-hints and fullscreen fixtures even if
-one fails, then exits nonzero before later integration checks if either failed.
+reaching it. The script runs focus-hints, size-hints and fullscreen fixtures
+even if one fails, then exits nonzero before later integration checks if any
+failed.
 
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
