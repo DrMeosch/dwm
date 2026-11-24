@@ -854,6 +854,110 @@ check_fullscreen_messages(Display *dpy, Window root)
 	}
 }
 
+/* Atom order is not significant, but missing states and duplicate atoms are. */
+static void
+check_state_atoms(Display *dpy, Window win, const Atom *expected, unsigned long count,
+                  const char *kind, unsigned int seeded, const char *step)
+{
+	Atom type;
+	unsigned char *data = NULL;
+	unsigned long n = 0, after = 0, i, j;
+	int format = 0, matches;
+
+	matches = XGetWindowProperty(dpy, win, XInternAtom(dpy, "_NET_WM_STATE", False),
+	                             0, 16, False, XA_ATOM, &type, &format, &n,
+	                             &after, &data) == Success
+	       && type == XA_ATOM && format == 32 && !after && n == count;
+	for (i = 0; matches && i < count; i++) {
+		unsigned int occurrences = 0;
+
+		for (j = 0; j < n; j++)
+			occurrences += ((Atom *)data)[j] == expected[i];
+		matches = occurrences == 1;
+	}
+	CHECK(matches, "%s %u unrelated states %s: state list changed (got %lu atoms, expected %lu)",
+	      kind, seeded, step, n, count);
+	if (data)
+		XFree(data);
+}
+
+static void
+check_fullscreen_state_preservation(Display *dpy, Window root)
+{
+	static const struct { long action; int target, second, full; const char *step; } steps[] = {
+		{ 1, 0, 0, 0, "unrelated request while normal" },
+		{ 1, 1, 0, 1, "add" },
+		{ 1, 1, 0, 1, "repeated add" },
+		{ 0, 0, 0, 1, "unrelated request while fullscreen" },
+		{ 0, 1, 0, 0, "remove" },
+		{ 0, 1, 0, 0, "repeated remove" },
+		{ 2, 1, 1, 1, "toggle on using second atom" },
+		{ 2, 1, 0, 0, "toggle off" },
+		{ 1, 1, 1, 1, "add using second atom" },
+		{ 0, 1, 1, 0, "remove using second atom" },
+	};
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	Atom unrelated[2] = {
+		XInternAtom(dpy, "_NET_WM_STATE_STICKY", False),
+		XInternAtom(dpy, "_NET_WM_STATE_DEMANDS_ATTENTION", False)
+	};
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Atom atoms[3];
+	Window barrier, win, pair[2], focused;
+	XWindowAttributes normal = {0};
+	unsigned int seeded;
+	int floating, full, revert;
+	size_t i;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	for (floating = 0; floating < 2; floating++) {
+		const char *kind = floating ? "floating" : "tiled";
+
+		for (seeded = 0; seeded <= 2; seeded++) {
+			barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+			XSelectInput(dpy, barrier, StructureNotifyMask);
+			XMapWindow(dpy, barrier);
+			XFlush(dpy);
+			CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "state preservation barrier was not managed");
+			win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+			XStoreName(dpy, win, "fullscreen-state-preservation");
+			if (floating)
+				XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+				                (unsigned char *)&dialog, 1);
+			XChangeProperty(dpy, win, state, XA_ATOM, 32, PropModeReplace,
+			                (unsigned char *)unrelated, seeded);
+			XMapWindow(dpy, win);
+			XFlush(dpy);
+			pair[0] = barrier; pair[1] = win;
+			CHECK(wait_clients(dpy, root, pair, 2, win), "%s state preservation target was not managed", kind);
+			CHECK(XGetWindowAttributes(dpy, win, &normal), "cannot inspect %s initial geometry", kind);
+			check_state_atoms(dpy, win, unrelated, seeded, kind, seeded, "on mapping");
+			full = 0;
+			for (i = 0; i < sizeof steps / sizeof steps[0]; i++) {
+				memcpy(atoms, unrelated, seeded * sizeof *atoms);
+				atoms[seeded] = fullscreen;
+				/* Reseed each request so a broken add cannot hide a broken remove. */
+				XChangeProperty(dpy, win, state, XA_ATOM, 32, PropModeReplace,
+				                (unsigned char *)atoms, seeded + full);
+				fullscreen_request(dpy, root, win, barrier, steps[i].action,
+				                   steps[i].target && !steps[i].second ? fullscreen : unrelated[0],
+				                   steps[i].second ? fullscreen : None);
+				full = steps[i].full;
+				check_state_atoms(dpy, win, atoms, seeded + full, kind, seeded, steps[i].step);
+				check_fullscreen_state(dpy, win, &normal, full, kind, steps[i].step);
+				XGetInputFocus(dpy, &focused, &revert);
+				CHECK(focused == win, "%s %s: state request changed focus", kind, steps[i].step);
+			}
+			XDestroyWindow(dpy, win);
+			XDestroyWindow(dpy, barrier);
+			XFlush(dpy);
+			CHECK(wait_clients(dpy, root, NULL, 0, root), "state preservation fixture did not clean up its clients");
+		}
+	}
+}
+
 /* Arrange through the configured Super+t binding after the application's resize.
  * The tiled client provides a reply even if the floating size did not change. */
 static void
@@ -1565,6 +1669,13 @@ main(int argc, char *argv[])
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
+	if (argc == 2 && !strcmp(argv[1], "fullscreen-state-preservation")) {
+		check_fullscreen_state_preservation(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 fullscreen state-preservation checks passed");
+		return failures ? 1 : 0;
+	}
 	/* x11 fullscreen: client messages preserve state, geometry and floating mode */
 	if (argc == 2 && !strcmp(argv[1], "fullscreen")) {
 		check_fullscreen_messages(dpy, root);

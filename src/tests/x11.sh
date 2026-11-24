@@ -4,6 +4,11 @@ set -eu
 root=$1
 cc=${CC:-cc}
 missing_deps=
+state_fixture=${DWM_X11_STATE_FIXTURE:-}
+case "$state_fixture" in
+	''|fullscreen-properties|titles|focus-hints|size-hints|fullscreen|fullscreen-state-preservation) ;;
+	*) printf 'Unknown X11 state fixture: %s\n' "$state_fixture" >&2; exit 1 ;;
+esac
 
 if ! command -v Xvfb >/dev/null 2>&1; then missing_deps="$missing_deps Xvfb"; fi
 if ! command -v xdpyinfo >/dev/null 2>&1; then missing_deps="$missing_deps xdpyinfo"; fi
@@ -126,7 +131,7 @@ mkdir "$tmp/bin"
 ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
 # A failed scratchpad lookup must never launch the configured terminal.
 ln -s /bin/true "$tmp/bin/st"
-if [ "$input_available" -eq 1 ]; then
+if [ "$input_available" -eq 1 ] && [ -z "$state_fixture" ]; then
 	# Xvfb overlaps these heads at (0,0); different sizes keep both in dwm.
 	start_xvfb +xinerama -screen 0 1000x750x24 -screen 1 800x600x24
 	xrdb -load <<'XRESOURCES'
@@ -163,6 +168,11 @@ fi
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
+# Isolated reproductions still use production code, with autostart disabled.
+if [ -n "$state_fixture" ]; then
+	"$tmp/x11" "$state_fixture"
+	exit 0
+fi
 # These fixtures clean up their clients; report all failures before stopping.
 state_failed=0
 "$tmp/x11" fullscreen-properties || state_failed=1
@@ -170,6 +180,7 @@ state_failed=0
 "$tmp/x11" focus-hints || state_failed=1
 "$tmp/x11" size-hints || state_failed=1
 "$tmp/x11" fullscreen || state_failed=1
+"$tmp/x11" fullscreen-state-preservation || state_failed=1
 [ "$state_failed" -eq 0 ] || exit 1
 if [ "$input_available" -eq 1 ]; then
 	"$tmp/input"

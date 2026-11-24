@@ -106,8 +106,8 @@ alone, first and duplicate cases before resizing. These genuine failures remain
 enabled without production changes or expected-failure masks. Run
 `x11 fullscreen-properties` against an isolated `DWM_TEST` dwm with no other
 clients if earlier XTEST switcher checks block the main script. This fixture
-does not check preservation of unrelated states or initial-fullscreen exit
-restoration.
+does not check initial-fullscreen exit restoration. Preservation of unrelated
+states during fullscreen client messages is covered separately below.
 
 On a fresh 1200x800 single-monitor display, `x11 titles` checks actual bar
 pixels for unnamed clients, live `WM_NAME` replacements, UTF-8 `_NET_WM_NAME`
@@ -192,8 +192,41 @@ The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
 reaching it. The script runs fullscreen-properties, titles, focus-hints,
-size-hints and fullscreen fixtures even if one fails, then exits nonzero before
-later integration checks if any failed.
+size-hints, fullscreen and fullscreen-state-preservation fixtures even if one
+fails, then exits nonzero before later integration checks if any failed.
+
+On a fresh single-monitor display, `x11 fullscreen-state-preservation` checks
+exact `_NET_WM_STATE` atom sets on mapping and after ten client-message steps,
+for tiled and dialog-style floating clients with zero, one and two unrelated
+states (`_NET_WM_STATE_STICKY` and `_NET_WM_STATE_DEMANDS_ATTENTION`). It covers
+add/remove/toggle, repeated add/remove, fullscreen in either message slot, and
+unrelated requests while normal and fullscreen. Atom order is ignored, but
+missing or duplicate atoms fail. Every step also checks fullscreen geometry,
+borders and keyboard focus. Each request starts with a complete state property
+consistent with the client's current fullscreen state, so an earlier broken
+add cannot conceal a broken remove. A tiled ConfigureRequest synchronizes the
+message checks; the pointer stays on the bar and all clients are destroyed.
+
+Twenty-four state-set assertions currently fail: `setfullscreen()` replaces
+the entire property with fullscreen on entry and an empty list on exit,
+discarding unrelated atoms in both client types. Empty-state controls, no-op
+requests, geometry and focus pass. These genuine failures remain enabled with
+no production fix or expected-failure mask. This fixture does not assert that
+dwm implements sticky or attention behavior; it checks only that changing
+fullscreen does not erase unrelated state atoms.
+
+Run any one of the six state fixtures with its own private Xvfb and test dwm,
+without the earlier switcher checks or later integration checks:
+
+```sh
+DWM_X11_STATE_FIXTURE=fullscreen-state-preservation sh src/tests/x11.sh "$PWD"
+```
+
+The selector accepts `fullscreen-properties`, `titles`, `focus-hints`,
+`size-hints`, `fullscreen` and `fullscreen-state-preservation`; an unknown value
+fails before launching processes. With no selector, `make test` retains all
+checks, including the new fixture. See [`BUG_REPORT.md`](../../BUG_REPORT.md)
+for reproduced defects and the status of the full suite.
 
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
