@@ -97,6 +97,28 @@ mask is applied. Run the fixture as `x11 fullscreen` against an isolated
 `DWM_TEST` dwm with no other clients to reproduce it separately if an earlier
 XTEST switcher check prevents the main script from reaching it.
 
+On a fresh single-monitor display, `x11 size-hints` checks a dialog-style
+floating client with absent hints, live minimum and maximum sizes (including
+exact boundaries), increments with an explicit base and with the minimum as
+the base, both aspect-ratio limits, and replacement with unconstrained hints.
+It sends the configured Super+t key event directly to dwm to run a layout pass
+after each application resize; it exercises key dispatch without needing
+XTEST, but does not simulate a physical key or mouse drag. A tiled client's
+ConfigureRequest reply with a distinct border-width marker synchronizes each
+step, rejecting stale replies and replies from the layout pass. The pointer
+stays on the bar so shrinking a window cannot change focus via EnterNotify.
+Each step checks the actual X window size and that focus stays on the client.
+Deleting `WM_NORMAL_HINTS` must also clear its cached constraints, and the
+fixture verifies the property really is gone before checking recovery through
+a new unconstrained property. The deletion assertion currently fails: the
+window stays constrained to 140x100 instead of 217x173 because
+`propertynotify()` ignores PropertyDelete, retaining the cached size hints.
+The failure remains enabled without a production fix or expected-failure mask.
+Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
+to reproduce separately if an earlier switcher check prevents `x11.sh` from
+reaching it. The script runs both size-hints and fullscreen fixtures even if
+one fails, then exits nonzero before later integration checks if either failed.
+
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.

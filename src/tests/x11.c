@@ -854,6 +854,130 @@ check_fullscreen_messages(Display *dpy, Window root)
 	}
 }
 
+/* Arrange through the configured Super+t binding after the application's resize.
+ * The tiled client provides a reply even if the floating size did not change. */
+static void
+check_hint_resize(Display *dpy, Window root, Window win, Window barrier,
+                  int width, int height, int expected_width, int expected_height,
+                  const char *step)
+{
+	static int marker = 1;
+	XEvent ev = {0};
+	XWindowAttributes wa = {0};
+	Window focused;
+	int revert, i, replied = 0;
+
+	while (XCheckTypedWindowEvent(dpy, barrier, ConfigureNotify, &ev))
+		;
+	XResizeWindow(dpy, win, width, height);
+	memset(&ev, 0, sizeof ev);
+	ev.xkey.type = KeyPress;
+	ev.xkey.display = dpy;
+	ev.xkey.window = ev.xkey.root = root;
+	ev.xkey.same_screen = True;
+	ev.xkey.state = Mod4Mask;
+	ev.xkey.keycode = XKeysymToKeycode(dpy, XK_t);
+	/* dwm grabs keys rather than selecting KeyPressMask on root. */
+	CHECK(ev.xkey.keycode && XSendEvent(dpy, root, False, SubstructureRedirectMask, &ev),
+	      "%s: could not request a layout pass", step);
+	/* A distinct border width rejects stale replies and replies from arrange(). */
+	XSetWindowBorderWidth(dpy, barrier, ++marker);
+	XResizeWindow(dpy, barrier, 17, 19);
+	XFlush(dpy);
+	for (i = 0; i < 100 && !replied; i++) {
+		while (XCheckTypedWindowEvent(dpy, barrier, ConfigureNotify, &ev))
+			if (ev.xconfigure.send_event && ev.xconfigure.border_width == marker)
+				replied = 1;
+		if (!replied)
+			pause_millis(25);
+	}
+	CHECK(replied, "%s: dwm did not complete the size-hints round trip", step);
+	CHECK(XGetWindowAttributes(dpy, win, &wa)
+	      && wa.width == expected_width && wa.height == expected_height,
+	      "%s: floating size is %dx%d, expected %dx%d", step,
+	      wa.width, wa.height, expected_width, expected_height);
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == win, "%s: layout pass changed client focus", step);
+}
+
+static void
+check_size_hints(Display *dpy, Window root)
+{
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Window barrier, win, pair[2];
+	XSizeHints hints = {0};
+
+	/* Keep shrinking windows from generating pointer-driven focus changes. */
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	XSync(dpy, False);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "size-hints barrier was not managed");
+	win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+	XStoreName(dpy, win, "live-size-hints");
+	XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+	                (unsigned char *)&dialog, 1);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	pair[0] = barrier; pair[1] = win;
+	CHECK(wait_clients(dpy, root, pair, 2, win), "size-hints floating client was not managed");
+	check_hint_resize(dpy, root, win, barrier, 137, 119, 137, 119, "absent hints");
+
+	hints.flags = PMinSize | PMaxSize;
+	hints.min_width = 80; hints.min_height = 60;
+	hints.max_width = 140; hints.max_height = 100;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 40, 45, 80, 60, "live minimum");
+	check_hint_resize(dpy, root, win, barrier, 200, 160, 140, 100, "live maximum");
+	check_hint_resize(dpy, root, win, barrier, 80, 60, 80, 60, "exact minimum");
+	check_hint_resize(dpy, root, win, barrier, 140, 100, 140, 100, "exact maximum");
+
+	hints.flags = PBaseSize | PMinSize | PResizeInc;
+	hints.base_width = 10; hints.base_height = 20;
+	hints.min_width = hints.min_height = 50;
+	hints.width_inc = 10; hints.height_inc = 15;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 137, 119, 130, 110, "base plus increments");
+	hints.flags = PMinSize | PResizeInc;
+	hints.min_width = 80; hints.min_height = 60;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 137, 119, 130, 105, "minimum used as base");
+
+	hints.flags = PAspect;
+	hints.min_aspect.x = hints.min_aspect.y = 1;
+	hints.max_aspect.x = 2; hints.max_aspect.y = 1;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 300, 100, 200, 100, "maximum aspect");
+	check_hint_resize(dpy, root, win, barrier, 100, 300, 100, 100, "minimum aspect");
+
+	hints.flags = PSize;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 217, 173, 217, 173, "replacement clears old hints");
+	hints.flags = PMinSize | PMaxSize;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 200, 160, 140, 100, "reinstalled maximum");
+	XDeleteProperty(dpy, win, XA_WM_NORMAL_HINTS);
+	check_hint_resize(dpy, root, win, barrier, 217, 173, 217, 173, "deletion clears old hints");
+	{
+		XSizeHints deleted;
+		long supplied;
+
+		CHECK(!XGetWMNormalHints(dpy, win, &deleted, &supplied),
+		      "deleted WM_NORMAL_HINTS is still present on the X server");
+	}
+	hints.flags = PSize;
+	XSetWMNormalHints(dpy, win, &hints);
+	check_hint_resize(dpy, root, win, barrier, 217, 173, 217, 173, "replacement after deletion");
+
+	XDestroyWindow(dpy, win);
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "size-hints fixture did not clean up its clients");
+}
+
 static void
 check_unmanage(Display *dpy, Window root)
 {
@@ -965,6 +1089,15 @@ main(int argc, char *argv[])
 		check_atom_format(dpy, root);
 		check_client_info(dpy, root);
 		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 size-hints: live ICCCM constraints, replacements and deletion */
+	if (argc == 2 && !strcmp(argv[1], "size-hints")) {
+		check_size_hints(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 live size-hints checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
