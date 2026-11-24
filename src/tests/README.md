@@ -108,17 +108,20 @@ reopened switcher after each ordinary reload, including the transition from an
 80% switcher with default bars to 90% on all three windows.
 
 The navigation check checks panel placement, row counts, recent-first navigation
-and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
+and wrapping, and visible and hidden activation against the [Ctrl+Esc entry in
 `dwm(1)`](../dwm.1). It measures row counts against the one-window panel for
 shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight
 pixels are checked as j and k wrap while the original client retains focus.
-The Tab check enables auto-repeat and observes a repeat at the focused client
-before opening the panel. It checks the initial highlight, per-tap movement
-and wrapping, repeat suppression, and focus before and after Ctrl release.
+The step check first verifies that dwm holds no root grab for Ctrl+Tab or
+Ctrl+Shift+Esc and that both reach the focused client. It then enables Esc
+auto-repeat and observes a repeat at the focused client before opening the
+panel. It checks the initial highlight, per-tap movement and wrapping, repeat
+suppression, and focus before and after Ctrl release, then that Ctrl+Shift+Esc
+after a step closes the panel and Ctrl release keeps the original focus.
 New clients probe the ordinary tags; two scratchpad-only windows on each monitor
 probe the scratchpad bits. The view, focus, and geometry checks cover monitor
 isolation and compare hidden activation against recorded monocle geometry on
-one destination and tiled geometry on the other. Queued Ctrl+Tab and j/k
+one destination and tiled geometry on the other. Queued Ctrl+Esc and j/k
 sequences end with a printable key that must reach the chosen directly focusable
 client. A plain resize must change a floating client's geometry without losing
 keyboard focus. Move and resize drags must finish when the opener arrives
@@ -126,22 +129,28 @@ before button release. On an empty monitor, holding the opener must show no
 panel and leave the keyboard available for an application grab. The panel must
 stay above an overlapping floating client after restacking, then close if that
 client gains the fullscreen lock. A synthetic independent master keyboard
-checks that the switcher does not reserve Ctrl+Tab on that device or block
+checks that the switcher does not reserve Ctrl+Esc on that device or block
 Super+j while the panel is open.
 With two visible windows, latched Ctrl must leave focus and typing at the origin.
 The check also tests a focus round trip from root, an unmanaged popup, or a
-client child. It covers both Ctrl keys, Escape with repeat, stale targets, unrelated
-updates on the other monitor, an application keyboard grab, and Ctrl+j/k delivery
-after dismissal. After dwm has handled the opener's Tab release, the fixture
-queues removal of a listed window followed by Tab and checks that the panel
-stays closed and the next printable key reaches the original client. A second
-XKB group relocates Tab, j, k and Escape. The fixture checks that the alternate
-keys work and that an application can both register and receive the Ctrl
-shortcut on the inactive group's Tab keycode.
-If two keycodes map to Tab, a conflicting Ctrl+CapsLock grab on the first must not
-prevent plain Ctrl+Tab from opening the panel on the second. With Num Lock
-removed from the test keymap, plain Ctrl+Tab must still open the panel and
-Ctrl+AltGr+Tab must reach the application.
+client child. It covers both Ctrl keys, Shift+Esc cancellation with Esc held
+through repeat, stale targets, unrelated updates on the other monitor, an
+application keyboard grab, and Ctrl+j/k delivery after dismissal. After dwm has
+handled the opener's Esc release, the fixture queues removal of a listed window
+followed by Esc and checks that the panel stays closed and the next printable
+key reaches the original client. A second XKB group relocates Esc, j and k. The
+fixture checks that the alternate keys and Shift+Esc work and that an
+application can both register and receive the Ctrl shortcut on the inactive
+group's Esc keycode.
+If two keycodes map to Esc, a conflicting Ctrl+CapsLock grab on the first must not
+prevent plain Ctrl+Esc from opening the panel on the second. With Num Lock
+removed from the test keymap, plain Ctrl+Esc must still open the panel and
+Ctrl+AltGr+Esc must reach the application.
+
+A second build sets `switcherkey` to `XK_Tab` in a copy of `config.h` and runs
+the step check with Tab on its own single-head Xvfb. It must open, step, wrap,
+commit, and cancel with Ctrl+Shift+Tab and with Escape, while Ctrl+Esc and
+Ctrl+Shift+Tab stay unreserved and reach the focused client.
 
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with Xinerama head 0 to the left of head 1,
@@ -156,7 +165,7 @@ row. A middle click queued in B's gap must toggle only B's bar, even if the poin
 has already returned to A. Closing an unlisted scratchpad while the pointer
 crosses into a B client that consumes motion must dismiss the panel before
 Ctrl release without changing focus or revealing the highlighted hidden tag.
-With Ctrl+Tab queued between the scratchpad removal and crossing, the panel
+With Ctrl+Esc queued between the scratchpad removal and crossing, the panel
 must map and then close while Ctrl is still down. Without an opener, the same
 restack must leave focus and monitor selection on A when B consumes motion.
 If the last root motion was in A's gap and a B client consumed motion on entry,
@@ -168,7 +177,7 @@ subsequent motion from a B client into B's gap must leave A's panel open.
 During restack the fixture checks both delivered event orders: a crossing
 before the last Ctrl release cancels, while a release delivered first reveals
 and focuses the hidden target. For release-first, the fixture waits for
-logical Tab release and a subsequent dwm configure reply, then checks that
+logical Esc release and a subsequent dwm configure reply, then checks that
 Ctrl is logically up before moving the pointer. Neither fixture exercises
 physical hotplug.
 
