@@ -3277,36 +3277,27 @@ updateborderwidth(void)
 void
 resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size)
 {
-	char *sdst = NULL;
-	int *idst = NULL;
-	float *fdst = NULL;
-
-	sdst = dst;
-	idst = dst;
-	fdst = dst;
-
-	char fullname[256];
-	char *type;
+	char fullname[256], *type;
 	XrmValue ret;
+	size_t len;
 
-	snprintf(fullname, sizeof(fullname), "%s.%s", "dwm", name);
-	fullname[sizeof(fullname) - 1] = '\0';
-
+	snprintf(fullname, sizeof fullname, "dwm.%s", name);
 	XrmGetResource(db, fullname, "*", &type, &ret);
-	if (!(ret.addr == NULL || strncmp("String", type, 64)))
-	{
-		switch (rtype) {
-		case STRING:
-			if (strlen(ret.addr) < size)
-				memcpy(sdst, ret.addr, strlen(ret.addr) + 1);
-			break;
-		case INTEGER:
-			*idst = strtoul(ret.addr, NULL, 10);
-			break;
-		case FLOAT:
-			*fdst = strtof(ret.addr, NULL);
-			break;
-		}
+	if (ret.addr == NULL || strncmp("String", type, 64))
+		return;
+
+	switch (rtype) {
+	case STRING:
+		len = strlen(ret.addr);
+		if (len < size)
+			memcpy(dst, ret.addr, len + 1);
+		break;
+	case INTEGER:
+		*(int *)dst = strtoul(ret.addr, NULL, 10);
+		break;
+	case FLOAT:
+		*(float *)dst = strtof(ret.addr, NULL);
+		break;
 	}
 }
 

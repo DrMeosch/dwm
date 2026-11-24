@@ -773,8 +773,21 @@ test_xresources(void)
 	CHECK(strcmp(name, "world") == 0 && integer == 17
 	      && fabsf(real - 0.75f) < 0.001f,
 	      "resource_load decoded values incorrectly: %s %d %.2f", name, integer, real);
+	resource_load(db, "missing", STRING, name, sizeof name);
 	resource_load(db, "missing", INTEGER, &integer, sizeof integer);
-	CHECK(integer == 17, "resource_load changed a missing preference");
+	resource_load(db, "missing", FLOAT, &real, sizeof real);
+	CHECK(strcmp(name, "world") == 0 && integer == 17 && real == 0.75f,
+	      "resource_load changed a missing preference");
+	{
+		XrmValue value = {3, "99"};
+
+		XrmPutResource(&db, "dwm.typed", "Integer", &value);
+		resource_load(db, "typed", STRING, name, sizeof name);
+		resource_load(db, "typed", INTEGER, &integer, sizeof integer);
+		resource_load(db, "typed", FLOAT, &real, sizeof real);
+		CHECK(strcmp(name, "world") == 0 && integer == 17 && real == 0.75f,
+		      "resource_load accepted a non-String resource");
+	}
 	XrmDestroyDatabase(db);
 
 	{
@@ -786,6 +799,10 @@ test_xresources(void)
 		resource_load(db, "color", STRING, buf.color, sizeof buf.color);
 		CHECK(strcmp(buf.color, "#282a36") == 0 && strcmp(buf.guard, "guard!!") == 0,
 		      "resource_load accepted an overlong color: %s", buf.color);
+		resource_load(db, "exact", STRING, buf.color, 0);
+		resource_load(db, "exact", STRING, buf.color, sizeof buf.color - 1);
+		CHECK(strcmp(buf.color, "#282a36") == 0 && strcmp(buf.guard, "guard!!") == 0,
+		      "resource_load copied a string without room for its terminator");
 		resource_load(db, "exact", STRING, buf.color, sizeof buf.color);
 		CHECK(strcmp(buf.color, "#abcdef") == 0 && strcmp(buf.guard, "guard!!") == 0,
 		      "resource_load rejected a color that fits: %s", buf.color);

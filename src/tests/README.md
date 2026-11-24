@@ -16,9 +16,11 @@ one monitor, restoring both per-tag layout slots and master settings with either
 layout selected, refusing scratchpad-only tag views, spawning a missing scratchpad
 with empty or unrelated client lists using a spawn stub, reading the parent of a process from
 `/proc/<pid>/stat` for swallowing when the process names itself with spaces
-and parentheses, rejecting Xresources strings that exceed
-their buffer, keeping the selected-tag font set disabled for an empty or NULL
-`selfontweight`, filtering status bytes 1-31 while preserving all other non-NUL
+and parentheses, loading Xresources string, integer and float values while
+ignoring missing or non-String resources and rejecting strings without room for
+their NUL terminator (including zero-sized destinations), keeping the selected-tag
+font set disabled for an empty or NULL `selfontweight`, filtering status bytes
+1-31 while preserving all other non-NUL
 bytes, including in-place filtering, parsing, measuring and click mapping of
 status2d codes with every truncated, malformed or out-of-range form falling back to plain text,
 including malformed, adjacent and truncated codes in the same status,
