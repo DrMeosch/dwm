@@ -1431,6 +1431,115 @@ check_focus_result(Display *dpy, Window root, Window win, Window expected,
 	}
 }
 
+/* dwm's activation policy marks background clients urgent instead of stealing focus. */
+static void
+check_active_window_messages(Display *dpy, Window root)
+{
+	static const int formats[] = { 8, 16, 32 };
+	static const struct { const char *name; int selected, urgent; } cases[] = {
+		{ "selected", 1, 0 },
+		{ "background", 0, 0 },
+		{ "already urgent background", 0, 1 },
+	};
+	Atom active = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+	Window barrier, win, pair[2], expected_focus;
+	XWMHints hints = {0}, *actual;
+	XWindowAttributes before = {0}, after = {0};
+	XEvent ev;
+	char step[128];
+	int source, repeat, expected_urgent;
+	size_t i, j;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1100, 5);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "activation barrier was not managed");
+	for (j = 0; j < sizeof formats / sizeof formats[0]; j++)
+		for (source = 0; source <= 2; source++)
+			for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+				/* Fresh clients isolate cached urgency as well as the property. */
+				win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+				XStoreName(dpy, win, "active-window-messages");
+				hints.flags = InputHint | StateHint;
+				hints.input = True;
+				hints.initial_state = NormalState;
+				XSetWMHints(dpy, win, &hints);
+				XMapWindow(dpy, win);
+				XFlush(dpy);
+				pair[0] = barrier; pair[1] = win;
+				CHECK(wait_clients(dpy, root, pair, 2, win), "activation target was not managed");
+				if (!cases[i].selected)
+					focus_next(dpy, root, barrier, "activation background setup");
+				expected_focus = cases[i].selected ? win : barrier;
+				hints.flags |= cases[i].urgent ? XUrgencyHint : 0;
+				XSetWMHints(dpy, win, &hints);
+				focus_roundtrip(dpy, barrier, "activation hint setup");
+				actual = XGetWMHints(dpy, win);
+				CHECK(actual && actual->flags == hints.flags && actual->input == True
+				      && actual->initial_state == NormalState, "activation hint reset failed");
+				if (actual)
+					XFree(actual);
+				check_focus_result(dpy, root, expected_focus, expected_focus, 0, "activation focus reset");
+				CHECK(XGetWindowAttributes(dpy, win, &before), "cannot inspect activation geometry");
+				expected_urgent = cases[i].urgent || (formats[j] == 32 && !cases[i].selected);
+				for (repeat = 0; repeat < 2; repeat++) {
+					snprintf(step, sizeof step, "format %d source %d %s request %d",
+					         formats[j], source, cases[i].name, repeat + 1);
+					memset(&ev, 0, sizeof ev);
+					ev.xclient.type = ClientMessage;
+					ev.xclient.window = win;
+					ev.xclient.message_type = active;
+					ev.xclient.format = formats[j];
+					if (formats[j] == 32) {
+						ev.xclient.data.l[0] = source;
+						ev.xclient.data.l[1] = CurrentTime;
+						ev.xclient.data.l[2] = expected_focus;
+					} else {
+						/* Ordinary malformed bytes, not a native union-shaped payload. */
+						memset(ev.xclient.data.b, 0xa5, sizeof ev.xclient.data.b);
+						if (formats[j] == 8)
+							ev.xclient.data.b[0] = source;
+						else
+							ev.xclient.data.s[0] = source;
+					}
+					CHECK(XSendEvent(dpy, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &ev),
+					      "%s: could not send activation request", step);
+					focus_roundtrip(dpy, barrier, step);
+					actual = XGetWMHints(dpy, win);
+					CHECK(actual && !!(actual->flags & XUrgencyHint) == expected_urgent,
+					      "%s: urgency is %d, expected %d", step,
+					      actual ? !!(actual->flags & XUrgencyHint) : -1, expected_urgent);
+					CHECK(actual && (actual->flags & ~XUrgencyHint) == (InputHint | StateHint)
+					      && actual->input == True && actual->initial_state == NormalState,
+					      "%s: activation damaged unrelated WM_HINTS fields", step);
+					if (actual)
+						XFree(actual);
+					check_focus_result(dpy, root, expected_focus, expected_focus, 0, step);
+					CHECK(XGetWindowAttributes(dpy, win, &after)
+					      && after.x == before.x && after.y == before.y
+					      && after.width == before.width && after.height == before.height
+					      && after.border_width == before.border_width,
+					      "%s: activation changed geometry or borders", step);
+				}
+				if (!cases[i].selected) {
+					focus_next(dpy, root, barrier, "activation user focus clears urgency");
+					check_focus_result(dpy, root, win, win, 0, "activation user focus");
+					actual = XGetWMHints(dpy, win);
+					CHECK(actual && !(actual->flags & XUrgencyHint), "user focus did not clear urgency");
+					if (actual)
+						XFree(actual);
+				}
+				XDestroyWindow(dpy, win);
+				XFlush(dpy);
+				CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "activation target did not clean up");
+			}
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "activation fixture did not clean up its clients");
+}
+
 static void
 check_focus_cycle(Display *dpy, Window root, Window win, Window barrier,
                   int direct, int takefocus, const char *step)
@@ -1822,6 +1931,14 @@ main(int argc, char *argv[])
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 focus-hints checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	if (argc == 2 && !strcmp(argv[1], "active-window-messages")) {
+		check_active_window_messages(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 active-window client-message checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 

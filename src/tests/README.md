@@ -193,7 +193,7 @@ Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
 reaching it. The script runs fullscreen-properties, titles, focus-hints,
 size-hints, fullscreen, fullscreen-state-preservation, initial-fullscreen-exit
-and fullscreen-message-formats fixtures even if one
+and fullscreen-message-formats and active-window-messages fixtures even if one
 fails, then exits nonzero before later integration checks if any failed.
 
 On a fresh single-monitor display, `x11 fullscreen-state-preservation` checks
@@ -256,9 +256,33 @@ resets and cleanup. These genuine failures remain enabled without production
 fixes or expected-failure masks. This fixture does not send target resizes
 while fullscreen or seed unrelated state properties, so earlier fullscreen
 defects cannot cause these failures. Cross-endian payloads, other invalid
-formats and malformed `_NET_ACTIVE_WINDOW` requests are not covered.
+formats are not covered here; `_NET_ACTIVE_WINDOW` is covered separately below.
 
-Run any one of the eight state fixtures with its own private Xvfb and test dwm,
+On a fresh single-monitor display, `x11 active-window-messages` sends 54
+activation requests: formats 8/16/32, source indications 0/1/2, selected,
+nonurgent background and already-urgent background clients, each requested
+twice. dwm intentionally marks a background client urgent rather than stealing
+focus; valid-format controls assert that policy, selected clients stay
+nonurgent, and repeated requests preserve urgency. Malformed formats must do
+nothing. Their payloads contain ordinary 8/16-bit source values and filler
+bytes, not the native union-shaped payload used in the fullscreen fixture.
+Each case uses a fresh client and checks its initial hints and focus, preserving
+unrelated `WM_HINTS` fields, actual keyboard focus, root `_NET_ACTIVE_WINDOW`,
+geometry and borders. A subsequent Super+j focus must clear urgency. Marked
+tiled ConfigureRequest replies synchronize every step and all clients are
+removed; no physical input or desktop commands are used.
+
+Twelve assertions currently fail: both requests to each of six nonurgent
+background clients with malformed formats set `XUrgencyHint`. The activation
+branch of `clientmessage()` does not check format 32 and does not inspect the
+payload at all, so no specially crafted atom bytes are needed. All 18
+valid-format requests, 24 malformed selected/already-urgent controls, hint-field
+preservation, focus, geometry, urgency clearing and cleanup pass. These genuine
+failures remain enabled without production fixes or expected-failure masks.
+Missing `WM_HINTS`, hidden tags, unmanaged targets, invalid source indications,
+activation timestamps and pixel rendering of urgency are not covered.
+
+Run any one of the nine state fixtures with its own private Xvfb and test dwm,
 without the earlier switcher checks or later integration checks:
 
 ```sh
@@ -267,7 +291,8 @@ DWM_X11_STATE_FIXTURE=fullscreen-state-preservation sh src/tests/x11.sh "$PWD"
 
 The selector accepts `fullscreen-properties`, `titles`, `focus-hints`,
 `size-hints`, `fullscreen`, `fullscreen-state-preservation` and
-`initial-fullscreen-exit` and `fullscreen-message-formats`; an unknown value
+`initial-fullscreen-exit`, `fullscreen-message-formats` and
+`active-window-messages`; an unknown value
 fails before launching processes. With no selector, `make test` retains all
 checks, including the new fixture. See [`BUG_REPORT.md`](../../BUG_REPORT.md)
 for reproduced defects and the status of the full suite.

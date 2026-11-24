@@ -10,7 +10,7 @@ These findings were reproduced against the current production sources in a
 
 Run from the repository root with the build dependencies in `src/config.mk`,
 `jq`, `pkg-config`, Xvfb, `xdpyinfo` and `xrdb` installed. XTEST development
-files were available during validation, but these eight state fixtures use Xlib
+files were available during validation, but these nine state fixtures use Xlib
 and do not require physical input or XTEST.
 
 Each command below compiles temporary test binaries, starts its own 1200x800
@@ -261,12 +261,56 @@ The selectors allow reproduction even when the earlier switcher test blocks
   No unrelated state property is seeded, and no resize is sent to the target
   while fullscreen, isolating this defect from findings 1 and 3. Payloads are
   intentionally native union-shaped; cross-endian clients, invalid formats
-  other than 8/16 and malformed `_NET_ACTIVE_WINDOW` requests are not covered.
+  other than 8/16 are not covered here; malformed `_NET_ACTIVE_WINDOW` requests
+  are covered by finding 10.
+
+## 10. Malformed activation requests spuriously mark background clients urgent
+
+- **Severity:** Medium. An incorrectly encoded activation message causes a
+  false urgency indication for a background application. This shares the
+  missing format validation of finding 9, but affects a separate message type
+  and user-visible state. It is not an authorization bypass.
+- **Affected production file:** `src/dwm.c`, `clientmessage()` activation branch
+  and `seturgent()` (which writes the resulting urgency to `WM_HINTS`).
+- **Failing test:** `src/tests/x11.c`, `check_active_window_messages()`;
+  **12 failing assertions**, two requests each to six fresh background clients.
+- **Reproduce:**
+  ```sh
+  DWM_X11_STATE_FIXTURE=active-window-messages sh src/tests/x11.sh "$PWD"
+  ```
+  Map a tiled barrier and target. Give the target `WM_HINTS` with `InputHint`
+  true and `StateHint=NormalState`, without `XUrgencyHint`. Focus the barrier
+  using Super+j. Send a ClientMessage to the root using the substructure masks,
+  with `window=target`, `message_type=_NET_ACTIVE_WINDOW`, and format 8 or 16.
+  Fill its 20 payload bytes with `0xa5`, then set `data.b[0]` (format 8) or
+  `data.s[0]` (format 16) to source 0, 1 or 2. Wait for a marked tiled
+  ConfigureRequest reply and read the target's `WM_HINTS`. Send the request
+  again and check the hint independently.
+- **Expected:** Activation requests have format 32. Ignore malformed formats
+  without changing urgency, keyboard focus, root `_NET_ACTIVE_WINDOW`, geometry,
+  borders or unrelated hints. A valid 32-bit request to a background client
+  should follow dwm's intentional no-focus-stealing policy and set urgency.
+- **Actual:** Both malformed formats add `XUrgencyHint`, for every tested source
+  indication, on the first request and retain it on the second. For example,
+  `format 8 source 0 background request 1: urgency is 1, expected 0`.
+  Keyboard focus and root `_NET_ACTIVE_WINDOW` correctly stay on the barrier.
+- **Cause:** The `_NET_ACTIVE_WINDOW` branch checks only that the target is not
+  selected and not already urgent. It calls `seturgent(c, 1)` without checking
+  `cme->format`; unlike the fullscreen reproduction, no special payload is
+  necessary because the activation branch never reads the data fields.
+- **Coverage and controls:** 54 requests across formats 8/16/32, sources 0/1/2,
+  selected/nonurgent-background/already-urgent-background states and repeated
+  requests. Each of 27 clients starts with independent hints and cached state.
+  All 18 valid-format controls and 24 malformed selected/already-urgent requests
+  pass. Unrelated hint flags, input/state fields, focus, active-window property,
+  geometry, borders, clearing urgency on user focus and cleanup pass. Absent
+  hints, hidden tags, unmanaged targets, invalid sources, timestamps and bar
+  urgency pixels are not asserted.
 
 ## Validation status and limits
 
-- The eight state fixtures reproduce **139 total failing assertions**:
-  24 + 15 + 8 + 3 + 16 + 1 + 8 + 64. They complete and clean up their clients/servers.
+- The nine state fixtures reproduce **151 total failing assertions**:
+  24 + 15 + 8 + 3 + 16 + 1 + 8 + 64 + 12. They complete and clean up their clients/servers.
 - The iteration 1 baseline `make test` passed the headless regression and build/documentation
   checks and the X11 switcher appearance/live-reload check, then exited nonzero
   during switcher navigation before reaching the state fixtures. Its output
@@ -305,6 +349,18 @@ The selectors allow reproduction even when the earlier switcher test blocks
   diff-whitespace checks passed. No production code was changed, no commits
   were made, and no test processes remain running. Later integration checks
   remain blocked by the preserved state failures.
+- Iteration 4 default `make test` passed every headless check, both XTEST
+  switcher checks and the event-loop check, then reproduced **151 failures**
+  across all nine state fixtures (make exit status 2). Isolated
+  `DWM_X11_STATE_FIXTURE=active-window-messages make test` passed the headless
+  and event-loop checks and reproduced exactly **12 failures**, matching the
+  direct isolated script reproduction. No relevant dependency checks skipped.
+  `make -B`, strict `-std=c99 -pedantic -Wall -Wextra -Werror` compilation of
+  the Xlib client, shell syntax and diff-whitespace checks passed. Production
+  sources are unchanged; existing production warnings remain. No commits were
+  made and no test processes remain running. Later integration checks remain
+  blocked by the preserved state failures.
 - Long-title truncation, alternate title encodings, fixed-size initial
   fullscreen clients, floating exit positions, physical input and side-by-side
-  monitor behavior are not covered by the new fixture.
+  monitor behavior remain untested. The activation fixture's additional limits
+  are listed under finding 10.

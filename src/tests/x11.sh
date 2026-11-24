@@ -6,7 +6,7 @@ cc=${CC:-cc}
 missing_deps=
 state_fixture=${DWM_X11_STATE_FIXTURE:-}
 case "$state_fixture" in
-	''|fullscreen-properties|titles|focus-hints|size-hints|fullscreen|fullscreen-state-preservation|initial-fullscreen-exit|fullscreen-message-formats) ;;
+	''|fullscreen-properties|titles|focus-hints|size-hints|fullscreen|fullscreen-state-preservation|initial-fullscreen-exit|fullscreen-message-formats|active-window-messages) ;;
 	*) printf 'Unknown X11 state fixture: %s\n' "$state_fixture" >&2; exit 1 ;;
 esac
 
@@ -183,6 +183,7 @@ state_failed=0
 "$tmp/x11" fullscreen-state-preservation || state_failed=1
 "$tmp/x11" initial-fullscreen-exit || state_failed=1
 "$tmp/x11" fullscreen-message-formats || state_failed=1
+"$tmp/x11" active-window-messages || state_failed=1
 [ "$state_failed" -eq 0 ] || exit 1
 if [ "$input_available" -eq 1 ]; then
 	"$tmp/input"
