@@ -85,10 +85,10 @@ size, which any client can send, must leave the bar as it was.
 Before the input checks, `x11.sh` runs ten window-state fixtures from `x11.c`
 against the same dwm. Each cleans up its clients, and a failing one is reported
 at the end so the remaining X11 checks still run. Set
-`DWM_X11_STATE_FIXTURE=<name>` to run only one of them, without the switcher
-checks. `x11.sh` pins a UTF-8 locale (`C.UTF-8` or the first one available)
-because the title checks decode UTF-8 `_NET_WM_NAME`; without any UTF-8 locale
-it skips `titles` and says so.
+`DWM_X11_STATE_FIXTURE=<name>` to run only that fixture: the switcher checks
+before it and every X11 check after it are skipped. `x11.sh` pins a UTF-8
+locale (`C.UTF-8` or the first one available) because the title checks decode
+UTF-8 `_NET_WM_NAME`; without any UTF-8 locale it skips `titles` and says so.
 
 - `fullscreen-properties`: a window mapped with `_NET_WM_STATE_FULLSCREEN`
   anywhere in its `_NET_WM_STATE` list, including after nine other atoms or
