@@ -135,6 +135,33 @@ Zooms/cycles focused window to/from master area.
 .B Super\-j/k
 Focus next/previous window.
 .TP
+.B Ctrl\-Tab
+List windows across tags on the selected monitor, most recently focused first.
+Each row shows one managed window's title and tags. Visible windows, including
+sticky windows and shown scratchpads, are eligible, as are hidden windows with
+an ordinary tag. The same rule applies to managed dialogs and hidden scratchpads:
+a hidden scratchpad is listed only if it also has an ordinary tag. The hidden
+side of a swallowed pair is omitted. The highlight starts on the most recent
+other window, or the only window. No panel opens if the list is empty, the
+focused window has the fullscreen focus lock, or dwm cannot grab the keyboard.
+.IP
+While holding Ctrl, press j or k to move the highlight down or up, wrapping at
+the ends without changing focus. Release the last held Ctrl key to activate the
+highlighted window, or press Escape to cancel. A change in focus or selected
+monitor cancels a pending switch, as does the removal of a listed window or a
+pointer crossing onto a monitor other than the panel's.
+.IP
+Selecting a visible window leaves the current view unchanged. For a hidden
+window, dwm shows only its lowest-numbered ordinary tag on its own monitor.
+Neither operation retags or moves the window or changes another monitor's
+view, layout or remembered selection.
+.IP
+Ctrl\-Tab is the switcher's only global binding and is built in for the core
+keyboard. When grabbed, it takes precedence over application shortcuts such
+as switching tabs. Ctrl\-j and Ctrl\-k remain available to applications while
+the panel is closed. The switcher requires XInput 2, XKB, and at least Shape 1.1
+on the X server. Without them, dwm runs without the switcher.
+.TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.
 .TP

@@ -5,6 +5,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 ## Features
 
 - Luke's build patches: clickable status bar (statuscmd), scratchpad, bstack/fibonacci/deck/centered-master layouts, vanitygaps, sticky windows, hide-vacant-tags, stacker, shiftview, swallow, true fullscreen. See [`src/README.md`](src/README.md) and [`src/config.h`](src/config.h) for bindings.
+- Cross-tag window switcher: see [<kbd>Ctrl+Tab</kbd> in `dwm(1)`](src/dwm.1) for controls and the application shortcut trade-off.
 - Colored status bar segments ([status2d](https://dwm.suckless.org/patches/status2d/), reimplemented with bounds-checked parsing): `^c#rrggbb^`/`^b#rrggbb^` truecolor codes and `^C<0-15>^`/`^B<0-15>^` codes that follow `dwm.color0`..`dwm.color15`. Clickable status regions (statuscmd) stay aligned. Grammar in [`src/dwm.1`](src/dwm.1).
 - Optional system monitor section centred in the bar (CPU usage with a small graph of its recent samples, plus the CPU temperature and every fan's RPM where the machine reports them, and the GPU usage with its own graph on AMD and Intel GPUs, read without ever waking a sleeping GPU (Intel's needs a capability, see [Intel GPU usage](#intel-gpu-usage)); when a long status text leaves it little room the graphs shrink first, and the section is left out when there is none), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, runs only while the section is shown: dwm starts it when the section is turned on and it exits when the section is turned off. It reads the sensors and publishes the values in a root window property, so dwm only draws them and stays responsive when the sampler or a sensor is missing, slow, stuck or sends garbage (the CPU then shows `-` with an empty graph, and a missing temperature or fan is not shown). See [`src/dwm.1`](src/dwm.1).
 - Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
@@ -25,7 +26,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 
 ## Build and install
 
-Requires a C99 compiler, `pkg-config`, and the X11, Xft, fontconfig, XCB, and Xinerama development headers.
+The default build requires a C99 compiler and development headers and libraries for X11 (including Xlib-XCB), Xext, Xi, Xft, FreeType, fontconfig, XCB (including XCB RES), and Xinerama.
 
 ```sh
 make                 # build ./dwm
@@ -77,7 +78,7 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 
 ## Testing
 
-`make test` runs headless state and geometry checks, plus an Xvfb-based integration run when Xvfb, `xdpyinfo`, and `xrdb` are present. Set `DWM_X11_CAPTURE_DIR=/tmp/dwm-captures` to save dark/light reload screenshots.
+Run `make test`. See the [regression check guide](src/tests/README.md) for dependencies, X11 coverage, and how to capture dark/light reload screenshots.
 
 ## Contributing
 
