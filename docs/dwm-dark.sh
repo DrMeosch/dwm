@@ -30,6 +30,8 @@ dmenu.color0: #282a36
 dmenu.color4: #ff79c6
 dwm.borderpx: 1
 dwm.selbordercolor: #b84f7b
+dwm.baropacity: 90
+dwm.switcheropacity: 90
 XRESOURCES
 
 step pkill pkill -USR2 -x dwm

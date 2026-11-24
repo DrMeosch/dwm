@@ -88,19 +88,24 @@ then reloads it with SIGUSR2 while the panel is still open. It checks actual
 border and row pixels, the opacity CARDINAL at explicit settings including 100%,
 and hint removal for missing, invalid, and empty settings. Empty color overrides
 restore the normal foreground, background, and border. The check also verifies
-that bar and app opacity hints stay as they were and that keyboard focus stays
-on the client's child window after each reload completes. With the panel closed,
-the check uses Mod+F5 to reload only switcher opacity. It verifies that the
-visible scratchpad keeps its moved geometry and child focus, and that the next
-panel uses the new opacity hint. Before the next resource reload, it runs a
-layout pass to verify the tile stays gapless and toggles sysmon once to verify
-it publishes off. Ordinary theme changes take effect. Both a plain SIGUSR2 and
-an already-applied opacity replay reapply configured sysmon and refresh the
-scratchpad's focus and layout. The open panel check retries a switcher style
-after a failed theme, verifies the reopened panel and a subsequent reset, and
-checks that theme recovery restores both client borders from 3 to 2 pixels and
-repaints the selected border with the recovery color. The check verifies both
-light bars' opacity hints before and after switcher customization and reset.
+that app opacity hints and keyboard focus on the client's child window survive
+each reload. It verifies both bars' opacity hints in both palettes with a valid
+override and with missing or unsupported overrides. The check retries a switcher
+style after a failed theme reload with the bar override unchanged. It verifies
+the reopened panel and a subsequent reset, and checks that theme recovery
+restores both client borders from 3 to 2 pixels and repaints the selected border
+with the recovery color.
+
+With the panel closed, the check uses Mod+F5 to reload only switcher opacity.
+It verifies that the visible scratchpad keeps its moved geometry and child
+focus and that the next panel uses the new opacity hint. Before the next
+resource reload, it runs a layout pass to verify the tile stays gapless and
+toggles sysmon once to verify it publishes off. Sending SIGUSR2 without new
+resources, reapplying the current switcher opacity, and adding or clearing the
+bar override all reapply configured sysmon and refresh the scratchpad's focus
+and layout. The check reads the opacity CARDINAL on both live bars and the
+reopened switcher after each ordinary reload, including the transition from an
+80% switcher with default bars to 90% on all three windows.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
@@ -225,6 +230,8 @@ theme. After each run `xrdb -query` must show `dmenu.color0` and
 `dmenu.color4` equal to `dwm.color0` and `dwm.color4`, so a dmenu started later
 gets the theme colors. With every step succeeding, each script must exit zero,
 stay silent and send the low-urgency "Switched to <theme> theme" notification.
+The test seeds conflicting opacity resources and checks that each script
+replaces them with the [documented preset values](../../README.md#theme-switching).
 
 The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,

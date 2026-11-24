@@ -409,6 +409,7 @@ static xcb_connection_t *xcon;
 static char appliedfg[sizeof normfgcolor], appliedbg[sizeof normbgcolor];
 static char appliedswitcherfg[sizeof switcherfgcolor], appliedswitcherbg[sizeof switcherbgcolor];
 static int appliedswitcheropacity;
+static unsigned long baropacity, appliedbaropacity;
 
 /* the sampler would fall back to its own interval, which dwm's staleness limit does not follow */
 typedef char sysmonintervalinrange[SYSMONINTERVAL >= SYSMON_MININTERVAL
@@ -2459,6 +2460,7 @@ setup(void)
 	strcpy(appliedswitcherfg, switcherfgcolor);
 	strcpy(appliedswitcherbg, switcherbgcolor);
 	appliedswitcheropacity = switcheropacity;
+	appliedbaropacity = baropacity;
 	/* init bars */
 	updatebars();
 	updatestatus();
@@ -3627,7 +3629,8 @@ xrdb(const Arg *arg)
 	int refresh, new_lightbar;
 
 	(void)arg;
-	refresh = load_xresources() || (switcheropacity == appliedswitcheropacity
+	refresh = load_xresources() || baropacity != appliedbaropacity
+	          || (switcheropacity == appliedswitcheropacity
 	          && !strcasecmp(switcherfgcolor, appliedswitcherfg)
 	          && !strcasecmp(switcherbgcolor, appliedswitcherbg));
 	if (refresh) {
@@ -3667,6 +3670,7 @@ xrdb(const Arg *arg)
 	strcpy(appliedfg, normfgcolor);
 	strcpy(appliedbg, normbgcolor);
 	lightbar = new_lightbar;
+	appliedbaropacity = baropacity;
 	for (m = mons; m; m = m->next)
 		updatebaropacity(m);
 	focus(NULL);
@@ -3708,9 +3712,11 @@ createscheme(size_t index, int light, int use_loaded_palette)
 static void
 updatebaropacity(Monitor *m)
 {
-	if (lightbar)
+	unsigned long opacity = appliedbaropacity ? appliedbaropacity : lightbaropacity;
+
+	if (appliedbaropacity || lightbar)
 		XChangeProperty(dpy, m->barwin, opacityatom, XA_CARDINAL, 32,
-		                PropModeReplace, (const unsigned char *)&lightbaropacity, 1);
+		                PropModeReplace, (const unsigned char *)&opacity, 1);
 	else
 		/* Restore the compositor's original handling, including its own rules. */
 		XDeleteProperty(dpy, m->barwin, opacityatom);
@@ -3826,8 +3832,9 @@ int
 load_xresources(void)
 {
 	Display *display = XOpenDisplay(NULL);
-	char *resm;
+	char *resm, *bartype;
 	XrmDatabase db = NULL;
+	XrmValue barvalue;
 	ResourcePref *p;
 	char oldborder[sizeof selbordercolor], oldstatus[sizeof statuspalette];
 	unsigned int oldwidth = borderpx;
@@ -3863,8 +3870,12 @@ load_xresources(void)
 	loadstatuspalette(db);
 
 	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
+	baropacity = 0;
 	switcheropacity = loadswitcheropacity(db);
 	if (db) {
+		if (XrmGetResource(db, "dwm.baropacity", "Dwm.Baropacity", &bartype, &barvalue)
+		&& barvalue.addr && !strcmp(bartype, "String") && !strcmp(barvalue.addr, "90"))
+			baropacity = 0xffffffffULL * 90 / 100;
 		resource_load(db, "switcherfgcolor", STRING, switcherfgcolor, sizeof switcherfgcolor);
 		resource_load(db, "switcherbgcolor", STRING, switcherbgcolor, sizeof switcherbgcolor);
 		if (!validcolor(switcherfgcolor) || switcherfgcolor[7])
