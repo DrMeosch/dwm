@@ -260,7 +260,7 @@ static void run(void);
 static void reloadcolors(void);
 static void updateborderwidth(void);
 static int lightbarpalette(void);
-static Clr *createscheme(size_t index, int light);
+static Clr *createscheme(size_t index, int light, int use_loaded_palette);
 static void updatebaropacity(Monitor *m);
 static void runAutostart(void);
 static void scan(void);
@@ -328,7 +328,7 @@ static void zoom(const Arg *arg);
 static void xrdb(const Arg *arg);
 static int load_xresources(void);
 static void loadstatuspalette(XrmDatabase db);
-static void resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size);
+static int resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size);
 
 static pid_t getparentprocess(pid_t p);
 static int isdescprocess(pid_t p, pid_t c);
@@ -372,6 +372,7 @@ static Atom sysmonatom, sysmonenabledatom;
 static SysmonValues sysmonval = { .cpu = -1, .temp = -1, .gpu = -1 }; /* last published by dwmsysmon; -1, no fans or no samples when unknown */
 static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
 static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
+static int configuredshowsysmon = -1;
 static int lightbar;
 static int restart = 0;
 static int running = 1;
@@ -402,6 +403,9 @@ static xcb_connection_t *xcon;
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
+
+static char appliedfg[sizeof normfgcolor], appliedbg[sizeof normbgcolor];
+static int appliedswitcheropacity;
 
 /* the sampler would fall back to its own interval, which dwm's staleness limit does not follow */
 typedef char sysmonintervalinrange[SYSMONINTERVAL >= SYSMON_MININTERVAL
@@ -2440,13 +2444,16 @@ setup(void)
 	lightbar = lightbarpalette();
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++) {
-		if (!(scheme[i] = createscheme(i, lightbar))) {
+		if (!(scheme[i] = createscheme(i, lightbar, 1))) {
 			while (i > 0)
 				drw_scm_free(drw, scheme[--i], 3);
 			free(scheme);
 			die("error, cannot allocate color scheme");
 		}
 	}
+	strcpy(appliedfg, normfgcolor);
+	strcpy(appliedbg, normbgcolor);
+	appliedswitcheropacity = switcheropacity;
 	/* init bars */
 	updatebars();
 	updatestatus();
@@ -3609,22 +3616,32 @@ zoom(const Arg *arg)
 void
 xrdb(const Arg *arg)
 {
-	static int refresh;
+	static int pending_theme;
 	Clr *new_scheme[LENGTH(colors)];
 	Monitor *m;
 	size_t first, i;
-	int new_lightbar;
+	char oldfg[sizeof switcherfgcolor], oldbg[sizeof switcherbgcolor];
+	int oldopacity = switcheropacity;
+	int theme_changed, switcher_changed, refresh, new_lightbar;
 
 	(void)arg;
-	refresh |= load_xresources();
+	strcpy(oldfg, switcherfgcolor);
+	strcpy(oldbg, switcherbgcolor);
+	theme_changed = load_xresources();
+	switcher_changed = oldopacity != switcheropacity || strcmp(oldfg, switcherfgcolor)
+	                   || strcmp(oldbg, switcherbgcolor);
+	pending_theme |= theme_changed;
+	refresh = theme_changed || (pending_theme && !switcher_changed);
 	if (refresh) {
+		if (configuredshowsysmon >= 0)
+			showsysmon = configuredshowsysmon;
 		applysysmon();
 		updateborderwidth();
 	}
 	new_lightbar = refresh ? lightbarpalette() : lightbar;
 	first = refresh ? 0 : SchemeSwitcher;
 	for (i = first; i < LENGTH(colors); i++) {
-		if (!(new_scheme[i] = createscheme(i, new_lightbar))) {
+		if (!(new_scheme[i] = createscheme(i, new_lightbar, refresh))) {
 			while (i > first)
 				drw_scm_free(drw, new_scheme[--i], 3);
 			return;
@@ -3635,6 +3652,7 @@ xrdb(const Arg *arg)
 		drw_scm_free(drw, scheme[i], 3);
 		scheme[i] = new_scheme[i];
 	}
+	appliedswitcheropacity = switcheropacity;
 	if (switcher.win) {
 		XSetWindowBackground(dpy, switcher.win, scheme[SchemeSwitcher][ColBg].pixel);
 		XSetWindowBorder(dpy, switcher.win, scheme[SchemeSwitcher][ColBorder].pixel);
@@ -3644,12 +3662,14 @@ xrdb(const Arg *arg)
 
 	if (!refresh)
 		return;
+	strcpy(appliedfg, normfgcolor);
+	strcpy(appliedbg, normbgcolor);
 	lightbar = new_lightbar;
 	for (m = mons; m; m = m->next)
 		updatebaropacity(m);
 	focus(NULL);
 	arrange(NULL);
-	refresh = 0;
+	pending_theme = 0;
 }
 
 static int
@@ -3664,11 +3684,13 @@ lightbarpalette(void)
 }
 
 static Clr *
-createscheme(size_t index, int light)
+createscheme(size_t index, int light, int use_loaded_palette)
 {
+	char *fg = use_loaded_palette ? normfgcolor : appliedfg;
+	char *bg = use_loaded_palette ? normbgcolor : appliedbg;
 	char *palette[] = {
-		light || index != SchemeSel ? normfgcolor : selfgcolor,
-		light ? lightbarbg : normbgcolor,
+		light || index != SchemeSel ? fg : selfgcolor,
+		light ? lightbarbg : bg,
 		colors[index][ColBorder]
 	};
 
@@ -3696,8 +3718,8 @@ updatebaropacity(Monitor *m)
 static void
 updateswitcheropacity(void)
 {
-	if (switcheropacity >= 0) {
-		unsigned long opacity = 0xffffffffULL * switcheropacity / 100;
+	if (appliedswitcheropacity >= 0) {
+		unsigned long opacity = 0xffffffffULL * appliedswitcheropacity / 100;
 
 		XChangeProperty(dpy, switcher.win, opacityatom, XA_CARDINAL, 32,
 		                PropModeReplace, (const unsigned char *)&opacity, 1);
@@ -3726,7 +3748,7 @@ updateborderwidth(void)
 	}
 }
 
-void
+int
 resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size)
 {
 	char *sdst = NULL;
@@ -3744,22 +3766,23 @@ resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, s
 	snprintf(fullname, sizeof(fullname), "%s.%s", "dwm", name);
 	fullname[sizeof(fullname) - 1] = '\0';
 
-	XrmGetResource(db, fullname, "*", &type, &ret);
-	if (!(ret.addr == NULL || strncmp("String", type, 64)))
-	{
-		switch (rtype) {
-		case STRING:
-			if (strlen(ret.addr) < size)
-				memcpy(sdst, ret.addr, strlen(ret.addr) + 1);
-			break;
-		case INTEGER:
-			*idst = strtoul(ret.addr, NULL, 10);
-			break;
-		case FLOAT:
-			*fdst = strtof(ret.addr, NULL);
-			break;
-		}
+	if (!XrmGetResource(db, fullname, "*", &type, &ret)
+	|| !ret.addr || strncmp("String", type, 64))
+		return 0;
+	switch (rtype) {
+	case STRING:
+		if (strlen(ret.addr) >= size)
+			return 0;
+		memcpy(sdst, ret.addr, strlen(ret.addr) + 1);
+		break;
+	case INTEGER:
+		*idst = strtoul(ret.addr, NULL, 10);
+		break;
+	case FLOAT:
+		*fdst = strtof(ret.addr, NULL);
+		break;
 	}
+	return 1;
 }
 
 /* status2d palette: dwm.color<n> replaces the default only if exactly #rrggbb */
@@ -3807,13 +3830,18 @@ load_xresources(void)
 	ResourcePref *p;
 	char oldborder[sizeof selbordercolor], oldstatus[sizeof statuspalette];
 	unsigned int oldwidth = borderpx;
-	int changed = 0;
+	int changed = 0, new_sysmon = -1, sysmon;
 
 	if (display && (resm = XResourceManagerString(display)))
 		db = XrmGetStringDatabase(resm);
 	for (p = resources; p < resources + LENGTH(resources); p++) {
 		unsigned char old[p->size];
 
+		if (p->dst == &showsysmon) {
+			if (db && resource_load(db, p->name, p->type, &sysmon, sizeof sysmon))
+				new_sysmon = sysmon != 0;
+			continue;
+		}
 		memcpy(old, p->dst, p->size);
 		/* Missing color resources must restore the compiled palette on every reload. */
 		if (p->dst == normbgcolor)
@@ -3822,11 +3850,11 @@ load_xresources(void)
 			strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
 		if (db)
 			resource_load(db, p->name, p->type, p->dst, p->size);
-		if (p->dst == &showsysmon)
-			showsysmon = showsysmon != 0;
 		changed |= p->type == STRING ? strcmp((char *)old, p->dst) != 0
 		                            : memcmp(old, p->dst, p->size) != 0;
 	}
+	changed |= configuredshowsysmon != new_sysmon;
+	configuredshowsysmon = new_sysmon;
 
 	strcpy(oldborder, selbordercolor);
 	memcpy(oldstatus, statuspalette, sizeof oldstatus);
@@ -3863,6 +3891,8 @@ main(int argc, char *argv[])
 	checkotherwm();
 	XrmInitialize();
 	load_xresources();
+	if (configuredshowsysmon >= 0)
+		showsysmon = configuredshowsysmon;
 	setup();
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)

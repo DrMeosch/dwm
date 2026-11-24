@@ -92,7 +92,11 @@ that bar and app opacity hints stay as they were and that keyboard focus stays
 on the client's child window after each reload completes. With the panel closed,
 the check uses Mod+F5 to reload only switcher opacity. It verifies that the
 visible scratchpad keeps its moved geometry and child focus, and that the next
-panel uses the new opacity hint.
+panel uses the new opacity hint. A live sysmon toggle survives this reload,
+while ordinary theme and sysmon resource changes still take effect. The open
+panel check also covers a failed theme, a subsequent switcher-only reset,
+reopening the panel, and normal theme recovery. Both light bars are checked for
+their 92% opacity hints before and after switcher customization and reset.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in

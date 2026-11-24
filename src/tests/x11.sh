@@ -132,6 +132,7 @@ if [ "$input_available" -eq 1 ]; then
 	xrdb -load <<'XRESOURCES'
 dwm.color0: #102030
 dwm.color4: #d0c0a0
+dwm.showsysmon: 0
 dwm.switcherfgcolor: #fedcba
 dwm.switcherbgcolor: #563412
 dwm.switcheropacity: 100
