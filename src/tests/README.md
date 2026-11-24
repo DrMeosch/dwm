@@ -105,8 +105,8 @@ empty, unrelated, wrong-type and wrong-format cases all pass, as do fullscreen
 alone, first and duplicate cases before resizing. These genuine failures remain
 enabled without production changes or expected-failure masks. Run
 `x11 fullscreen-properties` against an isolated `DWM_TEST` dwm with no other
-clients if earlier XTEST switcher checks block the main script. This fixture
-does not check initial-fullscreen exit restoration. Preservation of unrelated
+clients if earlier XTEST switcher checks block the main script. Initial-fullscreen exit restoration is covered by the separate
+`initial-fullscreen-exit` fixture below. Preservation of unrelated
 states during fullscreen client messages is covered separately below.
 
 On a fresh 1200x800 single-monitor display, `x11 titles` checks actual bar
@@ -192,7 +192,8 @@ The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
 reaching it. The script runs fullscreen-properties, titles, focus-hints,
-size-hints, fullscreen and fullscreen-state-preservation fixtures even if one
+size-hints, fullscreen, fullscreen-state-preservation and initial-fullscreen-exit
+fixtures even if one
 fails, then exits nonzero before later integration checks if any failed.
 
 On a fresh single-monitor display, `x11 fullscreen-state-preservation` checks
@@ -215,7 +216,29 @@ no production fix or expected-failure mask. This fixture does not assert that
 dwm implements sticky or attention behavior; it checks only that changing
 fullscreen does not erase unrelated state atoms.
 
-Run any one of the six state fixtures with its own private Xvfb and test dwm,
+On a fresh single-monitor display, `x11 initial-fullscreen-exit` compares
+clients requesting fullscreen before mapping with otherwise identical clients
+entering fullscreen after an ordinary map. It covers tiled, dialog, transient
+and rule-floating clients, ADD while already fullscreen, and both REMOVE and
+TOGGLE exits. Each of the eight initial-fullscreen targets has its own
+mapped-normal control. The fixture checks fullscreen geometry, state removal,
+restored size and border, tiled placement, resize behavior, focus and cleanup.
+Floating exit positions are deliberately not compared: only tiled positions
+must match the normal control. Marked tiled ConfigureRequest replies synchronize
+mapping and resize assertions; the pointer stays on the bar. All sixteen
+clients and their barriers are destroyed.
+
+Eight assertions currently fail for dialogs and transients: initial-fullscreen
+exit makes them tiled (751x755 in isolation instead of 300x200) and subsequent
+137x119 application resizes are rejected. `manage()` enters fullscreen before
+establishing dialog/transient floating state, so `setfullscreen()` saves the
+wrong `oldstate` and restores it on exit. Mapped-normal controls and initially
+fullscreen tiled/rule-floating clients pass. These genuine failures remain
+enabled without production fixes or expected-failure masks. Fixed-size clients,
+floating exit positions, hidden tags and monitor changes during fullscreen are
+not covered by this fixture.
+
+Run any one of the seven state fixtures with its own private Xvfb and test dwm,
 without the earlier switcher checks or later integration checks:
 
 ```sh
@@ -223,7 +246,8 @@ DWM_X11_STATE_FIXTURE=fullscreen-state-preservation sh src/tests/x11.sh "$PWD"
 ```
 
 The selector accepts `fullscreen-properties`, `titles`, `focus-hints`,
-`size-hints`, `fullscreen` and `fullscreen-state-preservation`; an unknown value
+`size-hints`, `fullscreen`, `fullscreen-state-preservation` and
+`initial-fullscreen-exit`; an unknown value
 fails before launching processes. With no selector, `make test` retains all
 checks, including the new fixture. See [`BUG_REPORT.md`](../../BUG_REPORT.md)
 for reproduced defects and the status of the full suite.

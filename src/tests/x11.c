@@ -10,6 +10,11 @@
 
 static int failures;
 
+static void focus_roundtrip(Display *dpy, Window barrier, const char *step);
+static void check_state_atoms(Display *dpy, Window win, const Atom *expected,
+                              unsigned long count, const char *kind,
+                              unsigned int seeded, const char *step);
+
 #define CHECK(condition, ...) do { \
 	if (!(condition)) { \
 		fprintf(stderr, "FAIL: "); \
@@ -854,6 +859,89 @@ check_fullscreen_messages(Display *dpy, Window root)
 	}
 }
 
+/* Compare pre-map fullscreen with the same client's ordinary map/exit path.
+ * Floating positions may differ, but size, border and floating behavior must not. */
+static void
+check_initial_fullscreen_exit(Display *dpy, Window root)
+{
+	static const char *kinds[] = { "tiled", "dialog", "transient", "rule-floating" };
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Window barrier, win, pair[2], focused;
+	XWindowAttributes normal = {0}, wa = {0};
+	int kind, initial, action, revert;
+	char step[128];
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	for (kind = 0; kind < 4; kind++) {
+		for (action = 0; action <= 2; action += 2) {
+			barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+			XSelectInput(dpy, barrier, StructureNotifyMask);
+			XMapWindow(dpy, barrier);
+			XFlush(dpy);
+			CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "initial exit barrier was not managed");
+			for (initial = 0; initial < 2; initial++) {
+				snprintf(step, sizeof step, "%s %s action %d", kinds[kind],
+				         initial ? "initial fullscreen" : "mapped-normal control", action);
+				win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+				XStoreName(dpy, win, step);
+				if (kind == 1)
+					XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+					                (unsigned char *)&dialog, 1);
+				if (kind == 2)
+					XSetTransientForHint(dpy, win, barrier);
+				if (kind == 3) {
+					XClassHint cls = { "initial-exit", "ibcalpha-ibc-IbcTws" };
+
+					XSetClassHint(dpy, win, &cls);
+				}
+				if (initial)
+					XChangeProperty(dpy, win, state, XA_ATOM, 32, PropModeReplace,
+					                (unsigned char *)&fullscreen, 1);
+				XMapWindow(dpy, win);
+				XFlush(dpy);
+				pair[0] = barrier; pair[1] = win;
+				CHECK(wait_clients(dpy, root, pair, 2, win), "%s: target was not managed", step);
+				focus_roundtrip(dpy, barrier, step);
+				if (!initial) {
+					CHECK(XGetWindowAttributes(dpy, win, &normal), "%s: cannot inspect control", step);
+					CHECK(normal.border_width > 0 && (!kind || (normal.width == 300 && normal.height == 200)),
+					      "%s: invalid normal geometry control", step);
+				} else
+					check_fullscreen_state(dpy, win, &normal, 1, step, "on mapping");
+				/* ADD is also an idempotence check for pre-map fullscreen. */
+				fullscreen_request(dpy, root, win, barrier, 1, fullscreen, None);
+				check_fullscreen_state(dpy, win, &normal, 1, step, "after add");
+				fullscreen_request(dpy, root, win, barrier, action, fullscreen, None);
+				check_state_atoms(dpy, win, NULL, 0, step, 0, "after exit");
+				CHECK(XGetWindowAttributes(dpy, win, &wa), "%s: cannot inspect exit geometry", step);
+				CHECK(wa.width == normal.width && wa.height == normal.height
+				      && wa.border_width == normal.border_width
+				      && (kind || (wa.x == normal.x && wa.y == normal.y)),
+				      "%s: exit geometry (%d,%d %dx%d border %d), normal (%d,%d %dx%d border %d)",
+				      step, wa.x, wa.y, wa.width, wa.height, wa.border_width,
+				      normal.x, normal.y, normal.width, normal.height, normal.border_width);
+				XResizeWindow(dpy, win, 137, 119);
+				focus_roundtrip(dpy, barrier, step);
+				CHECK(XGetWindowAttributes(dpy, win, &wa), "%s: cannot inspect resize", step);
+				CHECK(wa.width == (kind ? 137 : normal.width) && wa.height == (kind ? 119 : normal.height),
+				      "%s: resize after exit is %dx%d, expected %dx%d", step,
+				      wa.width, wa.height, kind ? 137 : normal.width, kind ? 119 : normal.height);
+				XGetInputFocus(dpy, &focused, &revert);
+				CHECK(focused == win, "%s: exit/resize changed focus", step);
+				XDestroyWindow(dpy, win);
+				XFlush(dpy);
+				CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "%s: target was not removed", step);
+			}
+			XDestroyWindow(dpy, barrier);
+			XFlush(dpy);
+			CHECK(wait_clients(dpy, root, NULL, 0, root), "initial exit fixture did not clean up its clients");
+		}
+	}
+}
+
 /* Atom order is not significant, but missing states and duplicate atoms are. */
 static void
 check_state_atoms(Display *dpy, Window win, const Atom *expected, unsigned long count,
@@ -1675,6 +1763,13 @@ main(int argc, char *argv[])
 		if (!failures)
 			puts("X11 fullscreen state-preservation checks passed");
 		return failures ? 1 : 0;
+	}
+	if (argc == 2 && !strcmp(argv[1], "initial-fullscreen-exit")) {
+		check_initial_fullscreen_exit(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 initial fullscreen-exit checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 	/* x11 fullscreen: client messages preserve state, geometry and floating mode */
 	if (argc == 2 && !strcmp(argv[1], "fullscreen")) {

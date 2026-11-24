@@ -10,7 +10,7 @@ These findings were reproduced against the current production sources in a
 
 Run from the repository root with the build dependencies in `src/config.mk`,
 `jq`, `pkg-config`, Xvfb, `xdpyinfo` and `xrdb` installed. XTEST development
-files were available during validation, but these six state fixtures use Xlib
+files were available during validation, but these seven state fixtures use Xlib
 and do not require physical input or XTEST.
 
 Each command below compiles temporary test binaries, starts its own 1200x800
@@ -179,11 +179,51 @@ The selectors allow reproduction even when the earlier switcher test blocks
 - **Cause:** `propertynotify()` ignores the deletion, leaving cached hints in
   force.
 
+## 8. Initial-fullscreen dialogs and transients lose floating state on exit
+
+- **Severity:** Medium. Dialogs and transient windows unexpectedly become tiled
+  after leaving fullscreen, lose their ordinary size, and cannot accept an
+  application resize.
+- **Affected production file:** `src/dwm.c`, `manage()`, `updatewindowtype()`
+  and `setfullscreen()`.
+- **Failing test:** `src/tests/x11.c`, `check_initial_fullscreen_exit()`;
+  **8 failing assertions** (exit geometry and resize for two client types and
+  two exit actions).
+- **Reproduce:**
+  ```sh
+  DWM_X11_STATE_FIXTURE=initial-fullscreen-exit sh src/tests/x11.sh "$PWD"
+  ```
+  Map a tiled barrier/parent, then a 300x200 client with either the dialog
+  window type or `WM_TRANSIENT_FOR` pointing to the parent. Before mapping,
+  set a 32-bit ATOM `_NET_WM_STATE` containing fullscreen alone. Verify full
+  screen coverage, send repeated ADD, then send REMOVE (0) or TOGGLE (2).
+  Request a 137x119 size after exit. Compare with the same client entering
+  fullscreen by client message after an ordinary map.
+- **Expected:** Exit preserves the client's floating nature, restores its
+  300x200 size and configured border, and permits the 137x119 resize. Ordinary
+  mapped clients and initial-fullscreen clients should behave equivalently.
+- **Actual:** Both client types exit to tiled geometry `(416,33) 751x755 border
+  1` on the isolated display and reject the resize, remaining 751x755. In the
+  default suite's changed layout, they instead tile to `(30,33) 619x755`; the
+  defect and assertion count are unchanged.
+- **Cause:** `manage()` calls `updatewindowtype()` before resolving transient
+  floating state. Within `updatewindowtype()`, fullscreen is processed before
+  the dialog type. Thus `setfullscreen()` records `oldstate=0` before either
+  kind of client is classified as floating. Fullscreen exit restores this
+  stale state and `arrange()` tiles the client. Rules run earlier, so clients
+  marked floating by a rule do not suffer this defect.
+- **Coverage and controls:** REMOVE and TOGGLE exits, repeated ADD, all eight
+  mapped-normal controls, initial-fullscreen tiled and rule-floating clients,
+  state property removal, borders, focus and cleanup. All controls pass.
+  Floating positions, fixed-size hints, hidden tags and monitor changes are
+  intentionally not asserted. No resize is issued while fullscreen, isolating
+  this finding from defect 3.
+
 ## Validation status and limits
 
-- The six isolated fixtures reproduce **67 total failing assertions**:
-  24 + 15 + 8 + 3 + 16 + 1. They complete and clean up their clients/servers.
-- The baseline `make test` passed the headless regression and build/documentation
+- The seven state fixtures reproduce **75 total failing assertions**:
+  24 + 15 + 8 + 3 + 16 + 1 + 8. They complete and clean up their clients/servers.
+- The iteration 1 baseline `make test` passed the headless regression and build/documentation
   checks and the X11 switcher appearance/live-reload check, then exited nonzero
   during switcher navigation before reaching the state fixtures. Its output
   included `error, cannot allocate color '#fffffg'` from the intentional invalid
@@ -197,6 +237,19 @@ The selectors allow reproduction even when the earlier switcher test blocks
   of an unknown fixture selector passed. No test processes remain running.
 - Existing production compiler warnings are outside this test-only change;
   they were not suppressed or fixed. No production fixes or commits were made.
-- Long-title truncation, alternate title encodings, initial-fullscreen exit
-  restoration, physical input and side-by-side monitor behavior are not covered
-  by this iteration.
+- Iteration 2 default `make test` passed the headless checks, both XTEST
+  switcher checks and the event-loop check, then reached all seven state
+  fixtures and reported the same **75 failures** (make exit status 2). The
+  earlier navigation blocker is therefore intermittent, not a consistent
+  prerequisite failure; its cause remains undiagnosed. Later integration
+  checks remain blocked by the genuine state failures.
+- Iteration 2 isolated `DWM_X11_STATE_FIXTURE=initial-fullscreen-exit make test`
+  passed every headless and event-loop check, then reproduced exactly the
+  **8 new assertions** (make exit status 2), matching the direct isolated run.
+  No relevant dependency checks skipped. `make -B` succeeded; the Xlib test
+  client compiled with `-std=c99 -pedantic -Wall -Wextra -Werror`; shell syntax
+  and diff-whitespace checks passed. No production source was modified, no
+  commits were made, and no test processes remain running.
+- Long-title truncation, alternate title encodings, fixed-size initial
+  fullscreen clients, floating exit positions, physical input and side-by-side
+  monitor behavior are not covered by the new fixture.
