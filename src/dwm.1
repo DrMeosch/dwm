@@ -124,10 +124,10 @@ Toggle floating layout.
 Sets Fibonacci spiral/dwinde layouts.
 .TP
 .B Super\-u/U
-Sets centered master layout.
+Sets deck/monocle layouts.
 .TP
 .B Super\-i/I
-Sets centered master or floating master layouts.
+Sets centered master/centered floating master layouts.
 .TP
 .B Super\-space
 Zooms/cycles focused window to/from master area.
@@ -136,33 +136,36 @@ Zooms/cycles focused window to/from master area.
 Focus next/previous window.
 .TP
 .B Ctrl\-Tab
-List windows across tags on the selected monitor, most recently focused first.
+List windows across tags on the selected monitor. Focusing a window moves it
+to the front of the list. Newly managed windows can appear near the front
+before they receive focus.
 Each row shows one managed window's title and tags. Visible windows, including
-sticky windows and shown scratchpads, are eligible, as are hidden windows with
-an ordinary tag. The same rule applies to managed dialogs and hidden scratchpads:
-a hidden scratchpad is listed only if it also has an ordinary tag. The hidden
-side of a swallowed pair is omitted. The highlight starts on the most recent
-other window, or the only window. No panel opens if the list is empty, the
-focused window has the fullscreen focus lock, or dwm cannot grab the keyboard.
+sticky windows and shown scratchpads, are eligible. Hidden windows, including
+hidden scratchpads, need an ordinary tag. The same rules apply to managed
+dialogs. The hidden side of a swallowed pair is omitted. The highlight
+starts on the first row, skipping the focused window if another row is available.
+No panel opens if the list is empty, the focused window has the fullscreen
+focus lock, or dwm cannot grab the keyboard.
 .IP
 Keep Ctrl held and tap Tab again to move the highlight down one row. Tab uses
 the same modifiers as the opening shortcut and ignores key repeat. Press j to
 move down or k to move up. The highlight wraps at either end, and navigation
 leaves focus unchanged. Release the last held Ctrl key to activate the
 highlighted window, or press Escape to cancel. A change in focus or selected
-monitor cancels a pending switch, as does the removal of a listed window or a
-pointer crossing onto a monitor other than the panel's.
+monitor cancels a pending switch, as does the removal of a listed window.
+Root window motion and window crossing events can also cancel the switch when
+they report a move onto a monitor other than the panel's.
 .IP
 Selecting a visible window leaves the current view unchanged. For a hidden
 window, dwm shows only its lowest-numbered ordinary tag on its own monitor.
 Neither operation retags or moves the window or changes another monitor's
 view, layout or remembered selection.
 .IP
-Ctrl\-Tab is the switcher's only global binding and is built in for the core
-keyboard. When grabbed, it takes precedence over application shortcuts such
-as switching tabs. Ctrl\-j and Ctrl\-k remain available to applications while
-the panel is closed. The switcher requires XInput 2, XKB, and at least Shape 1.1
-on the X server. Without them, dwm runs without the switcher.
+Ctrl\-Tab is the switcher's only global binding. It uses the active XKB group's
+Tab key on the core keyboard. When grabbed, it takes precedence over application
+shortcuts such as switching tabs. Ctrl\-j and Ctrl\-k remain available to
+applications while the panel is closed. The switcher requires XInput 2, XKB, and
+at least Shape 1.1 on the X server. Without them, dwm runs without the switcher.
 .TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.
@@ -170,11 +173,11 @@ Move selected window down/up in stack.
 .B Super\-o/O
 Increase/decrease number of windows in master area.
 .TP
-.B Super\-l
-Increase master area size.
+.B Super\-h/l
+Focus the previous/next monitor.
 .TP
-.B Super\-h
-Decrease master area size.
+.B Super\-Shift\-h/l
+Decrease/increase master area size.
 .TP
 .B Super\-Shift\-space
 Toggle focused window between tiled and floating state.
@@ -240,11 +243,14 @@ Quit dwm.
 Menu to refresh/quit/reboot/shutdown.
 .SS Mouse commands
 .TP
+.B Middle click on the root window
+Toggle the bar on the monitor under the click.
+.TP
 .B Super\-Left click
 Move focused window while dragging. Tiled windows will be toggled to the floating state.
 .TP
 .B Super\-Middle click
-Toggles focused window between floating and tiled state.
+Reset gaps to their configured sizes when clicking a client window.
 .TP
 .B Super\-Right click
 Resize focused window while dragging. Tiled windows will be toggled to the floating state.
@@ -458,7 +464,7 @@ lighter pink, and selected tags and titles use the selected background. In the
 dark palette, all bar backgrounds follow dwm.color0 and dwm.color4 supplies
 text only.
 .PP
-For the light palette:
+Merge these values to set the light palette and client borders.
 .nf
 printf '%s\en' \\
   'dwm.color0: #f8f8f2' \\
@@ -468,7 +474,7 @@ printf '%s\en' \\
 pkill -USR2 -x dwm
 .fi
 .PP
-For the dark palette:
+Merge these values to set the dark palette and client borders.
 .nf
 printf '%s\en' \\
   'dwm.color0: #282a36' \\
@@ -481,10 +487,6 @@ pkill -USR2 -x dwm
 The focused client border uses dwm.selbordercolor. Both palettes use the same
 muted pink accent. If dwm.selbordercolor is absent, the selected border
 uses the configured fallback #ffb86c. dwm.color8 does not control it.
-.PP
-The light palette also sets existing client borders to two pixels; the dark
-palette uses one pixel. If dwm.borderpx is missing or invalid, dwm uses the
-configured fallback, which is two pixels by default.
 .TP
 .B dwm.borderpx
 Sets the window border width in pixels. Use a positive decimal integer up to

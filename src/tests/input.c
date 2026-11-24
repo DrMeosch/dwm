@@ -1845,7 +1845,8 @@ test_switcher(Display *dpy, Window root)
 				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
 				                     heads[1].y_org + heads[1].height - 1, CurrentTime);
 			else
-				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), b2geom.x + 20, b2geom.y + 20, CurrentTime);
+				/* Xephyr can clip absolute motion after a cross-head warp. */
+				XWarpPointer(dpy, None, b2, 0, 0, 0, 0, 20, 20);
 			if (order == CrossingFirst)
 				switcher_key(dpy, XK_Control_L, False);
 			XUngrabServer(dpy);

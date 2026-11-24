@@ -1,7 +1,7 @@
 # Regression checks
 
 From the repository root, run `make test` with GCC or Clang in C99 mode,
-`pkg-config`, the development headers and libraries configured in
+`jq`, `pkg-config`, the development headers and libraries configured in
 [`config.mk`](../config.mk), and the system math library. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, including exact bottom-stack and centered-floating
@@ -111,11 +111,12 @@ and layout. The check reads the opacity CARDINAL on both live bars and the
 reopened switcher after each ordinary reload, including the transition from an
 80% switcher with default bars to 90% on all three windows.
 
-The navigation check checks panel placement, row counts, recent-first navigation
-and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
-`dwm(1)`](../dwm.1). It measures row counts against the one-window panel for
-shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight
-pixels are checked as j and k wrap while the original client retains focus.
+The navigation check verifies panel placement, row counts, highlight order and
+wrapping, and visible and hidden activation. It measures row counts against the
+one-window panel for shown, hidden scratchpad-only, and hidden mixed-tag
+scratchpads. See the [Ctrl+Tab entry in `dwm(1)`](../dwm.1) for controls.
+Highlight pixels are checked as j and k wrap while the original client retains
+focus.
 The Tab check enables auto-repeat and observes a repeat at the focused client
 before opening the panel. It checks the initial highlight, per-tap movement
 and wrapping, repeat suppression, and focus before and after Ctrl release.
@@ -147,12 +148,14 @@ prevent plain Ctrl+Tab from opening the panel on the second. With Num Lock
 removed from the test keymap, plain Ctrl+Tab must still open the panel and
 Ctrl+AltGr+Tab must reach the application.
 
-Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
-placement. On an isolated X server with Xinerama head 0 to the left of head 1,
-start with the pointer on head 0 and run `input switcher` against a `DWM_TEST`
-build. The same check distinguishes motion in the same root-window gap from
-crossing between heads, then reopens on the newly selected monitor. Moving
-from A's root gap into B's top bar with the panel closed must leave A selected.
+Xvfb's overlapping heads leave the side-by-side checks unexercised. Build the
+`DWM_TEST` dwm and `input` binaries using the compiler commands in
+[`x11.sh`](x11.sh). Use the script's terminal stub and start the test dwm on a
+fresh, isolated X server with exactly two Xinerama heads, head 0 to the left of
+head 1, and the pointer on head 0. Run `input switcher` on that display. The
+check distinguishes motion in the same root-window gap from crossing between
+heads, then reopens on the newly selected monitor. Moving from A's root gap
+into B's top bar with the panel closed must leave A selected.
 With the panel open, crossing directly between the two top bars in either
 direction must close it before Ctrl is released. A queued crossing from a
 client on A into B's root gap and back to A must cancel without activating a
