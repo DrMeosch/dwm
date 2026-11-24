@@ -112,6 +112,9 @@ and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
 `dwm(1)`](../dwm.1). It measures row counts against the one-window panel for
 shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight
 pixels are checked as j and k wrap while the original client retains focus.
+With Ctrl held, the Tab check verifies the initial highlight, one row per tap
+including wrap, and no further movement from key repeat. Focus stays at the
+original window until Ctrl release activates the highlighted window.
 New clients probe the ordinary tags; two scratchpad-only windows on each monitor
 probe the scratchpad bits. The view, focus, and geometry checks cover monitor
 isolation and compare hidden activation against recorded monocle geometry on

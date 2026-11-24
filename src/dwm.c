@@ -2832,7 +2832,8 @@ switcherevent(XEvent *e)
 			switchercommit();
 	} else if (sym == XK_Escape) {
 		switchercancel();
-	} else if (sym == XK_j) {
+	} else if (sym == XK_j || (sym == XK_Tab && !(ev->flags & XIKeyRepeat)
+	           && CLEANMASK(ev->mods.effective) == ControlMask && (ev->mods.base & ControlMask))) {
 		switcher.selected = (switcher.selected + 1) % switcher.count;
 		switcherdraw();
 	} else if (sym == XK_k) {
