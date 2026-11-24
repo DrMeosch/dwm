@@ -145,12 +145,13 @@ side of a swallowed pair is omitted. The highlight starts on the most recent
 other window, or the only window. No panel opens if the list is empty, the
 focused window has the fullscreen focus lock, or dwm cannot grab the keyboard.
 .IP
-While holding Ctrl, tap Tab again or press j to move the highlight down, or
-press k to move it up. The highlight wraps at the ends and each Tab tap moves
-it once. Release the last held Ctrl key to activate the highlighted window,
-or press Escape to cancel. A change in focus or selected monitor cancels a
-pending switch, as does the removal of a listed window or a pointer crossing
-onto a monitor other than the panel's.
+Keep Ctrl held and tap Tab again to move the highlight down one row. Tab uses
+the same modifiers as the opening shortcut and ignores key repeat. Press j to
+move down or k to move up. The highlight wraps at either end, and navigation
+leaves focus unchanged. Release the last held Ctrl key to activate the
+highlighted window, or press Escape to cancel. A change in focus or selected
+monitor cancels a pending switch, as does the removal of a listed window or a
+pointer crossing onto a monitor other than the panel's.
 .IP
 Selecting a visible window leaves the current view unchanged. For a hidden
 window, dwm shows only its lowest-numbered ordinary tag on its own monitor.

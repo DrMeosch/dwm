@@ -113,9 +113,8 @@ and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
 shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight
 pixels are checked as j and k wrap while the original client retains focus.
 The Tab check enables auto-repeat and observes a repeat at the focused client
-before opening the panel. With Ctrl held, it verifies the initial highlight,
-one row per tap including wrap, and no further movement from key repeat. Focus
-stays at the original window until Ctrl release activates the highlighted window.
+before opening the panel. It checks the initial highlight, per-tap movement
+and wrapping, repeat suppression, and focus before and after Ctrl release.
 New clients probe the ordinary tags; two scratchpad-only windows on each monitor
 probe the scratchpad bits. The view, focus, and geometry checks cover monitor
 isolation and compare hidden activation against recorded monocle geometry on
