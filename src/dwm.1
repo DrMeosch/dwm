@@ -266,8 +266,9 @@ in
 A temperature, fan or GPU the machine does not report is not shown at all.
 It is off by default. Super\-Shift\-b toggles it, and the Xresources
 .B dwm.showsysmon
-(0 or 1) sets it at start\-up and on every SIGUSR2 reload; a key press is kept
-across a reload unless that resource is set.
+(0 or 1) sets it at start\-up and on ordinary SIGUSR2 reloads. A switcher-only
+style change preserves the live toggle. Without this resource, the live toggle
+persists across reloads.
 .PP
 dwm does not measure anything. The separate
 .B dwmsysmon
@@ -514,6 +515,10 @@ being reapplied.
 .nf
 printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
 .fi
+.PP
+If the resources are unchanged and the requested switcher style is already
+active, SIGUSR2 runs the ordinary reload. It can reapply configured settings and
+refresh client focus and layout.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

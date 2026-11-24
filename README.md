@@ -98,6 +98,8 @@ To reset a live override, apply an empty value for that key and send `SIGUSR2` t
 printf '%s\n' 'dwm.switcheropacity:' | xrdb -global -override
 ```
 
+If the resources are unchanged and the requested switcher style is already active, `SIGUSR2` runs the ordinary reload. It can reapply configured settings and refresh client focus and layout.
+
 ## Testing
 
 Run `make test`. See the [regression check guide](src/tests/README.md) for dependencies, X11 coverage, and how to capture dark/light reload screenshots.

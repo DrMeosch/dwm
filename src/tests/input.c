@@ -605,6 +605,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
 		  "#123456", "#abcdef", 0xffffffffUL },
 		{ Failed, "dwm.switcheropacity: 80\n", "#123456", "#abcdef", 0xffffffffUL },
+		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL },
 		{ Failed, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
 		  "#d0c0a0", "#102030", -1 },
 		{ Dark, "dwm.switcheropacity: 20\n", "#d0c0a0", "#102030", 0x33333333UL },
@@ -642,7 +643,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 	}
 	for (i = 0; i < sizeof styles / sizeof styles[0]; i++) {
 		if (styles[i].resources) {
-			snprintf(database, sizeof database, "%sdwm.showsysmon: 0\n%s",
+			snprintf(database, sizeof database, "%sdwm.showsysmon: 0\ndwm.smartgaps: 0\n%s",
 			         themes[styles[i].theme], styles[i].resources);
 			set_resources(dpy, root, database);
 			XSync(dpy, False);
@@ -735,22 +736,34 @@ wait_sysmon(Display *dpy, Window root, unsigned long expected)
 }
 
 static void
-test_switcher_closed_reload(Display *dpy, Window root)
+test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 {
 	static const char resources[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n"
-	                                "dwm.showsysmon: 0\ndwm.switcheropacity: 80\n";
+	                                "dwm.showsysmon: 0\ndwm.smartgaps: 0\ndwm.switcheropacity: 80\n";
 	static const char ordinary[] = "dwm.color0: #102031\ndwm.color4: #d0c0a0\n"
-	                               "dwm.switcheropacity: 80\ndwm.showsysmon: %d\n";
+	                               "dwm.switcheropacity: 80\ndwm.smartgaps: 0\ndwm.showsysmon: %d\n";
 	const Geometry moved = {30, 60, 180, 120};
 	XClassHint hint = { "spterm", "St" };
-	Window pad, child, focused, probe, win;
-	Geometry panel = {0};
+	Window tile, pad, child, focused, probe, win;
+	Geometry panel = {0}, gapped, gapless;
 	int i, revert;
 	char database[sizeof ordinary];
 
 	wait_sysmon(dpy, root, 0);
 	key(dpy, XK_b, XK_Shift_L);
 	wait_sysmon(dpy, root, 1);
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	tile = create_client(dpy, root, "Smart gaps reload fixture", 0);
+	CHECK(wait_active(dpy, root, tile), "smart-gaps fixture did not gain focus");
+	gapped = geometry(dpy, tile);
+	key(dpy, XK_apostrophe, XK_Shift_L);
+	for (i = 0; i < 80; i++) {
+		gapless = geometry(dpy, tile);
+		if (gapless.w > gapped.w && gapless.h > gapped.h)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "smart gaps did not remove the tiled window's outer gaps");
 	pad = XCreateSimpleWindow(dpy, root, 40, 40, moved.w, moved.h, 0, 0, 0);
 	XSetClassHint(dpy, pad, &hint);
 	XMapWindow(dpy, pad);
@@ -776,6 +789,7 @@ test_switcher_closed_reload(Display *dpy, Window root)
 	XGetInputFocus(dpy, &focused, &revert);
 	CHECK(focused == child && active_window(dpy, root) == pad, "closed-panel reload changed focus");
 	CHECK(same_geometry(geometry(dpy, pad), moved), "closed-panel reload moved the scratchpad");
+	CHECK(same_geometry(geometry(dpy, tile), gapless), "closed-panel reload restored outer gaps");
 	wait_sysmon(dpy, root, 1);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
 	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, 0xccccccccUL),
@@ -783,17 +797,42 @@ test_switcher_closed_reload(Display *dpy, Window root)
 	switcher_tap(dpy, XK_Escape);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reopened panel");
-	for (i = 0; i < 3; i++) {
-		snprintf(database, sizeof database, ordinary, i == 1);
+	for (i = 0; i < 2; i++) {
+		snprintf(database, sizeof database, ordinary, i);
 		set_resources(dpy, root, database);
 		key(dpy, XK_F5, 0);
-		wait_sysmon(dpy, root, i == 1);
+		wait_sysmon(dpy, root, i);
 	}
+	CHECK(wait_geometry(dpy, tile, gapped), "ordinary theme reload did not restore outer gaps");
+	for (i = 0; i < 2; i++) {
+		key(dpy, XK_b, XK_Shift_L);
+		wait_sysmon(dpy, root, 0);
+		XMoveWindow(dpy, pad, moved.x, moved.y);
+		CHECK(wait_geometry(dpy, pad, moved), "could not move the scratchpad before ordinary reload %d", i);
+		XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == child, "could not focus the scratchpad child before ordinary reload %d", i);
+		if (i)
+			set_resources(dpy, root, database);
+		XSync(dpy, False);
+		CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal ordinary reload %d", i);
+		wait_sysmon(dpy, root, 1);
+		XResizeWindow(dpy, probe, i + 3, 1);
+		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 3, 1}),
+		      "dwm did not finish ordinary reload %d", i);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == pad && !same_geometry(geometry(dpy, pad), moved),
+		      "ordinary reload %d did not refresh scratchpad focus and layout", i);
+	}
+	set_resources(dpy, root, resources);
+	key(dpy, XK_F5, 0);
+	wait_sysmon(dpy, root, 0);
 	XDestroyWindow(dpy, probe);
 	key(dpy, XK_Return, XK_Shift_L);
-	CHECK(wait_active(dpy, root, None), "reload scratchpad did not hide");
+	CHECK(wait_active(dpy, root, tile), "reload scratchpad did not hide");
 close:
 	XDestroyWindow(dpy, pad);
+	XDestroyWindow(dpy, tile);
 	CHECK(wait_active(dpy, root, None), "reload scratchpad did not clear focus");
 }
 
@@ -1820,7 +1859,7 @@ main(int argc, char **argv)
 		}
 		default_xerror = XSetErrorHandler(switcher_xerror);
 		test_switcher_appearance(dpy, root, (pid_t)pid);
-		test_switcher_closed_reload(dpy, root);
+		test_switcher_closed_reload(dpy, root, (pid_t)pid);
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 switcher appearance and live reload checks passed");

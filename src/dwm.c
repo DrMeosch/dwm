@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 #include <spawn.h>
@@ -373,6 +374,7 @@ static SysmonValues sysmonval = { .cpu = -1, .temp = -1, .gpu = -1 }; /* last pu
 static long long sysmonexpire;   /* monotonic ms at which sysmonval goes stale, 0 when none */
 static int sysmonpublished = -1; /* showsysmon as last published to the sampler */
 static int configuredshowsysmon = -1;
+static int configuredsmartgaps = -1;
 static int lightbar;
 static int restart = 0;
 static int running = 1;
@@ -405,6 +407,7 @@ static xcb_connection_t *xcon;
 #include "config.h"
 
 static char appliedfg[sizeof normfgcolor], appliedbg[sizeof normbgcolor];
+static char appliedswitcherfg[sizeof switcherfgcolor], appliedswitcherbg[sizeof switcherbgcolor];
 static int appliedswitcheropacity;
 
 /* the sampler would fall back to its own interval, which dwm's staleness limit does not follow */
@@ -2453,6 +2456,8 @@ setup(void)
 	}
 	strcpy(appliedfg, normfgcolor);
 	strcpy(appliedbg, normbgcolor);
+	strcpy(appliedswitcherfg, switcherfgcolor);
+	strcpy(appliedswitcherbg, switcherbgcolor);
 	appliedswitcheropacity = switcheropacity;
 	/* init bars */
 	updatebars();
@@ -3616,25 +3621,20 @@ zoom(const Arg *arg)
 void
 xrdb(const Arg *arg)
 {
-	static int pending_theme;
 	Clr *new_scheme[LENGTH(colors)];
 	Monitor *m;
 	size_t first, i;
-	char oldfg[sizeof switcherfgcolor], oldbg[sizeof switcherbgcolor];
-	int oldopacity = switcheropacity;
-	int theme_changed, switcher_changed, refresh, new_lightbar;
+	int refresh, new_lightbar;
 
 	(void)arg;
-	strcpy(oldfg, switcherfgcolor);
-	strcpy(oldbg, switcherbgcolor);
-	theme_changed = load_xresources();
-	switcher_changed = oldopacity != switcheropacity || strcmp(oldfg, switcherfgcolor)
-	                   || strcmp(oldbg, switcherbgcolor);
-	pending_theme |= theme_changed;
-	refresh = theme_changed || (pending_theme && !switcher_changed);
+	refresh = load_xresources() || (switcheropacity == appliedswitcheropacity
+	          && !strcasecmp(switcherfgcolor, appliedswitcherfg)
+	          && !strcasecmp(switcherbgcolor, appliedswitcherbg));
 	if (refresh) {
 		if (configuredshowsysmon >= 0)
 			showsysmon = configuredshowsysmon;
+		if (configuredsmartgaps >= 0)
+			smartgaps = configuredsmartgaps;
 		applysysmon();
 		updateborderwidth();
 	}
@@ -3652,6 +3652,8 @@ xrdb(const Arg *arg)
 		drw_scm_free(drw, scheme[i], 3);
 		scheme[i] = new_scheme[i];
 	}
+	strcpy(appliedswitcherfg, switcherfgcolor);
+	strcpy(appliedswitcherbg, switcherbgcolor);
 	appliedswitcheropacity = switcheropacity;
 	if (switcher.win) {
 		XSetWindowBackground(dpy, switcher.win, scheme[SchemeSwitcher][ColBg].pixel);
@@ -3669,7 +3671,6 @@ xrdb(const Arg *arg)
 		updatebaropacity(m);
 	focus(NULL);
 	arrange(NULL);
-	pending_theme = 0;
 }
 
 static int
@@ -3695,9 +3696,9 @@ createscheme(size_t index, int light, int use_loaded_palette)
 	};
 
 	if (index == SchemeSwitcher) {
-		if (validcolor(switcherfgcolor) && !switcherfgcolor[7])
+		if (switcherfgcolor[0])
 			palette[ColFg] = switcherfgcolor;
-		if (validcolor(switcherbgcolor) && !switcherbgcolor[7])
+		if (switcherbgcolor[0])
 			palette[ColBg] = switcherbgcolor;
 		palette[ColBorder] = palette[ColFg];
 	}
@@ -3830,16 +3831,18 @@ load_xresources(void)
 	ResourcePref *p;
 	char oldborder[sizeof selbordercolor], oldstatus[sizeof statuspalette];
 	unsigned int oldwidth = borderpx;
-	int changed = 0, new_sysmon = -1, sysmon;
+	int changed = 0, value, configured, *previous;
 
 	if (display && (resm = XResourceManagerString(display)))
 		db = XrmGetStringDatabase(resm);
 	for (p = resources; p < resources + LENGTH(resources); p++) {
 		unsigned char old[p->size];
 
-		if (p->dst == &showsysmon) {
-			if (db && resource_load(db, p->name, p->type, &sysmon, sizeof sysmon))
-				new_sysmon = sysmon != 0;
+		if (p->dst == &showsysmon || p->dst == &smartgaps) {
+			previous = p->dst == &showsysmon ? &configuredshowsysmon : &configuredsmartgaps;
+			configured = db && resource_load(db, p->name, p->type, &value, sizeof value) ? value != 0 : -1;
+			changed |= *previous != configured;
+			*previous = configured;
 			continue;
 		}
 		memcpy(old, p->dst, p->size);
@@ -3853,9 +3856,6 @@ load_xresources(void)
 		changed |= p->type == STRING ? strcmp((char *)old, p->dst) != 0
 		                            : memcmp(old, p->dst, p->size) != 0;
 	}
-	changed |= configuredshowsysmon != new_sysmon;
-	configuredshowsysmon = new_sysmon;
-
 	strcpy(oldborder, selbordercolor);
 	memcpy(oldstatus, statuspalette, sizeof oldstatus);
 	(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
@@ -3867,6 +3867,10 @@ load_xresources(void)
 	if (db) {
 		resource_load(db, "switcherfgcolor", STRING, switcherfgcolor, sizeof switcherfgcolor);
 		resource_load(db, "switcherbgcolor", STRING, switcherbgcolor, sizeof switcherbgcolor);
+		if (!validcolor(switcherfgcolor) || switcherfgcolor[7])
+			switcherfgcolor[0] = '\0';
+		if (!validcolor(switcherbgcolor) || switcherbgcolor[7])
+			switcherbgcolor[0] = '\0';
 		XrmDestroyDatabase(db);
 	}
 	if (display)
@@ -3893,6 +3897,8 @@ main(int argc, char *argv[])
 	load_xresources();
 	if (configuredshowsysmon >= 0)
 		showsysmon = configuredshowsysmon;
+	if (configuredsmartgaps >= 0)
+		smartgaps = configuredsmartgaps;
 	setup();
 #ifdef __OpenBSD__
 	if (pledge("stdio rpath proc exec", NULL) == -1)
