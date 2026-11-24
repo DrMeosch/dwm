@@ -82,6 +82,29 @@ while 8-bit data holding the bytes of that atom, or a single byte, does not.
 `_NET_CLIENT_INFO` set before a window maps is likewise read only as two
 32-bit CARDINALs: 8-bit data leaves the window shown on the current tags, tags
 outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
+On a fresh 1200x800 single-monitor display, `x11 titles` checks actual bar
+pixels for unnamed clients, live `WM_NAME` replacements, UTF-8 `_NET_WM_NAME`
+precedence on mapping and during updates, lower-priority title updates and
+deletions, empty-property fallback, deletion fallback and recovery through
+replacement. Reference images are captured from the same client with known
+legacy titles, including UTF-8 bytes, and must visibly differ from the unnamed
+client and from each other. Comparisons use the left half of the bar to exclude
+unrelated status and sampler updates. Marked tiled ConfigureRequest replies
+order captures after dwm processes the property events; the pointer stays on
+the bar, and each comparison also checks that keyboard focus is preserved.
+A focus-away/back cycle checks that fallback survives a bar redraw.
+
+Deleting `_NET_WM_NAME` must show the remaining `WM_NAME`, and deleting the
+only `WM_NAME` must show the same placeholder as an initially unnamed client.
+These currently fail because `propertynotify()` ignores PropertyDelete:
+the visible title remains stale, even after a focus-away/back redraw. All three
+failing pixel comparisons remain enabled without a production fix or an
+expected-failure mask. Empty properties and live replacements recover the
+correct title. Run `x11 titles` against an isolated `DWM_TEST` dwm with no other
+clients if earlier XTEST switcher checks prevent `x11.sh` from reaching it.
+This fixture does not cover long-title truncation or alternate text encodings
+such as COMPOUND_TEXT.
+
 On a fresh single-monitor display, `x11 focus-hints` covers eight combinations
 of absent `WM_HINTS`, missing `InputHint`, explicit true/false input hints, and
 presence/absence of `WM_TAKE_FOCUS`. It checks focus on mapping and after
@@ -141,9 +164,9 @@ window stays constrained to 140x100 instead of 217x173 because
 The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
-reaching it. The script runs focus-hints, size-hints and fullscreen fixtures
-even if one fails, then exits nonzero before later integration checks if any
-failed.
+reaching it. The script runs titles, focus-hints, size-hints and fullscreen
+fixtures even if one fails, then exits nonzero before later integration checks
+if any failed.
 
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a

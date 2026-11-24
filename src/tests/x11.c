@@ -1198,6 +1198,160 @@ check_unmanage(Display *dpy, Window root)
 	CHECK(wait_clients(dpy, root, NULL, 0, root), "last client removal did not clear the list and focus");
 }
 
+/* Only capture the left half: sampler/status updates on the right are unrelated. */
+static XImage *
+title_image(Display *dpy, Window root, Window barrier, const char *step)
+{
+	XWindowAttributes wa;
+	Window bar;
+	XImage *image = NULL;
+
+	focus_roundtrip(dpy, barrier, step);
+	bar = find_bar(dpy, root, &wa);
+	if (bar != None)
+		image = XGetImage(dpy, bar, 0, 0, wa.width / 2, wa.height, AllPlanes, ZPixmap);
+	CHECK(image != NULL, "%s: could not capture the title bar", step);
+	return image;
+}
+
+static int
+image_difference(XImage *a, XImage *b)
+{
+	int x, y, different = 0;
+
+	if (!a || !b || a->width != b->width || a->height != b->height)
+		return -1;
+	for (y = 0; y < a->height; y++)
+		for (x = 0; x < a->width; x++)
+			different += XGetPixel(a, x, y) != XGetPixel(b, x, y);
+	return different;
+}
+
+static void
+check_title_image(Display *dpy, Window root, Window win, Window barrier,
+                  XImage *expected, const char *step)
+{
+	XImage *actual = title_image(dpy, root, barrier, step);
+	Window focused;
+	int revert, different = image_difference(actual, expected);
+
+	CHECK(different == 0, "%s: title bar differs from the expected title by %d pixels",
+	      step, different);
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == win, "%s: title update changed keyboard focus", step);
+	if (actual)
+		XDestroyImage(actual);
+}
+
+static void
+check_title_absent(Display *dpy, Window win, Atom atom, const char *step)
+{
+	Atom type;
+	int format;
+	unsigned long count, after;
+	unsigned char *data = NULL;
+
+	CHECK(XGetWindowProperty(dpy, win, atom, 0, 0, False, AnyPropertyType,
+	                         &type, &format, &count, &after, &data) == Success
+	      && type == None, "%s: deleted title property is still present", step);
+	if (data)
+		XFree(data);
+}
+
+static void
+check_title_updates(Display *dpy, Window root)
+{
+	const char *names[] = { "legacy-name", "caf\303\251-title", "updated-title" };
+	const char *steps[] = { "legacy title", "UTF-8 title reference", "updated title reference" };
+	Atom netname = XInternAtom(dpy, "_NET_WM_NAME", False);
+	Atom utf8 = XInternAtom(dpy, "UTF8_STRING", False);
+	Window barrier, win, pair[2];
+	XImage *missing, *reference[3];
+	int i, j;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "title barrier was not managed");
+	win = XCreateSimpleWindow(dpy, root, 80, 80, 200, 150, 0, 0, 0);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	pair[0] = barrier; pair[1] = win;
+	CHECK(wait_clients(dpy, root, pair, 2, win), "title target was not managed");
+	missing = title_image(dpy, root, barrier, "initially absent titles");
+	for (i = 0; i < 3; i++) {
+		XStoreName(dpy, win, names[i]);
+		reference[i] = title_image(dpy, root, barrier, steps[i]);
+		CHECK(image_difference(reference[i], missing) > 0,
+		      "%s: visible title did not differ from the unnamed client", steps[i]);
+		for (j = 0; j < i; j++)
+			CHECK(image_difference(reference[i], reference[j]) > 0,
+			      "%s: distinct titles rendered identically", steps[i]);
+	}
+
+	XStoreName(dpy, win, names[0]);
+	check_title_image(dpy, root, win, barrier, reference[0], "live WM_NAME replacement");
+	XChangeProperty(dpy, win, netname, utf8, 8, PropModeReplace,
+	                (const unsigned char *)names[1], strlen(names[1]));
+	check_title_image(dpy, root, win, barrier, reference[1], "UTF-8 _NET_WM_NAME takes precedence");
+	XStoreName(dpy, win, names[2]);
+	check_title_image(dpy, root, win, barrier, reference[1], "lower-priority WM_NAME update");
+	XDeleteProperty(dpy, win, XA_WM_NAME);
+	check_title_image(dpy, root, win, barrier, reference[1], "lower-priority WM_NAME deletion");
+	check_title_absent(dpy, win, XA_WM_NAME, "lower-priority WM_NAME deletion");
+	XStoreName(dpy, win, names[2]);
+	check_title_image(dpy, root, win, barrier, reference[1], "lower-priority WM_NAME reinstallation");
+	XChangeProperty(dpy, win, netname, utf8, 8, PropModeReplace,
+	                (const unsigned char *)names[0], strlen(names[0]));
+	check_title_image(dpy, root, win, barrier, reference[0], "live _NET_WM_NAME replacement");
+	XChangeProperty(dpy, win, netname, utf8, 8, PropModeReplace, NULL, 0);
+	check_title_image(dpy, root, win, barrier, reference[2], "empty _NET_WM_NAME falls back to WM_NAME");
+
+	XChangeProperty(dpy, win, netname, utf8, 8, PropModeReplace,
+	                (const unsigned char *)names[1], strlen(names[1]));
+	check_title_image(dpy, root, win, barrier, reference[1], "reinstalled UTF-8 title");
+	XDeleteProperty(dpy, win, netname);
+	check_title_image(dpy, root, win, barrier, reference[2], "_NET_WM_NAME deletion falls back to WM_NAME");
+	check_title_absent(dpy, win, netname, "_NET_WM_NAME deletion");
+	focus_next(dpy, root, barrier, "focus away after title deletion");
+	focus_next(dpy, root, barrier, "focus back after title deletion");
+	check_title_image(dpy, root, win, barrier, reference[2], "fallback survives focus redraw");
+
+	/* A real replacement recovers the cache before testing the next deletion. */
+	XStoreName(dpy, win, names[0]);
+	check_title_image(dpy, root, win, barrier, reference[0], "WM_NAME replacement after deletion");
+	XDeleteProperty(dpy, win, XA_WM_NAME);
+	check_title_image(dpy, root, win, barrier, missing, "WM_NAME deletion restores unnamed title");
+	check_title_absent(dpy, win, XA_WM_NAME, "WM_NAME deletion");
+	XStoreName(dpy, win, "");
+	check_title_image(dpy, root, win, barrier, missing, "empty WM_NAME restores unnamed title");
+
+	XDestroyWindow(dpy, win);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "title target did not clean up");
+	/* Mapping must use the same precedence as live updates. */
+	win = XCreateSimpleWindow(dpy, root, 80, 80, 200, 150, 0, 0, 0);
+	XStoreName(dpy, win, names[0]);
+	XChangeProperty(dpy, win, netname, utf8, 8, PropModeReplace,
+	                (const unsigned char *)names[1], strlen(names[1]));
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	pair[1] = win;
+	CHECK(wait_clients(dpy, root, pair, 2, win), "pre-named title target was not managed");
+	check_title_image(dpy, root, win, barrier, reference[1], "UTF-8 title precedence on mapping");
+	XDestroyWindow(dpy, win);
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "title fixture did not clean up its clients");
+	if (missing)
+		XDestroyImage(missing);
+	for (i = 0; i < 3; i++)
+		if (reference[i])
+			XDestroyImage(reference[i]);
+}
+
 static void
 check_trading_rule(Display *dpy, Window root)
 {
@@ -1273,6 +1427,15 @@ main(int argc, char *argv[])
 		check_atom_format(dpy, root);
 		check_client_info(dpy, root);
 		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 titles: rendered title precedence, live updates and property deletion */
+	if (argc == 2 && !strcmp(argv[1], "titles")) {
+		check_title_updates(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 live title checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 

@@ -165,6 +165,7 @@ dwm_pid=$!
 sleep 0.2
 # These fixtures clean up their clients; report all failures before stopping.
 state_failed=0
+"$tmp/x11" titles || state_failed=1
 "$tmp/x11" focus-hints || state_failed=1
 "$tmp/x11" size-hints || state_failed=1
 "$tmp/x11" fullscreen || state_failed=1
