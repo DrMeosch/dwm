@@ -757,6 +757,29 @@ check_unmanage(Display *dpy, Window root)
 	CHECK(wait_clients(dpy, root, NULL, 0, root), "last client removal did not clear the list and focus");
 }
 
+static void
+check_trading_rule(Display *dpy, Window root)
+{
+	Window win;
+	XClassHint hint = { "integration", "ibcalpha-ibc-IbcTws" };
+	XWindowAttributes attributes = {0};
+
+	win = XCreateSimpleWindow(dpy, root, 40, 40, 300, 200, 0, 0, 0);
+	XSetClassHint(dpy, win, &hint);
+	XSelectInput(dpy, win, StructureNotifyMask);
+	XMapWindow(dpy, win);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &win, 1, win), "trading window did not inherit the current tag and focus");
+	XResizeWindow(dpy, win, 137, 119);
+	XFlush(dpy);
+	CHECK(wait_sized_configure(dpy, win, 137, 119), "trading window did not accept a floating resize");
+	CHECK(XGetWindowAttributes(dpy, win, &attributes) && attributes.width == 137 && attributes.height == 119,
+	      "trading window was tiled instead of floating");
+	XDestroyWindow(dpy, win);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "trading window removal did not clear the client list and focus");
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -815,6 +838,7 @@ main(int argc, char *argv[])
 	/* x11 unmanage: ordinary unmap and destroy update the layout, focus and client list */
 	if (argc == 2 && !strcmp(argv[1], "unmanage")) {
 		check_unmanage(dpy, root);
+		check_trading_rule(dpy, root);
 		XCloseDisplay(dpy);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}

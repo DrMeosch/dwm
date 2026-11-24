@@ -54,8 +54,10 @@ repeatedly and checks focus; a terminal stub prevents accidental desktop launche
 if scratchpad lookup fails. If the files are unavailable, this input regression
 check is reported as skipped. A separate Xlib check unmaps, remaps and destroys
 tiled clients, checking that removal updates the client list, focus and remaining
-window geometry, including when the last client is removed. It does not exercise
-removal of a swallowed client. With the XTEST files and `pidof`, and
+window geometry, including when the last client is removed. It also verifies
+that an `ibcalpha-ibc-IbcTws` window inherits the current tag and focus, accepts
+a floating resize, and leaves no client or focus behind when destroyed. It does
+not exercise removal of a swallowed client. With the XTEST files and `pidof`, and
 no real dwmblocks running, a fake `dwmblocks` logs the signals it receives
 while XTEST clicks the status of the bar: each click must reach the block under
 the pointer, pixel-exact against the drawn status, including when the status

@@ -98,9 +98,6 @@ static const Rule rules[] = {
 	/* class    instance      title       	 tags mask    isfloating   isterminal  noswallow  monitor */
   /* mine */
   { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
   /* from larbs */
 	{ "Gimp",     NULL,       NULL,          1 << 8,      0,           0,          0,         -1 },
 	{ TERMCLASS,  NULL,       NULL,       	 0,           0,           1,          0,         -1 },
