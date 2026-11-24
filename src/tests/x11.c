@@ -1001,6 +1001,105 @@ focus_roundtrip(Display *dpy, Window barrier, const char *step)
 	CHECK(replied, "%s: dwm did not complete the focus round trip", step);
 }
 
+/* _NET_WM_STATE is an unordered ATOM list, not just its first element. */
+static void
+check_fullscreen_properties(Display *dpy, Window root)
+{
+	static const struct {
+		const char *name;
+		int count, format, cardinal, full;
+		int atoms[10]; /* 1 is fullscreen; 0 is an unrelated state. */
+	} cases[] = {
+		{ "absent property", -1, 32, 0, 0, {0} },
+		{ "empty ATOM list", 0, 32, 0, 0, {0} },
+		{ "unrelated states only", 2, 32, 0, 0, {0, 0} },
+		{ "fullscreen alone", 1, 32, 0, 1, {1} },
+		{ "fullscreen first", 2, 32, 0, 1, {1, 0} },
+		{ "fullscreen last", 2, 32, 0, 1, {0, 1} },
+		{ "fullscreen middle", 3, 32, 0, 1, {0, 1, 0} },
+		{ "fullscreen beyond initial read", 10, 32, 0, 1, {0, 0, 0, 0, 0, 0, 0, 0, 0, 1} },
+		{ "duplicate fullscreen", 2, 32, 0, 1, {1, 1} },
+		{ "wrong CARDINAL type", 1, 32, 1, 0, {1} },
+		{ "wrong 8-bit format", 1, 8, 0, 0, {1} },
+		{ "wrong 16-bit format", 1, 16, 0, 0, {1} },
+	};
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	Atom unrelated = XInternAtom(dpy, "_DWM_TEST_UNRELATED_STATE", False);
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Atom atoms[10];
+	unsigned char byte = (unsigned char)fullscreen;
+	unsigned short word = (unsigned short)fullscreen;
+	const unsigned char *data;
+	Window barrier, win, pair[2], focused;
+	XWindowAttributes wa = {0}, resized = {0};
+	int floating, j, revert, full;
+	size_t i;
+	char step[128];
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	XSync(dpy, False);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "fullscreen-properties barrier was not managed");
+	for (floating = 0; floating < 2; floating++) {
+		for (i = 0; i < sizeof cases / sizeof cases[0]; i++) {
+			snprintf(step, sizeof step, "%s %s", floating ? "floating" : "tiled", cases[i].name);
+			win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+			XStoreName(dpy, win, step);
+			if (floating)
+				XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+				                (unsigned char *)&dialog, 1);
+			for (j = 0; j < cases[i].count; j++)
+				atoms[j] = cases[i].atoms[j] ? fullscreen : unrelated;
+			data = cases[i].format == 8 ? &byte : cases[i].format == 16
+			     ? (unsigned char *)&word : (unsigned char *)atoms;
+			if (cases[i].count >= 0)
+				XChangeProperty(dpy, win, state, cases[i].cardinal ? XA_CARDINAL : XA_ATOM,
+				                cases[i].format, PropModeReplace, data, cases[i].count);
+			XMapWindow(dpy, win);
+			XFlush(dpy);
+			pair[0] = barrier; pair[1] = win;
+			CHECK(wait_clients(dpy, root, pair, 2, win), "%s: target was not managed and focused", step);
+			focus_roundtrip(dpy, barrier, step);
+			CHECK(XGetWindowAttributes(dpy, win, &wa), "%s: cannot inspect mapped geometry", step);
+			full = wa.x == 0 && wa.y == 0 && wa.border_width == 0
+			    && wa.width == DisplayWidth(dpy, DefaultScreen(dpy))
+			    && wa.height == DisplayHeight(dpy, DefaultScreen(dpy));
+			CHECK(full == cases[i].full,
+			      "%s: initial fullscreen geometry is %d, expected %d (%d,%d %dx%d border %d)",
+			      step, full, cases[i].full, wa.x, wa.y, wa.width, wa.height, wa.border_width);
+			if (!cases[i].full && floating)
+				CHECK(wa.width == 300 && wa.height == 200 && wa.border_width > 0,
+				      "%s: normal dialog lost its requested size or border", step);
+			XResizeWindow(dpy, win, 137, 119);
+			focus_roundtrip(dpy, barrier, step);
+			CHECK(XGetWindowAttributes(dpy, win, &resized), "%s: cannot inspect resized geometry", step);
+			if (!cases[i].full && floating)
+				CHECK(resized.width == 137 && resized.height == 119,
+				      "%s: normal dialog did not accept its resize", step);
+			else
+				CHECK(resized.x == wa.x && resized.y == wa.y && resized.width == wa.width
+				      && resized.height == wa.height && resized.border_width == wa.border_width,
+				      "%s: %s client accepted a resize (%d,%d %dx%d border %d -> %d,%d %dx%d border %d)",
+				      step, cases[i].full ? "fullscreen" : "tiled",
+				      wa.x, wa.y, wa.width, wa.height, wa.border_width,
+				      resized.x, resized.y, resized.width, resized.height, resized.border_width);
+			XGetInputFocus(dpy, &focused, &revert);
+			CHECK(focused == win, "%s: resize changed focus", step);
+			XDestroyWindow(dpy, win);
+			XFlush(dpy);
+			CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "%s: target was not removed", step);
+		}
+	}
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "fullscreen-properties fixture did not clean up its clients");
+}
+
 static void
 focus_next(Display *dpy, Window root, Window barrier, const char *step)
 {
@@ -1454,6 +1553,15 @@ main(int argc, char *argv[])
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 live size-hints checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 fullscreen-properties: initial state lists and format/type guards */
+	if (argc == 2 && !strcmp(argv[1], "fullscreen-properties")) {
+		check_fullscreen_properties(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 initial fullscreen-property checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 

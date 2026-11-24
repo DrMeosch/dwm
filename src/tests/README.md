@@ -82,6 +82,33 @@ while 8-bit data holding the bytes of that atom, or a single byte, does not.
 `_NET_CLIENT_INFO` set before a window maps is likewise read only as two
 32-bit CARDINALs: 8-bit data leaves the window shown on the current tags, tags
 outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
+
+On a fresh single-monitor display, `x11 fullscreen-properties` maps tiled
+and dialog-style floating clients with twelve initial `_NET_WM_STATE` cases:
+absent and empty properties, unrelated states, fullscreen alone, first, middle,
+last, beyond the initial eight-atom read on 64-bit systems, duplicate fullscreen,
+a wrong CARDINAL type, and wrong 8-bit and 16-bit formats. It checks exact
+fullscreen screen coverage and border removal, normal dialog sizes, keyboard
+focus, and application resize behavior. A tiled client with uniquely marked
+ConfigureRequest replies synchronizes every assertion, and the pointer stays
+on the bar. Every target is destroyed and its removal checked before the next
+case; the fixture also checks cleanup of the last client.
+
+Two defects currently produce fifteen failures. Fullscreen after an unrelated
+state is not recognized in either kind of client: `getatomprop()` returns only
+the first atom, and `updatewindowtype()` does not scan the state list. In addition,
+even recognized fullscreen clients accept a 137x119 application resize while
+keeping their zero border: `configurerequest()` handles them as ordinary floating
+clients without a fullscreen guard. Three resize failures for floating clients
+with fullscreen later in the list are consequences of the first defect. Absent,
+empty, unrelated, wrong-type and wrong-format cases all pass, as do fullscreen
+alone, first and duplicate cases before resizing. These genuine failures remain
+enabled without production changes or expected-failure masks. Run
+`x11 fullscreen-properties` against an isolated `DWM_TEST` dwm with no other
+clients if earlier XTEST switcher checks block the main script. This fixture
+does not check preservation of unrelated states or initial-fullscreen exit
+restoration.
+
 On a fresh 1200x800 single-monitor display, `x11 titles` checks actual bar
 pixels for unnamed clients, live `WM_NAME` replacements, UTF-8 `_NET_WM_NAME`
 precedence on mapping and during updates, lower-priority title updates and
@@ -164,9 +191,9 @@ window stays constrained to 140x100 instead of 217x173 because
 The failure remains enabled without a production fix or expected-failure mask.
 Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
-reaching it. The script runs titles, focus-hints, size-hints and fullscreen
-fixtures even if one fails, then exits nonzero before later integration checks
-if any failed.
+reaching it. The script runs fullscreen-properties, titles, focus-hints,
+size-hints and fullscreen fixtures even if one fails, then exits nonzero before
+later integration checks if any failed.
 
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
