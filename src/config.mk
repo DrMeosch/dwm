@@ -23,7 +23,7 @@ FREETYPEINC = /usr/include/freetype2
 
 # includes and libs
 INCS = -I${X11INC} -I${FREETYPEINC}
-LIBS = -L${X11LIB} -lX11 ${XINERAMALIBS} ${FREETYPELIBS} -lX11-xcb -lxcb -lxcb-res
+LIBS = -L${X11LIB} -lX11 -lXi -lXext ${XINERAMALIBS} ${FREETYPELIBS} -lX11-xcb -lxcb -lxcb-res
 
 # Optional compiler optimisations may create smaller binaries and
 # faster code, but increases compile time.

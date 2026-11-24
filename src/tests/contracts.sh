@@ -109,11 +109,11 @@ fi
 $cc -std=c99 -pedantic -Wall -Wno-unused-function -Wno-deprecated-declarations \
 	-I"$root/src" -D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L \
 	-DXINERAMA -DVERSION=\"$version\" \
-	$(pkg-config --cflags fontconfig xft x11 x11-xcb xinerama xcb xcb-res 2>/dev/null || true) \
+	$(pkg-config --cflags fontconfig xft x11 x11-xcb xext xi xinerama xcb xcb-res 2>/dev/null || true) \
 	"$root/src/dwm.c" "$root/src/drw.c" "$root/src/borderwidth.c" \
 	"$root/src/selborder.c" \
 	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
-	$(pkg-config --libs x11 x11-xcb xinerama xft fontconfig xcb xcb-res 2>/dev/null || true) \
+	$(pkg-config --libs x11 x11-xcb xext xi xinerama xft fontconfig xcb xcb-res 2>/dev/null || true) \
 	-lm -o "$tmp/dwm"
 if "$tmp/dwm" -v >"$tmp/version.out" 2>&1; then
 	exit 1

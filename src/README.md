@@ -6,7 +6,7 @@ Based on [Luke Smith's build](https://github.com/LukeSmithxyz/dwm) of [dwm](http
 
 > What are the bindings?
 
-This is suckless, mmmbud, the source code is the documentation! Check out [config.h](config.h).
+See the keyboard commands in [dwm(1)](dwm.1) and the configurable bindings in [config.h](config.h).
 
 ## Patches and features
 

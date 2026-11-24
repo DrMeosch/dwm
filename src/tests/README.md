@@ -1,8 +1,8 @@
 # Regression checks
 
-From the repository root, run `make test` with GCC or Clang, C99 support,
-`pkg-config`, the configured X11, Xft, fontconfig, XCB, and Xinerama development
-headers/libraries, and the system math library available. The test target
+From the repository root, run `make test` with GCC or Clang in C99 mode,
+`jq`, `pkg-config`, the development headers and libraries configured in
+[`config.mk`](../config.mk), and the system math library. The test target
 compiles temporary executables from the production sources. It covers layout
 geometry and gap branches, including exact bottom-stack and centered-floating
 master geometry in portrait and landscape with a floating client, core
@@ -85,6 +85,100 @@ outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.
+
+The XTEST switcher checks use a private Xvfb with two different-sized Xinerama
+heads. The appearance check opens the panel with a synthetic Xresources palette,
+then reloads it with SIGUSR2 while the panel is still open. It checks actual
+border and row pixels, the opacity CARDINAL at explicit settings including 100%,
+and hint removal for missing, invalid, and empty settings. Empty color overrides
+restore the normal foreground, background, and border. The check also verifies
+that app opacity hints and keyboard focus on the client's child window survive
+each reload. It verifies both bars' opacity hints in both palettes with a valid
+override and with missing or unsupported overrides. The check retries a switcher
+style after a failed theme reload with the bar override unchanged. It verifies
+the reopened panel and a subsequent reset, and checks that theme recovery
+restores both client borders from 3 to 2 pixels and repaints the selected border
+with the recovery color.
+
+With the panel closed, the check uses Mod+F5 to reload only switcher opacity.
+It verifies that the visible scratchpad keeps its moved geometry and child
+focus and that the next panel uses the new opacity hint. Before the next
+resource reload, it runs a layout pass to verify the tile stays gapless and
+toggles sysmon once to verify it publishes off. Sending SIGUSR2 without new
+resources, reapplying the current switcher opacity, and adding or clearing the
+bar override all reapply configured sysmon and refresh the scratchpad's focus
+and layout. The check reads the opacity CARDINAL on both live bars and the
+reopened switcher after each ordinary reload, including the transition from an
+80% switcher with default bars to 90% on all three windows.
+
+The navigation check verifies panel placement, row counts, highlight order and
+wrapping, and visible and hidden activation. It measures row counts against the
+one-window panel for shown, hidden scratchpad-only, and hidden mixed-tag
+scratchpads. See the [Ctrl+Tab entry in `dwm(1)`](../dwm.1) for controls.
+Highlight pixels are checked as j and k wrap while the original client retains
+focus.
+The Tab check enables auto-repeat and observes a repeat at the focused client
+before opening the panel. It checks the initial highlight, per-tap movement
+and wrapping, repeat suppression, and focus before and after Ctrl release.
+New clients probe the ordinary tags; two scratchpad-only windows on each monitor
+probe the scratchpad bits. The view, focus, and geometry checks cover monitor
+isolation and compare hidden activation against recorded monocle geometry on
+one destination and tiled geometry on the other. Queued Ctrl+Tab and j/k
+sequences end with a printable key that must reach the chosen directly focusable
+client. A plain resize must change a floating client's geometry without losing
+keyboard focus. Move and resize drags must finish when the opener arrives
+before button release. On an empty monitor, holding the opener must show no
+panel and leave the keyboard available for an application grab. The panel must
+stay above an overlapping floating client after restacking, then close if that
+client gains the fullscreen lock. A synthetic independent master keyboard
+checks that the switcher does not reserve Ctrl+Tab on that device or block
+Super+j while the panel is open.
+With two visible windows, latched Ctrl must leave focus and typing at the origin.
+The check also tests a focus round trip from root, an unmanaged popup, or a
+client child. It covers both Ctrl keys, Escape with repeat, stale targets, unrelated
+updates on the other monitor, an application keyboard grab, and Ctrl+j/k delivery
+after dismissal. After dwm has handled the opener's Tab release, the fixture
+queues removal of a listed window followed by Tab and checks that the panel
+stays closed and the next printable key reaches the original client. A second
+XKB group relocates Tab, j, k and Escape. The fixture checks that the alternate
+keys work and that an application can both register and receive the Ctrl
+shortcut on the inactive group's Tab keycode.
+If two keycodes map to Tab, a conflicting Ctrl+CapsLock grab on the first must not
+prevent plain Ctrl+Tab from opening the panel on the second. With Num Lock
+removed from the test keymap, plain Ctrl+Tab must still open the panel and
+Ctrl+AltGr+Tab must reach the application.
+
+Xvfb's overlapping heads leave the side-by-side checks unexercised. Build the
+`DWM_TEST` dwm and `input` binaries using the compiler commands in
+[`x11.sh`](x11.sh). Use the script's terminal stub and start the test dwm on a
+fresh, isolated X server with exactly two Xinerama heads, head 0 to the left of
+head 1, and the pointer on head 0. Run `input switcher` on that display. The
+check distinguishes motion in the same root-window gap from crossing between
+heads, then reopens on the newly selected monitor. Moving from A's root gap
+into B's top bar with the panel closed must leave A selected.
+With the panel open, crossing directly between the two top bars in either
+direction must close it before Ctrl is released. A queued crossing from a
+client on A into B's root gap and back to A must cancel without activating a
+row. A middle click queued in B's gap must toggle only B's bar, even if the pointer
+has already returned to A. Closing an unlisted scratchpad while the pointer
+crosses into a B client that consumes motion must dismiss the panel before
+Ctrl release without changing focus or revealing the highlighted hidden tag.
+With Ctrl+Tab queued between the scratchpad removal and crossing, the panel
+must map and then close while Ctrl is still down. Without an opener, the same
+restack must leave focus and monitor selection on A when B consumes motion.
+If the last root motion was in A's gap and a B client consumed motion on entry,
+moving from that client to B's root gap during restack must still select B.
+With the pointer initially on B and A selected by keyboard, a suppressed enter
+into A before the opener and a return to B after it must cancel without revealing
+A's hidden row. If the suppressed enter into B happens before the opener,
+subsequent motion from a B client into B's gap must leave A's panel open.
+During restack the fixture checks both delivered event orders: a crossing
+before the last Ctrl release cancels, while a release delivered first reveals
+and focuses the hidden target. For release-first, the fixture waits for
+logical Tab release and a subsequent dwm configure reply, then checks that
+Ctrl is logically up before moving the pointer. Neither fixture exercises
+physical hotplug.
+
 Autostart is disabled only in the `dwm` test build, so no configured desktop
 command is launched.
 
@@ -146,6 +240,8 @@ theme. After each run `xrdb -query` must show `dmenu.color0` and
 `dmenu.color4` equal to `dwm.color0` and `dwm.color4`, so a dmenu started later
 gets the theme colors. With every step succeeding, each script must exit zero,
 stay silent and send the low-urgency "Switched to <theme> theme" notification.
+The test seeds conflicting opacity resources and checks that each script
+replaces them with the [documented preset values](../../README.md#theme-switching).
 
 The `sysmon` check covers the contract between dwm and the `dwmsysmon`
 sampler without X: parsing the CPU line of `/proc/stat` (truncated, signed,

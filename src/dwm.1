@@ -124,10 +124,10 @@ Toggle floating layout.
 Sets Fibonacci spiral/dwinde layouts.
 .TP
 .B Super\-u/U
-Sets centered master layout.
+Sets deck/monocle layouts.
 .TP
 .B Super\-i/I
-Sets centered master or floating master layouts.
+Sets centered master/centered floating master layouts.
 .TP
 .B Super\-space
 Zooms/cycles focused window to/from master area.
@@ -135,17 +135,49 @@ Zooms/cycles focused window to/from master area.
 .B Super\-j/k
 Focus next/previous window.
 .TP
+.B Ctrl\-Tab
+List windows across tags on the selected monitor. Focusing a window moves it
+to the front of the list. Newly managed windows can appear near the front
+before they receive focus.
+Each row shows one managed window's title and tags. Visible windows, including
+sticky windows and shown scratchpads, are eligible. Hidden windows, including
+hidden scratchpads, need an ordinary tag. The same rules apply to managed
+dialogs. The hidden side of a swallowed pair is omitted. The highlight
+starts on the first row, skipping the focused window if another row is available.
+No panel opens if the list is empty, the focused window has the fullscreen
+focus lock, or dwm cannot grab the keyboard.
+.IP
+Keep Ctrl held and tap Tab again to move the highlight down one row. Tab uses
+the same modifiers as the opening shortcut and ignores key repeat. Press j to
+move down or k to move up. The highlight wraps at either end, and navigation
+leaves focus unchanged. Release the last held Ctrl key to activate the
+highlighted window, or press Escape to cancel. A change in focus or selected
+monitor cancels a pending switch, as does the removal of a listed window.
+Root window motion and window crossing events can also cancel the switch when
+they report a move onto a monitor other than the panel's.
+.IP
+Selecting a visible window leaves the current view unchanged. For a hidden
+window, dwm shows only its lowest-numbered ordinary tag on its own monitor.
+Neither operation retags or moves the window or changes another monitor's
+view, layout or remembered selection.
+.IP
+Ctrl\-Tab is the switcher's only global binding. It uses the active XKB group's
+Tab key on the core keyboard. When grabbed, it takes precedence over application
+shortcuts such as switching tabs. Ctrl\-j and Ctrl\-k remain available to
+applications while the panel is closed. The switcher requires XInput 2, XKB, and
+at least Shape 1.1 on the X server. Without them, dwm runs without the switcher.
+.TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.
 .TP
 .B Super\-o/O
 Increase/decrease number of windows in master area.
 .TP
-.B Super\-l
-Increase master area size.
+.B Super\-h/l
+Focus the previous/next monitor.
 .TP
-.B Super\-h
-Decrease master area size.
+.B Super\-Shift\-h/l
+Decrease/increase master area size.
 .TP
 .B Super\-Shift\-space
 Toggle focused window between tiled and floating state.
@@ -211,11 +243,14 @@ Quit dwm.
 Menu to refresh/quit/reboot/shutdown.
 .SS Mouse commands
 .TP
+.B Middle click on the root window
+Toggle the bar on the monitor under the click.
+.TP
 .B Super\-Left click
 Move focused window while dragging. Tiled windows will be toggled to the floating state.
 .TP
 .B Super\-Middle click
-Toggles focused window between floating and tiled state.
+Reset gaps to their configured sizes when clicking a client window.
 .TP
 .B Super\-Right click
 Resize focused window while dragging. Tiled windows will be toggled to the floating state.
@@ -239,8 +274,9 @@ in
 A temperature, fan or GPU the machine does not report is not shown at all.
 It is off by default. Super\-Shift\-b toggles it, and the Xresources
 .B dwm.showsysmon
-(0 or 1) sets it at start\-up and on every SIGUSR2 reload; a key press is kept
-across a reload unless that resource is set.
+(0 or 1) sets it at start\-up. See
+.B SIGUSR2
+for reload behavior.
 .PP
 dwm does not measure anything. The separate
 .B dwmsysmon
@@ -415,8 +451,9 @@ code. This keeps it fast, secure and simple.
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors and border width from Xresources without changing the selected tags.
-Merge all four values for the chosen theme before requesting the reload.
+Reload colors, border width, bar opacity, and window switcher appearance from
+Xresources without changing the selected tags. To change the bar palette and
+client borders directly, merge their Xresources values before reloading.
 dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
 the status palette dwm.color0 to dwm.color15 does the same,
 and the selected border and width reset to their fallbacks, so missing theme
@@ -425,12 +462,9 @@ drawn through the same palette on every monitor. In the light palette, the
 status area uses the selected pale-pink background; normal bar areas use a
 lighter pink, and selected tags and titles use the selected background. In the
 dark palette, all bar backgrounds follow dwm.color0 and dwm.color4 supplies
-text only. The bar requests 92% opacity in the light palette through
-_NET_WM_WINDOW_OPACITY, which requires an existing X11 compositor honoring
-that property on override-redirect windows. The dark palette removes that
-property and restores the compositor's default handling.
+text only.
 .PP
-For the light palette:
+Merge these values to set the light palette and client borders.
 .nf
 printf '%s\en' \\
   'dwm.color0: #f8f8f2' \\
@@ -440,7 +474,7 @@ printf '%s\en' \\
 pkill -USR2 -x dwm
 .fi
 .PP
-For the dark palette:
+Merge these values to set the dark palette and client borders.
 .nf
 printf '%s\en' \\
   'dwm.color0: #282a36' \\
@@ -453,10 +487,6 @@ pkill -USR2 -x dwm
 The focused client border uses dwm.selbordercolor. Both palettes use the same
 muted pink accent. If dwm.selbordercolor is absent, the selected border
 uses the configured fallback #ffb86c. dwm.color8 does not control it.
-.PP
-The light palette also sets existing client borders to two pixels; the dark
-palette uses one pixel. If dwm.borderpx is missing or invalid, dwm uses the
-configured fallback, which is two pixels by default.
 .TP
 .B dwm.borderpx
 Sets the window border width in pixels. Use a positive decimal integer up to
@@ -464,6 +494,64 @@ Sets the window border width in pixels. Use a positive decimal integer up to
 Existing windows receive the new width after a SIGUSR2 reload. If the resource
 is missing, invalid, or non-positive, dwm uses the configured fallback, which
 is 2 pixels by default.
+.TP
+.B dwm.baropacity
+Set this to 90 to request 90% opacity on every dwm bar. A missing or unsupported
+value restores the palette's default. The light palette requests 92% opacity.
+The dark palette removes the opacity hint and leaves opacity up to the compositor.
+.TP
+.BR dwm.switcherfgcolor ", " dwm.switcherbgcolor
+Set the switcher's foreground and background to #rrggbb colors. The border
+uses the foreground and the highlighted row swaps the two colors. A missing or
+invalid override inherits the corresponding normal bar color.
+.TP
+.B dwm.switcheropacity
+Set the switcher's opacity as a whole percent from 0 (invisible) to 100 (opaque).
+If the value is missing or invalid, dwm leaves the opacity up to the
+compositor's normal rules.
+.PP
+Both opacity settings require an X11 compositor that honors
+_NET_WM_WINDOW_OPACITY on override-redirect windows. With no compositor, the
+bar and switcher are opaque.
+.PP
+Pass the opacity and switcher entries you want to change to
+.B xrdb \-global \-override
+to update those entries in the global Xresources database, then send SIGUSR2
+to dwm. When the panel is closed, Super\-F5 also reloads Xresources.
+.nf
+printf '%s\en' \\
+  'dwm.baropacity: 90' \\
+  'dwm.switcherfgcolor: #f4e9da' \\
+  'dwm.switcherbgcolor: #263248' \\
+  'dwm.switcheropacity: 92' | xrdb \-global \-override
+pkill \-USR2 \-x dwm
+.fi
+.PP
+To reset a live override, apply an empty value for that key before reloading.
+Remove the saved override from your Xresources file to keep it from being
+reapplied.
+.nf
+printf '%s\en' 'dwm.baropacity:' 'dwm.switcheropacity:' \\
+  | xrdb \-global \-override
+pkill \-USR2 \-x dwm
+.fi
+.PP
+When the requested switcher style is already active or a setting such as the
+palette, border width, or effective bar opacity override changes, dwm runs an
+ordinary reload. It reapplies any configured
+.BR dwm.showsysmon " and " dwm.smartgaps
+values and refreshes client focus and layout when it installs the palette.
+An absent resource leaves its live toggle in its current state.
+.PP
+A switcher style change outside an ordinary reload updates an open panel and
+preserves client focus, window layout, and the live system monitor and smart
+gaps toggles.
+.PP
+If color allocation fails on a combined theme and switcher reload and the
+requested bar opacity override matches the applied setting, reload the same
+resources again to retry the pending switcher style. On that retry, the
+switcher inherits any unspecified colors from the last successfully applied
+bar palette.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

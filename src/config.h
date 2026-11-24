@@ -39,12 +39,18 @@ static char normfgcolor[COLORLEN]       = NORMFGCOLOR_DEFAULT;
 static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
 static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
 
+/* Empty switcher overrides inherit the normal bar colors. */
+static char switcherfgcolor[COLORLEN];
+static char switcherbgcolor[COLORLEN];
+static int switcheropacity; /* percent */
+
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
+       [SchemeSwitcher] = { switcherfgcolor, switcherbgcolor, switcherfgcolor },
 };
 
 /* status2d ^C<n>^ and ^B<n>^ colors; Xresources dwm.color<n> (pywal etc.) overrides each entry */
