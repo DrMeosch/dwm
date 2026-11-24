@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/Xlib.h>
@@ -7,10 +8,13 @@
 #include <X11/extensions/XTest.h>
 #include <X11/extensions/XInput2.h>
 #include <X11/extensions/Xinerama.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/select.h>
+
+#include "../sysmon.h"
 
 static int failures;
 static int (*default_xerror)(Display *, XErrorEvent *);
@@ -517,6 +521,350 @@ open_switcher(Display *dpy, Window root, KeySym ctrl, Geometry *outer)
 	switcher_key(dpy, ctrl, True);
 	switcher_tap(dpy, XK_Tab);
 	return wait_panel(dpy, root, 1, outer);
+}
+
+static int
+has_opacity(Display *dpy, Window win, long long expected)
+{
+	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False), type;
+	int format, matches = 0;
+	unsigned long count, remaining;
+	unsigned char *data = NULL;
+
+	if (XGetWindowProperty(dpy, win, opacity, 0, 1, False, XA_CARDINAL,
+	                       &type, &format, &count, &remaining, &data) == Success)
+		matches = expected < 0 ? type == None
+		        : type == XA_CARDINAL && format == 32 && count == 1 && !remaining
+		          && (*(unsigned long *)data & 0xffffffffUL) == (unsigned long)expected;
+	if (data)
+		XFree(data);
+	return matches;
+}
+
+static int
+wait_panel_style(Display *dpy, Window win, int rowheight, const char *fg, const char *bg,
+                 long long opacity)
+{
+	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+	XColor colors[2], exact;
+	XImage *image;
+	int i, matches = 0;
+
+	if (!XAllocNamedColor(dpy, cmap, fg, &colors[0], &exact))
+		return 0;
+	if (!XAllocNamedColor(dpy, cmap, bg, &colors[1], &exact)) {
+		XFreeColors(dpy, cmap, &colors[0].pixel, 1, 0);
+		return 0;
+	}
+	for (i = 0; i < 80; i++) {
+		/* Sample the border, then the ordinary and selected row backgrounds. */
+		image = XGetImage(dpy, win, -1, 0, 2, rowheight + 1, AllPlanes, ZPixmap);
+		if (!image)
+			break;
+		matches = XGetPixel(image, 0, 0) == colors[0].pixel
+		       && XGetPixel(image, 1, 0) == colors[1].pixel
+		       && XGetPixel(image, 1, rowheight) == colors[0].pixel
+		       && has_opacity(dpy, win, opacity);
+		XDestroyImage(image);
+		if (matches)
+			break;
+		pause_millis(25);
+	}
+	for (i = 0; i < 2; i++)
+		XFreeColors(dpy, cmap, &colors[i].pixel, 1, 0);
+	return matches;
+}
+
+static void
+set_resources(Display *dpy, Window root, const char *resources)
+{
+	XChangeProperty(dpy, root, XA_RESOURCE_MANAGER, XA_STRING, 8, PropModeReplace,
+	                (const unsigned char *)resources, strlen(resources));
+}
+
+static void
+test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
+{
+	enum { Dark, Failed, Light };
+	static const char *const themes[] = {
+		[Dark] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n",
+		[Failed] = "dwm.color0: #301020\ndwm.color4: #a0d0c0\n"
+		           "dwm.borderpx: 3\ndwm.selbordercolor: #fffffg\n",
+		[Light] = "dwm.color0: #f8f8f2\ndwm.color4: #555b6e\n",
+	};
+	static const struct {
+		int theme;
+		const char *resources, *fg, *bg;
+		long long opacity;
+	} styles[] = {
+		{ Dark, NULL, "#fedcba", "#563412", 0xffffffffUL },
+		{ Dark, "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
+		  "#d0c0a0", "#102030", -1 },
+		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
+		  "#123456", "#abcdef", 0xccccccccUL },
+		{ Dark, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
+		  "#123456", "#abcdef", 0xffffffffUL },
+		{ Failed, "dwm.switcheropacity: 80\n", "#123456", "#abcdef", 0xffffffffUL },
+		{ Failed, "dwm.switcheropacity: 80\n", "#d0c0a0", "#102030", 0xccccccccUL },
+		{ Failed, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
+		  "#d0c0a0", "#102030", -1 },
+		{ Dark, "dwm.selbordercolor: #476a8c\ndwm.switcheropacity: 20\n",
+		  "#d0c0a0", "#102030", 0x33333333UL },
+		{ Dark, "", "#d0c0a0", "#102030", -1 },
+		{ Light, "", "#555b6e", "#f6e8ee", -1 },
+		{ Light, "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
+		  "#123456", "#abcdef", 0xccccccccUL },
+		{ Light, "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
+		  "#555b6e", "#f6e8ee", -1 },
+		{ Dark, "", "#d0c0a0", "#102030", -1 },
+	};
+	const unsigned long client_opacity = 0x99999999UL;
+	Window first, second, child, focused, probe, win, parent, *children = NULL;
+	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
+	Geometry panel = {0};
+	XWindowAttributes a;
+	int k, revert;
+	unsigned int j, count, bars;
+	size_t i;
+	char database[256];
+
+	first = create_client(dpy, root, "Appearance one", 0);
+	CHECK(wait_active(dpy, root, first), "first appearance client not focused");
+	XChangeProperty(dpy, first, opacity, XA_CARDINAL, 32, PropModeReplace,
+	                (const unsigned char *)&client_opacity, 1);
+	second = create_client(dpy, root, "Appearance two", 0);
+	CHECK(wait_active(dpy, root, second), "second appearance client not focused");
+	child = XCreateSimpleWindow(dpy, second, 0, 0, 8, 8, 0, 0, 0);
+	XMapWindow(dpy, child);
+	XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+	probe = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+	if (!open_switcher(dpy, root, XK_Control_L, &panel) || !(win = switcher_panel(dpy, root, &panel))) {
+		CHECK(0, "switcher did not stay open for the appearance check");
+		goto close;
+	}
+	for (i = 0; i < sizeof styles / sizeof styles[0]; i++) {
+		int recovering = styles[i].theme != Failed && i > 0 && styles[i - 1].theme == Failed;
+
+		if (styles[i].resources) {
+			snprintf(database, sizeof database, "%sdwm.showsysmon: 0\ndwm.smartgaps: 0\n%s",
+			         themes[styles[i].theme], styles[i].resources);
+			set_resources(dpy, root, database);
+			XSync(dpy, False);
+			CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal the test dwm");
+		}
+		if (styles[i].theme == Failed || recovering) {
+			const int width = styles[i].theme == Failed ? 3 : 2;
+
+			for (k = 0; k < 80; k++) {
+				if (XGetWindowAttributes(dpy, first, &a) && a.border_width == width
+				&& XGetWindowAttributes(dpy, second, &a) && a.border_width == width)
+					break;
+				pause_millis(25);
+			}
+			CHECK(k < 80, "both client borders should be %d pixels at stage %zu", width, i);
+		}
+		CHECK(wait_panel_style(dpy, win, (panel.h - 2) / 2, styles[i].fg, styles[i].bg,
+		                       styles[i].opacity), "wrong switcher appearance at stage %zu", i);
+		XResizeWindow(dpy, probe, i + 2, 1);
+		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 2, 1}),
+		      "dwm did not acknowledge configure request at stage %zu", i);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == child && active_window(dpy, root) == second,
+		      "appearance change disturbed focus at stage %zu", i);
+		if (recovering) {
+			Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
+			XColor border, exact;
+			XImage *image;
+
+			if (XAllocNamedColor(dpy, cmap, "#476a8c", &border, &exact)) {
+				image = XGetImage(dpy, second, -1, 0, 1, 1, AllPlanes, ZPixmap);
+				CHECK(image && XGetPixel(image, 0, 0) == border.pixel,
+				      "theme recovery did not repaint the selected client border");
+				if (image)
+					XDestroyImage(image);
+				XFreeColors(dpy, cmap, &border.pixel, 1, 0);
+			} else {
+				CHECK(0, "could not allocate the recovery border color");
+			}
+		}
+		if (styles[i].theme == Failed) {
+			switcher_tap(dpy, XK_Escape);
+			switcher_key(dpy, XK_Control_L, False);
+			if (!wait_panel(dpy, root, 0, &panel) || !open_switcher(dpy, root, XK_Control_L, &panel)
+			|| !(win = switcher_panel(dpy, root, &panel))) {
+				CHECK(0, "could not reopen after the failed theme at stage %zu", i);
+				goto close;
+			}
+			CHECK(wait_panel_style(dpy, win, (panel.h - 2) / 2, styles[i].fg, styles[i].bg,
+			                       styles[i].opacity), "wrong reopened appearance at stage %zu", i);
+		}
+		CHECK(XQueryTree(dpy, root, &root, &parent, &children, &count),
+		      "could not inspect non-switcher windows");
+		bars = 0;
+		if (children) {
+			for (j = 0; j < count; j++) {
+				XClassHint hint;
+				long long expected = children[j] == first ? (long long)client_opacity : -1;
+
+				if (children[j] == win)
+					continue;
+				if (styles[i].theme == Light && XGetClassHint(dpy, children[j], &hint)) {
+					if (!strcmp(hint.res_class, "dwm") && !strcmp(hint.res_name, "dwm")) {
+						expected = 0xeb851eb8UL;
+						bars++;
+					}
+					XFree(hint.res_name);
+					XFree(hint.res_class);
+				}
+				CHECK(has_opacity(dpy, children[j], expected),
+				      "unexpected opacity for window %#lx at stage %zu", children[j], i);
+			}
+			XFree(children);
+			children = NULL;
+		}
+		CHECK(styles[i].theme != Light || bars == 2, "could not verify both light bars at stage %zu", i);
+	}
+close:
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reloaded panel");
+	XDestroyWindow(dpy, probe);
+	XDestroyWindow(dpy, first);
+	XDestroyWindow(dpy, second);
+	CHECK(wait_active(dpy, root, None), "appearance clients did not clear focus");
+}
+
+static void
+wait_sysmon(Display *dpy, Window root, unsigned long expected)
+{
+	Atom property = XInternAtom(dpy, SYSMON_ENABLED_ATOM, False), type;
+	unsigned long count, remaining;
+	unsigned char *data;
+	int format, i, matches;
+
+	for (i = 0; i < 80; i++) {
+		data = NULL;
+		matches = XGetWindowProperty(dpy, root, property, 0, 1, False, XA_CARDINAL,
+		                            &type, &format, &count, &remaining, &data) == Success
+		       && type == XA_CARDINAL && format == 32 && count == 1
+		       && *(unsigned long *)data == expected;
+		if (data)
+			XFree(data);
+		if (matches)
+			return;
+		pause_millis(25);
+	}
+	CHECK(0, "sysmon did not reach state %lu", expected);
+}
+
+static void
+test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
+{
+	static const char resources[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n"
+	                                "dwm.showsysmon: 0\ndwm.smartgaps: 0\ndwm.switcheropacity: 80\n";
+	static const char ordinary[] = "dwm.color0: #102031\ndwm.color4: #d0c0a0\n"
+	                               "dwm.switcheropacity: 80\ndwm.smartgaps: 0\ndwm.showsysmon: %d\n";
+	const Geometry moved = {30, 60, 180, 120};
+	XClassHint hint = { "spterm", "St" };
+	Window tile, pad, child, focused, probe, win;
+	Geometry panel = {0}, gapped, gapless;
+	int i, revert;
+	char database[sizeof ordinary];
+
+	wait_sysmon(dpy, root, 0);
+	key(dpy, XK_b, XK_Shift_L);
+	wait_sysmon(dpy, root, 1);
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	tile = create_client(dpy, root, "Smart gaps reload fixture", 0);
+	CHECK(wait_active(dpy, root, tile), "smart-gaps fixture did not gain focus");
+	gapped = geometry(dpy, tile);
+	key(dpy, XK_apostrophe, XK_Shift_L);
+	for (i = 0; i < 80; i++) {
+		gapless = geometry(dpy, tile);
+		if (gapless.w > gapped.w && gapless.h > gapped.h)
+			break;
+		pause_millis(25);
+	}
+	CHECK(i < 80, "smart gaps did not remove the tiled window's outer gaps");
+	pad = XCreateSimpleWindow(dpy, root, 40, 40, moved.w, moved.h, 0, 0, 0);
+	XSetClassHint(dpy, pad, &hint);
+	XMapWindow(dpy, pad);
+	for (i = 0; i < 80 && geometry(dpy, pad).x >= 0; i++)
+		pause_millis(25);
+	CHECK(i < 80, "reload scratchpad did not start hidden");
+	if (i == 80)
+		goto close;
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, pad), "reload scratchpad did not gain focus");
+	XMoveWindow(dpy, pad, moved.x, moved.y);
+	CHECK(wait_geometry(dpy, pad, moved), "could not move the visible scratchpad");
+	child = XCreateSimpleWindow(dpy, pad, 0, 0, 8, 8, 0, 0, 0);
+	XMapWindow(dpy, child);
+	XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == child, "could not focus the scratchpad child window");
+	probe = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+	set_resources(dpy, root, resources);
+	key(dpy, XK_F5, 0);
+	XResizeWindow(dpy, probe, 2, 1);
+	CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, 2, 1}), "dwm did not finish the closed-panel reload");
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == child && active_window(dpy, root) == pad, "closed-panel reload changed focus");
+	CHECK(same_geometry(geometry(dpy, pad), moved), "closed-panel reload moved the scratchpad");
+	CHECK(same_geometry(geometry(dpy, tile), gapless), "closed-panel reload restored outer gaps");
+	wait_sysmon(dpy, root, 1);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
+	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, 0xccccccccUL),
+	      "next switcher panel did not use the reloaded opacity");
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reopened panel");
+	key(dpy, XK_z, XK_Shift_L);
+	XResizeWindow(dpy, probe, 3, 1);
+	CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, 3, 1})
+	   && !same_geometry(geometry(dpy, pad), moved), "layout pass did not recenter the scratchpad");
+	CHECK(same_geometry(geometry(dpy, tile), gapless), "layout pass restored outer gaps after switcher reload");
+	key(dpy, XK_b, XK_Shift_L);
+	wait_sysmon(dpy, root, 0);
+	key(dpy, XK_b, XK_Shift_L);
+	wait_sysmon(dpy, root, 1);
+	for (i = 0; i < 2; i++) {
+		snprintf(database, sizeof database, ordinary, i);
+		set_resources(dpy, root, database);
+		key(dpy, XK_F5, 0);
+		wait_sysmon(dpy, root, i);
+	}
+	CHECK(wait_geometry(dpy, tile, gapped), "ordinary theme reload did not restore outer gaps");
+	for (i = 0; i < 2; i++) {
+		key(dpy, XK_b, XK_Shift_L);
+		wait_sysmon(dpy, root, 0);
+		XMoveWindow(dpy, pad, moved.x, moved.y);
+		CHECK(wait_geometry(dpy, pad, moved), "could not move the scratchpad before ordinary reload %d", i);
+		XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == child, "could not focus the scratchpad child before ordinary reload %d", i);
+		if (i)
+			set_resources(dpy, root, database);
+		XSync(dpy, False);
+		CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal ordinary reload %d", i);
+		wait_sysmon(dpy, root, 1);
+		XResizeWindow(dpy, probe, i + 4, 1);
+		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 4, 1}),
+		      "dwm did not finish ordinary reload %d", i);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == pad && !same_geometry(geometry(dpy, pad), moved),
+		      "ordinary reload %d did not refresh scratchpad focus and layout", i);
+	}
+	set_resources(dpy, root, resources);
+	key(dpy, XK_F5, 0);
+	wait_sysmon(dpy, root, 0);
+	XDestroyWindow(dpy, probe);
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, tile), "reload scratchpad did not hide");
+close:
+	XDestroyWindow(dpy, pad);
+	XDestroyWindow(dpy, tile);
+	CHECK(wait_active(dpy, root, None), "reload scratchpad did not clear focus");
 }
 
 static void
@@ -1532,6 +1880,22 @@ main(int argc, char **argv)
 		return EXIT_FAILURE;
 	}
 	root = DefaultRootWindow(dpy);
+	if (argc == 3 && !strcmp(argv[1], "switcher-appearance")) {
+		char *end;
+		long pid = strtol(argv[2], &end, 10);
+
+		if (pid <= 1 || *end || (pid_t)pid != pid) {
+			XCloseDisplay(dpy);
+			return EXIT_FAILURE;
+		}
+		default_xerror = XSetErrorHandler(switcher_xerror);
+		test_switcher_appearance(dpy, root, (pid_t)pid);
+		test_switcher_closed_reload(dpy, root, (pid_t)pid);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 switcher appearance and live reload checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
 	if (argc == 2 && !strcmp(argv[1], "switcher")) {
 		default_xerror = XSetErrorHandler(switcher_xerror);
 		test_switcher(dpy, root);

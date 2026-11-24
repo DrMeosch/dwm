@@ -266,8 +266,9 @@ in
 A temperature, fan or GPU the machine does not report is not shown at all.
 It is off by default. Super\-Shift\-b toggles it, and the Xresources
 .B dwm.showsysmon
-(0 or 1) sets it at start\-up and on every SIGUSR2 reload; a key press is kept
-across a reload unless that resource is set.
+(0 or 1) sets it at start\-up. See
+.B SIGUSR2
+for reload behavior.
 .PP
 dwm does not measure anything. The separate
 .B dwmsysmon
@@ -442,8 +443,9 @@ code. This keeps it fast, secure and simple.
 Cleanly terminate the dwm process.
 .TP
 .B SIGUSR2
-Reload colors and border width from Xresources without changing the selected tags.
-Merge all four values for the chosen theme before requesting the reload.
+Reload colors, border width, and window switcher appearance from Xresources
+without changing the selected tags. When switching bar themes, merge the four
+theme values before requesting the reload.
 dwm.color0 and dwm.color4 reset to their compiled defaults before each read,
 the status palette dwm.color0 to dwm.color15 does the same,
 and the selected border and width reset to their fallbacks, so missing theme
@@ -491,6 +493,44 @@ Sets the window border width in pixels. Use a positive decimal integer up to
 Existing windows receive the new width after a SIGUSR2 reload. If the resource
 is missing, invalid, or non-positive, dwm uses the configured fallback, which
 is 2 pixels by default.
+.TP
+.BR dwm.switcherfgcolor ", " dwm.switcherbgcolor
+Set the switcher's foreground and background to #rrggbb colors. The border
+uses the foreground and the highlighted row swaps the two colors. A missing or
+invalid override inherits the corresponding normal bar color.
+.TP
+.B dwm.switcheropacity
+Set the switcher's opacity as a whole percent from 0 (invisible) to 100 (opaque).
+If the value is missing or invalid, dwm leaves the opacity up to the
+compositor's normal rules. This setting requires a compositor that honors
+_NET_WM_WINDOW_OPACITY on override-redirect windows. With no compositor, the
+panel is opaque.
+.PP
+These resources apply only to the switcher. Pass the entries you want to change to
+.B xrdb \-global \-override
+to update those entries in the global Xresources database, then send SIGUSR2
+to dwm. When the panel is closed, Super\-F5 also reloads Xresources.
+To reset a live override, apply an empty value for that key before reloading.
+Remove the saved override from your Xresources file to keep it from being
+reapplied.
+.nf
+printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
+.fi
+.PP
+When only the switcher style changes, dwm updates the panel even if it is open.
+The reload preserves client focus, window layout, and the live system monitor
+and smart gaps toggles.
+.PP
+If other dwm resource settings change or the requested switcher style is
+already active, dwm runs an ordinary reload. It reapplies any configured
+.BR dwm.showsysmon " and " dwm.smartgaps
+values and refreshes client focus and layout when it installs the palette.
+An absent resource leaves its live toggle in its current state.
+.PP
+If color allocation fails on a combined theme and switcher reload, reload the
+same resources again to retry the pending switcher style. On that retry, the
+switcher inherits any unspecified colors from the last successfully applied bar
+palette.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

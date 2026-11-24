@@ -55,6 +55,11 @@ static const char col_gray1[]        = "#222222";
 static const char col_gray2[]        = "#444444";
 static const char col_gray3[]        = "#bbbbbb";
 
+/* Empty switcher overrides inherit the normal bar colors. */
+static char switcherfgcolor[COLORLEN];
+static char switcherbgcolor[COLORLEN];
+static int switcheropacity; /* percent */
+
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
@@ -62,6 +67,7 @@ static char *colors[][3] = {
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
+       [SchemeSwitcher] = { switcherfgcolor, switcherbgcolor, switcherfgcolor },
 };
 
 /* status2d ^C<n>^ and ^B<n>^ colors; Xresources dwm.color<n> (pywal etc.) overrides each entry */

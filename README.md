@@ -10,7 +10,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 - Optional system monitor section centred in the bar (CPU usage with a small graph of its recent samples, plus the CPU temperature and every fan's RPM where the machine reports them, and the GPU usage with its own graph on AMD and Intel GPUs, read without ever waking a sleeping GPU (Intel's needs a capability, see [Intel GPU usage](#intel-gpu-usage)); when a long status text leaves it little room the graphs shrink first, and the section is left out when there is none), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, runs only while the section is shown: dwm starts it when the section is turned on and it exits when the section is turned off. It reads the sensors and publishes the values in a root window property, so dwm only draws them and stays responsive when the sampler or a sensor is missing, slow, stuck or sends garbage (the CPU then shows `-` with an empty graph, and a missing temperature or fan is not shown). See [`src/dwm.1`](src/dwm.1).
 - Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
 - Live theme reload: `SIGUSR2` makes dwm re-read Xresources (`src/sigusr2.c`). `SIGUSR1` stays reserved for dwmblocks.
-- Configurable border width (1 or 2 px) and selected-border color (`src/borderwidth.c`, `src/selborder.c`).
+- Configurable border width and selected-border color. See the [Xresources settings in `dwm(1)`](src/dwm.1).
 
 ## Layout
 
@@ -75,6 +75,20 @@ docs/dwm-light.sh    # light theme
 ```
 
 Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dwm. The desktop steps (`xfconf-query`, `gsettings`, `atc`) are best-effort: a failing one is reported on stderr by name and the Xresources merge and `SIGUSR2` reload still run, so one failing desktop step cannot leave dwm on the old colors. The script then exits non-zero. It also sends the result with `notify-send` (optional, best-effort): a critical notification with the same failed-step text, or a low-urgency "Switched to dark/light theme" when everything worked. The merge also sets `dmenu.color0` and `dmenu.color4` to the theme's `dwm.color0` and `dwm.color4`; dmenu builds that read Xresources at launch (such as the LARBS one) pick the theme up the next time they start.
+
+### Window switcher appearance
+
+Apply these optional settings to the live Xresources database, then send `SIGUSR2` to dwm.
+
+```sh
+xrdb -global -override <<'XRESOURCES'
+dwm.switcherfgcolor: #f4e9da
+dwm.switcherbgcolor: #263248
+dwm.switcheropacity: 92
+XRESOURCES
+```
+
+See the `SIGUSR2` section in [`dwm(1)`](src/dwm.1) for defaults, compositor support, and how to reset overrides.
 
 ## Testing
 

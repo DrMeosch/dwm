@@ -82,8 +82,27 @@ Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.
 
-The XTEST switcher check uses its own private Xvfb with two different-sized
-Xinerama heads. It checks panel placement, row counts, recent-first navigation
+The XTEST switcher checks use a private Xvfb with two different-sized Xinerama
+heads. The appearance check opens the panel with a synthetic Xresources palette,
+then reloads it with SIGUSR2 while the panel is still open. It checks actual
+border and row pixels, the opacity CARDINAL at explicit settings including 100%,
+and hint removal for missing, invalid, and empty settings. Empty color overrides
+restore the normal foreground, background, and border. The check also verifies
+that bar and app opacity hints stay as they were and that keyboard focus stays
+on the client's child window after each reload completes. With the panel closed,
+the check uses Mod+F5 to reload only switcher opacity. It verifies that the
+visible scratchpad keeps its moved geometry and child focus, and that the next
+panel uses the new opacity hint. Before the next resource reload, it runs a
+layout pass to verify the tile stays gapless and toggles sysmon once to verify
+it publishes off. Ordinary theme changes take effect. Both a plain SIGUSR2 and
+an already-applied opacity replay reapply configured sysmon and refresh the
+scratchpad's focus and layout. The open panel check retries a switcher style
+after a failed theme, verifies the reopened panel and a subsequent reset, and
+checks that theme recovery restores both client borders from 3 to 2 pixels and
+repaints the selected border with the recovery color. The check verifies both
+light bars' opacity hints before and after switcher customization and reset.
+
+The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in
 `dwm(1)`](../dwm.1). It measures row counts against the one-window panel for
 shown, hidden scratchpad-only, and hidden mixed-tag scratchpads. Highlight
