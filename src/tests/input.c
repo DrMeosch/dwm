@@ -1431,6 +1431,60 @@ check_hidden_mixed_scratchpad(Display *dpy, Window root, XineramaScreenInfo head
 }
 
 static void
+check_switcher_tab(Display *dpy, Window root)
+{
+	const int rows[] = { 2, 0, 1, 2 };
+	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	XKeyboardControl repeat = { .key = tab, .auto_repeat_mode = AutoRepeatModeOn };
+	Geometry panel = {0};
+	Window target, previous, origin, panelwin, focused;
+	int height, row, revert;
+
+	target = switcher_client(dpy, root, "Tab target", 1, 0);
+	CHECK(wait_active(dpy, root, target), "could not focus the Tab target");
+	previous = switcher_client(dpy, root, "Tab previous", 1, 0);
+	CHECK(wait_active(dpy, root, previous), "could not focus the previous Tab window");
+	origin = switcher_client(dpy, root, "Tab origin", 1, 0);
+	CHECK(wait_active(dpy, root, origin), "could not focus the Tab origin");
+	XSelectInput(dpy, origin, KeyPressMask | StructureNotifyMask);
+	XAutoRepeatOn(dpy);
+	XChangeKeyboardControl(dpy, KBKey | KBAutoRepeatMode, &repeat);
+	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 1000), "could not set the Tab repeat rate");
+	switcher_key(dpy, XK_Tab, True);
+	CHECK(wait_for_input(dpy, origin, KeyPress, tab, 0) && wait_for_input(dpy, origin, KeyPress, tab, 0),
+	      "holding Tab did not generate a repeat at the focused client");
+	switcher_key(dpy, XK_Tab, False);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "Ctrl+Tab did not open the panel for Tab navigation");
+	panelwin = switcher_panel(dpy, root, &panel);
+	height = panelwin ? geometry(dpy, panelwin).h : 0;
+	row = height / 3;
+	CHECK(height == 3 * row && wait_highlight(dpy, panelwin, height, row, 1)
+	   && active_window(dpy, root) == origin, "Ctrl+Tab did not highlight the previous window while retaining focus");
+	for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) {
+		if (i == 1) {
+			switcher_key(dpy, XK_Tab, True);
+			CHECK(wait_highlight(dpy, panelwin, height, row, rows[i]), "held Tab did not wrap to the first row");
+			pause_millis(350);
+			switcher_key(dpy, XK_Tab, False);
+			CHECK(wait_tab_release_handled(dpy, origin), "dwm did not process the held Tab release");
+		} else
+			switcher_tap(dpy, XK_Tab);
+		CHECK(wait_highlight(dpy, panelwin, height, row, rows[i]),
+		      "Tab press %zu did not advance once to row %d", i + 2, rows[i]);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == origin && active_window(dpy, root) == origin,
+		      "Tab press %zu changed focus with Ctrl held", i + 2);
+	}
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, target),
+	      "Ctrl release did not activate the window reached by Tab");
+	XDestroyWindow(dpy, origin);
+	XDestroyWindow(dpy, previous);
+	XDestroyWindow(dpy, target);
+	CHECK(wait_active(dpy, root, None), "Tab navigation did not leave an empty monitor");
+}
+
+static void
 test_switcher(Display *dpy, Window root)
 {
 	XineramaScreenInfo *heads;
@@ -1470,6 +1524,7 @@ test_switcher(Display *dpy, Window root)
 	switcher_key(dpy, XK_Tab, False);
 	switcher_key(dpy, XK_Control_L, False);
 	check_hidden_mixed_scratchpad(dpy, root, heads[0]);
+	check_switcher_tab(dpy, root);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
