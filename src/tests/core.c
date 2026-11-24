@@ -48,7 +48,7 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #define XSetInputFocus record_setinputfocus
 #define XDeleteProperty record_deleteproperty
 #define XConfigureWindow record_configurewindow
-#define XCheckMaskEvent record_checkmaskevent
+#define XNextRequest record_nextrequest
 #define XUnmapWindow record_unmapwindow
 #define XDestroyWindow record_destroywindow
 #define popen pidof_popen
@@ -62,7 +62,7 @@ static unsigned long sysmonflag = 2, sysmoninterval;
 #undef main
 #undef XDestroyWindow
 #undef XUnmapWindow
-#undef XCheckMaskEvent
+#undef XNextRequest
 #undef XConfigureWindow
 #undef XMoveWindow
 #undef XSetInputFocus
@@ -147,13 +147,11 @@ record_configurewindow(Display *d, Window w, unsigned int mask, XWindowChanges *
 	return 1;
 }
 
-Bool
-record_checkmaskevent(Display *d, long mask, XEvent *event)
+unsigned long
+record_nextrequest(Display *d)
 {
-	(void)d; (void)mask; (void)event;
-	if (!recording_arrange)
-		abort();
-	return False;
+	(void)d;
+	return 1;
 }
 
 static Window unmapped_bar, destroyed_bar;
@@ -267,7 +265,7 @@ test_pertag_layout_slots(void)
 		m->sellt = 1 - slot;
 		m->lt[0] = m->lt[1] = &layouts[8];
 		m->pertag->sellts[2] = slot;
-		applypertag();
+		applypertag(NULL);
 		CHECK(m->sellt == slot && m->lt[0] == &layouts[0] && m->lt[1] == &layouts[1],
 		      "per-tag restoration lost a layout slot with slot %u selected", slot);
 		CHECK(m->nmaster == 3 && m->mfact == 0.75f,

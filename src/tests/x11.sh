@@ -27,7 +27,6 @@ if ! pkg-config --exists xtst; then
 fi
 
 tmp=$(mktemp -d)
-display=
 server_pid=
 dwm_pid=
 transient_pid=
@@ -48,8 +47,8 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-flags=$(pkg-config --cflags x11 xft fontconfig x11-xcb xcb xcb-res xinerama)
-libs=$(pkg-config --libs x11 xft fontconfig x11-xcb xcb xcb-res xinerama)
+flags=$(pkg-config --cflags x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
+libs=$(pkg-config --libs x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
 $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
 	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
@@ -102,23 +101,58 @@ $cc -std=c99 -pedantic -Wall -Wextra -D_DEFAULT_SOURCE \
 
 # Let Xvfb pick a free display and report it on fd 3, so a stale or concurrent
 # server is never mistaken for this one.
-Xvfb -displayfd 3 -screen 0 1200x800x24 -nolisten tcp -noreset \
-	>"$tmp/xvfb.log" 2>&1 3>"$tmp/display" &
-server_pid=$!
-for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-	if [ -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
-	sleep 0.1
-done
-if [ ! -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then
-	cat "$tmp/xvfb.log" >&2
-	printf '%s\n' 'X11 test server did not start'
-	exit 1
+start_xvfb() {
+	: >"$tmp/display"
+	Xvfb -displayfd 3 -nolisten tcp -noreset "$@" \
+		>"$tmp/xvfb.log" 2>&1 3>"$tmp/display" &
+	server_pid=$!
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+		if [ -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then break; fi
+		sleep 0.1
+	done
+	if [ ! -s "$tmp/display" ] || ! kill -0 "$server_pid" 2>/dev/null; then
+		cat "$tmp/xvfb.log" >&2
+		printf '%s\n' 'X11 test server did not start'
+		exit 1
+	fi
+	read -r number <"$tmp/display"
+	export DISPLAY=:$number
+	xdpyinfo >/dev/null 2>&1
+	kill -0 "$server_pid"
+}
+
+# dwm starts the sampler that reads fixtures, never an installed dwmsysmon.
+mkdir "$tmp/bin"
+ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
+# A failed scratchpad lookup must never launch the configured terminal.
+ln -s /bin/true "$tmp/bin/st"
+if [ "$input_available" -eq 1 ]; then
+	# Xvfb overlaps these heads at (0,0); different sizes keep both in dwm.
+	start_xvfb +xinerama -screen 0 1000x750x24 -screen 1 800x600x24
+	xrdb -load <<'XRESOURCES'
+dwm.color0: #102030
+dwm.color4: #d0c0a0
+dwm.showsysmon: 0
+dwm.smartgaps: 0
+dwm.switcherfgcolor: #fedcba
+dwm.switcherbgcolor: #563412
+dwm.switcheropacity: 100
+XRESOURCES
+	PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm-switcher.log" 2>&1 &
+	dwm_pid=$!
+	if ! "$tmp/input" switcher-appearance "$dwm_pid" || ! "$tmp/input" switcher; then
+		cat "$tmp/dwm-switcher.log" >&2
+		exit 1
+	fi
+	kill -TERM "$dwm_pid"
+	wait "$dwm_pid"
+	dwm_pid=
+	kill -TERM "$server_pid"
+	wait "$server_pid"
+	server_pid=
 fi
-read -r number <"$tmp/display"
-display=:$number
-export DISPLAY=$display
-xdpyinfo >/dev/null 2>&1
-kill -0 "$server_pid"
+
+start_xvfb -screen 0 1200x800x24
 printf 'dwm.borderpx: 1\ndwm.selbordercolor: #ffb86c\n' | xrdb -merge
 if [ -n "${DWM_X11_CAPTURE_DIR:-}" ]; then
 	"$tmp/x11-capture" root '#282a36'
@@ -126,11 +160,6 @@ fi
 
 "$tmp/eventloop"
 
-# dwm starts the sampler that reads fixtures, never an installed dwmsysmon
-mkdir "$tmp/bin"
-ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
-# A failed scratchpad lookup must never launch the configured terminal.
-ln -s /bin/true "$tmp/bin/st"
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
@@ -259,6 +288,8 @@ theme_fail() {
 run_theme() {
 	: >"$tmp/stub.log"
 	rm -f "$tmp/notify.args"
+	# Replace any values left by the previous theme so both scripts must set both hints.
+	printf '%s\n' 'dwm.baropacity: 75' 'dwm.switcheropacity: 75' | xrdb -merge
 	rc=0
 	STUB_LOG=$tmp/stub.log STUB_NOTIFY=$tmp/notify.args STUB_DWM_PID=$dwm_pid \
 		STUB_EXIT=$2 STUB_NOTIFY_EXIT=$3 PATH=$stubs:$PATH \
@@ -267,6 +298,10 @@ run_theme() {
 		grep -q "^$step " "$tmp/stub.log" || theme_fail "dwm-$1.sh did not run $step"
 	done
 	[ -s "$tmp/notify.args" ] || theme_fail "dwm-$1.sh sent no notification"
+	for surface in bar switcher; do
+		got=$(xrdb -query | sed -n "s/^dwm\\.${surface}opacity:[[:space:]]*//p")
+		[ "$got" = 90 ] || theme_fail "dwm-$1.sh set ${surface} opacity to '$got' instead of 90"
+	done
 	# dmenu reads dmenu.color0/4 from Xresources at launch, so the merge must
 	# carry the same palette as dwm.color0/4
 	for n in 0 4; do
