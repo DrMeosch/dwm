@@ -193,8 +193,8 @@ Run `x11 size-hints` against an isolated `DWM_TEST` dwm with no other clients
 to reproduce separately if an earlier switcher check prevents `x11.sh` from
 reaching it. The script runs fullscreen-properties, titles, focus-hints,
 size-hints, fullscreen, fullscreen-state-preservation, initial-fullscreen-exit
-and fullscreen-message-formats and active-window-messages fixtures even if one
-fails, then exits nonzero before later integration checks if any failed.
+and fullscreen-message-formats, active-window-messages and urgency-lifecycle
+fixtures even if one fails, then exits nonzero before later integration checks if any failed.
 
 On a fresh single-monitor display, `x11 fullscreen-state-preservation` checks
 exact `_NET_WM_STATE` atom sets on mapping and after ten client-message steps,
@@ -280,9 +280,32 @@ valid-format requests, 24 malformed selected/already-urgent controls, hint-field
 preservation, focus, geometry, urgency clearing and cleanup pass. These genuine
 failures remain enabled without production fixes or expected-failure masks.
 Missing `WM_HINTS`, hidden tags, unmanaged targets, invalid source indications,
-activation timestamps and pixel rendering of urgency are not covered.
+activation timestamps are not covered. Pixel rendering and urgency-hint
+removal are covered separately below.
 
-Run any one of the nine state fixtures with its own private Xvfb and test dwm,
+On a fresh single-monitor display, `x11 urgency-lifecycle` compares the left
+half of the actual bar with a nonurgent reference while the same barrier
+client remains focused. It sets background-client urgency through either an
+application's `XUrgencyHint` or a valid format-32 `_NET_ACTIVE_WINDOW` request,
+checks that the hint and visible indication are present, deletes `WM_HINTS`,
+and verifies the property is absent. Both deletion and a root-status-triggered
+bar redraw must restore the nonurgent reference. Deleting nonurgent hints,
+replacing deleted hints with nonurgent hints, and clearing newly set urgency
+through user focus are passing controls. Each image is synchronized with a
+marked tiled ConfigureRequest reply; focus and `_NET_ACTIVE_WINDOW` stay on
+the barrier except during the explicit user-focus control. Clients and reference
+images are cleaned up, and the test's root status is removed.
+
+Four pixel assertions currently fail: deletion leaves 667 stale urgency pixels
+for both urgency sources, and they persist after a forced redraw.
+`propertynotify()` ignores the deletion, and `updatewmhints()` does not clear
+cached `isurgent` when hints are absent. Nonurgent deletion, replacement
+recovery, valid activation, user-focus clearing of the hint and its rendered
+indication, and cleanup pass. These genuine failures remain enabled without
+production fixes or expected-failure masks. Hidden tags, alternate urgency
+palettes, multiple monitors and physical input are not covered here.
+
+Run any one of the ten state fixtures with its own private Xvfb and test dwm,
 without the earlier switcher checks or later integration checks:
 
 ```sh
@@ -292,7 +315,7 @@ DWM_X11_STATE_FIXTURE=fullscreen-state-preservation sh src/tests/x11.sh "$PWD"
 The selector accepts `fullscreen-properties`, `titles`, `focus-hints`,
 `size-hints`, `fullscreen`, `fullscreen-state-preservation` and
 `initial-fullscreen-exit`, `fullscreen-message-formats` and
-`active-window-messages`; an unknown value
+`active-window-messages` and `urgency-lifecycle`; an unknown value
 fails before launching processes. With no selector, `make test` retains all
 checks, including the new fixture. See [`BUG_REPORT.md`](../../BUG_REPORT.md)
 for reproduced defects and the status of the full suite.

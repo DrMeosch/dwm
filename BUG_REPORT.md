@@ -10,7 +10,7 @@ These findings were reproduced against the current production sources in a
 
 Run from the repository root with the build dependencies in `src/config.mk`,
 `jq`, `pkg-config`, Xvfb, `xdpyinfo` and `xrdb` installed. XTEST development
-files were available during validation, but these nine state fixtures use Xlib
+files were available during validation, but these ten state fixtures use Xlib
 and do not require physical input or XTEST.
 
 Each command below compiles temporary test binaries, starts its own 1200x800
@@ -304,13 +304,54 @@ The selectors allow reproduction even when the earlier switcher test blocks
   All 18 valid-format controls and 24 malformed selected/already-urgent requests
   pass. Unrelated hint flags, input/state fields, focus, active-window property,
   geometry, borders, clearing urgency on user focus and cleanup pass. Absent
-  hints, hidden tags, unmanaged targets, invalid sources, timestamps and bar
-  urgency pixels are not asserted.
+  hints, hidden tags, unmanaged targets and invalid sources/timestamps are not
+  asserted. Bar urgency pixels and hint removal are covered by finding 11.
+
+## 11. Deleting WM_HINTS leaves a stale urgency indication on the bar
+
+- **Severity:** Medium. The bar continues indicating that a background
+  application needs attention after its urgency hint has been removed, even
+  after a redraw. This shares the deletion handling of finding 6 but affects
+  urgency rendering rather than direct keyboard focus.
+- **Affected production file:** `src/dwm.c`, `propertynotify()`,
+  `updatewmhints()` and `drawbar()` (which renders cached `isurgent`).
+- **Failing test:** `src/tests/x11.c`, `check_urgency_lifecycle()`;
+  **4 failing pixel assertions**, deletion and redraw for two urgency sources.
+- **Reproduce:**
+  ```sh
+  DWM_X11_STATE_FIXTURE=urgency-lifecycle sh src/tests/x11.sh "$PWD"
+  ```
+  Map a tiled barrier and target on the current tag, giving the target
+  `WM_HINTS` with `InputHint=True` and `StateHint=NormalState`. Focus the barrier
+  using Super+j and capture a nonurgent bar reference. Set background urgency
+  either by adding `XUrgencyHint` to the target's hints or by sending a valid
+  format-32 `_NET_ACTIVE_WINDOW` request with source 1. Confirm the bar visibly
+  changes and the hint is present. Delete the target's `WM_HINTS`, synchronize
+  through a marked tiled ConfigureRequest, confirm the property is absent,
+  and compare the bar with the reference. Replace the root `WM_NAME` to force
+  `drawbar()` and compare again without changing focus or client hints.
+- **Expected:** Removing the urgency property clears the cached urgency and
+  restores the nonurgent bar pixels; later redraws remain nonurgent.
+- **Actual:** Both urgency sources leave **667 different pixels** in the left
+  half of the bar after deletion and again after the forced redraw. Keyboard
+  focus and root `_NET_ACTIVE_WINDOW` correctly remain on the barrier.
+- **Cause:** `propertynotify()` returns immediately on `PropertyDelete`, so
+  neither cached `isurgent` nor the bar is updated. `updatewmhints()` also
+  leaves `isurgent` unchanged when `XGetWMHints()` returns NULL. `drawbar()`
+  aggregates cached urgent clients and keeps drawing the obsolete indication.
+- **Coverage and controls:** Application-set and activation-set urgency,
+  verified property presence/absence, visibly distinct urgent/nonurgent
+  references, synchronized captures, deletion with and without forced redraw,
+  focus and active-window preservation. Nonurgent-hint deletion, replacement
+  with nonurgent hints, valid activation, subsequent user focus clearing both
+  the property hint and rendered urgency, and cleanup pass. Hidden tags,
+  alternate palettes, multiple monitors and physical input are not asserted.
+  Unlike finding 10, every activation message here is correctly formatted.
 
 ## Validation status and limits
 
-- The nine state fixtures reproduce **151 total failing assertions**:
-  24 + 15 + 8 + 3 + 16 + 1 + 8 + 64 + 12. They complete and clean up their clients/servers.
+- The ten state fixtures reproduce **155 total failing assertions**:
+  24 + 15 + 8 + 3 + 16 + 1 + 8 + 64 + 12 + 4. They complete and clean up their clients/servers.
 - The iteration 1 baseline `make test` passed the headless regression and build/documentation
   checks and the X11 switcher appearance/live-reload check, then exited nonzero
   during switcher navigation before reaching the state fixtures. Its output
@@ -360,6 +401,18 @@ The selectors allow reproduction even when the earlier switcher test blocks
   sources are unchanged; existing production warnings remain. No commits were
   made and no test processes remain running. Later integration checks remain
   blocked by the preserved state failures.
+- Iteration 5 default `make test` passed all headless checks, both XTEST
+  switcher checks and the event-loop check, then reproduced **155 failures**
+  across all ten state fixtures (make exit status 2). Isolated
+  `DWM_X11_STATE_FIXTURE=urgency-lifecycle make test` passed the headless and
+  event-loop checks and reproduced exactly **4 failures**, matching the
+  direct isolated script run. Both runs report the same 667-pixel urgency
+  differences for deletion and forced redraw. No relevant dependency checks
+  skipped. `make -B`, strict `-std=c99 -pedantic -Wall -Wextra -Werror`
+  compilation of the Xlib client, shell syntax and diff-whitespace checks
+  passed. Production sources remain unchanged, existing production compiler
+  warnings remain, and no commits were made. No test processes remain running.
+  Later integration checks are still blocked by preserved genuine failures.
 - Long-title truncation, alternate title encodings, fixed-size initial
   fullscreen clients, floating exit positions, physical input and side-by-side
   monitor behavior remain untested. The activation fixture's additional limits

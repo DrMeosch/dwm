@@ -1744,6 +1744,122 @@ check_title_absent(Display *dpy, Window win, Atom atom, const char *step)
 		XFree(data);
 }
 
+/* Compare the same focused client so only the urgency rendering can change. */
+static void
+check_urgency_image(Display *dpy, Window root, Window barrier, XImage *expected,
+                    const char *step)
+{
+	XImage *actual = title_image(dpy, root, barrier, step);
+	int different = image_difference(actual, expected);
+
+	CHECK(different == 0, "%s: urgency bar differs from nonurgent reference by %d pixels",
+	      step, different);
+	check_focus_result(dpy, root, barrier, barrier, 0, step);
+	if (actual)
+		XDestroyImage(actual);
+}
+
+static void
+check_urgency_lifecycle(Display *dpy, Window root)
+{
+	Atom active = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
+	Window barrier, win, pair[2];
+	XWMHints hints = {0}, *actual;
+	XImage *normal, *urgent;
+	XEvent ev;
+	char step[128];
+	int activation;
+
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, 1, 1);
+	barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+	XSelectInput(dpy, barrier, StructureNotifyMask);
+	XMapWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "urgency barrier was not managed");
+	for (activation = 0; activation <= 1; activation++) {
+		win = XCreateSimpleWindow(dpy, root, 80, 80, 200, 150, 0, 0, 0);
+		XStoreName(dpy, win, "urgency-lifecycle");
+		hints.flags = InputHint | StateHint;
+		hints.input = True;
+		hints.initial_state = NormalState;
+		XSetWMHints(dpy, win, &hints);
+		XMapWindow(dpy, win);
+		XFlush(dpy);
+		pair[0] = barrier; pair[1] = win;
+		CHECK(wait_clients(dpy, root, pair, 2, win), "urgency target was not managed");
+		focus_next(dpy, root, barrier, "urgency background setup");
+		check_focus_result(dpy, root, barrier, barrier, 0, "urgency background setup");
+		normal = title_image(dpy, root, barrier, "nonurgent reference");
+		/* Deleting an already nonurgent property is a control. */
+		XDeleteProperty(dpy, win, XA_WM_HINTS);
+		check_urgency_image(dpy, root, barrier, normal, "nonurgent WM_HINTS deletion");
+		check_title_absent(dpy, win, XA_WM_HINTS, "nonurgent WM_HINTS deletion");
+		XSetWMHints(dpy, win, &hints);
+		focus_roundtrip(dpy, barrier, "urgency hint recovery");
+		if (activation) {
+			memset(&ev, 0, sizeof ev);
+			ev.xclient.type = ClientMessage;
+			ev.xclient.window = win;
+			ev.xclient.message_type = active;
+			ev.xclient.format = 32;
+			ev.xclient.data.l[0] = 1;
+			ev.xclient.data.l[1] = CurrentTime;
+			ev.xclient.data.l[2] = barrier;
+			CHECK(XSendEvent(dpy, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &ev),
+			      "could not send valid urgency activation request");
+		} else {
+			hints.flags |= XUrgencyHint;
+			XSetWMHints(dpy, win, &hints);
+		}
+		urgent = title_image(dpy, root, barrier, "urgent reference");
+		CHECK(image_difference(normal, urgent) > 0, "urgency did not visibly change the bar");
+		actual = XGetWMHints(dpy, win);
+		CHECK(actual && (actual->flags & XUrgencyHint), "urgent reference lacks XUrgencyHint");
+		if (actual)
+			XFree(actual);
+		check_focus_result(dpy, root, barrier, barrier, 0, "urgent reference");
+
+		XDeleteProperty(dpy, win, XA_WM_HINTS);
+		snprintf(step, sizeof step, "%s urgency: WM_HINTS deletion",
+		         activation ? "activation-set" : "application-set");
+		check_urgency_image(dpy, root, barrier, normal, step);
+		check_title_absent(dpy, win, XA_WM_HINTS, step);
+		/* A root status replacement forces drawbar without touching client hints. */
+		XStoreName(dpy, root, "urgency-redraw");
+		snprintf(step, sizeof step, "%s urgency: deletion after forced redraw",
+		         activation ? "activation-set" : "application-set");
+		check_urgency_image(dpy, root, barrier, normal, step);
+
+		/* Replacement must recover the cache; focus must clear newly set urgency. */
+		hints.flags &= ~XUrgencyHint;
+		XSetWMHints(dpy, win, &hints);
+		check_urgency_image(dpy, root, barrier, normal, "nonurgent replacement recovery");
+		hints.flags |= XUrgencyHint;
+		XSetWMHints(dpy, win, &hints);
+		focus_roundtrip(dpy, barrier, "urgency before user focus");
+		focus_next(dpy, root, barrier, "user focus clears urgency");
+		check_focus_result(dpy, root, win, win, 0, "user focus clears urgency");
+		actual = XGetWMHints(dpy, win);
+		CHECK(actual && !(actual->flags & XUrgencyHint), "user focus did not clear XUrgencyHint");
+		if (actual)
+			XFree(actual);
+		focus_next(dpy, root, barrier, "return to background after urgency clear");
+		check_urgency_image(dpy, root, barrier, normal, "user focus clears urgency rendering");
+		XDestroyWindow(dpy, win);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "urgency target did not clean up");
+		if (normal)
+			XDestroyImage(normal);
+		if (urgent)
+			XDestroyImage(urgent);
+	}
+	XDeleteProperty(dpy, root, XA_WM_NAME);
+	focus_roundtrip(dpy, barrier, "urgency status cleanup");
+	XDestroyWindow(dpy, barrier);
+	XFlush(dpy);
+	CHECK(wait_clients(dpy, root, NULL, 0, root), "urgency fixture did not clean up its clients");
+}
+
 static void
 check_title_updates(Display *dpy, Window root)
 {
@@ -1939,6 +2055,14 @@ main(int argc, char *argv[])
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 active-window client-message checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	if (argc == 2 && !strcmp(argv[1], "urgency-lifecycle")) {
+		check_urgency_lifecycle(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 urgency lifecycle checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
