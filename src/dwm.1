@@ -506,11 +506,13 @@ on override-redirect windows is required for translucency. Without one,
 the panel remains opaque.
 .PP
 These three resources apply only to the switcher, including an open panel
-on SIGUSR2. To reset a live override, merge an empty value for that key and send
-SIGUSR2 to dwm. This preserves the rest of the live Xresources database.
-Remove the old value from your Xresources file to keep it from being reapplied.
+on SIGUSR2. Pass only the switcher entries you want to change to
+.B xrdb \-global \-override
+and send SIGUSR2 to dwm. To reset a live override, apply an empty value for that key.
+Remove any saved override for that key from your Xresources file to keep it from
+being reapplied.
 .nf
-printf '%s\en' 'dwm.switcheropacity:' | xrdb -merge
+printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
 .fi
 .TP
 .B SIGUSR1

@@ -78,22 +78,24 @@ Both scripts expect `xfconf-query`, `gsettings`, `atc`, `xrdb`, and a running dw
 
 ### Window switcher appearance
 
-Add these optional settings to your Xresources file:
+Apply these optional settings to the live Xresources database, then send `SIGUSR2` to dwm.
 
-```text
+```sh
+xrdb -global -override <<'XRESOURCES'
 dwm.switcherfgcolor: #f4e9da
 dwm.switcherbgcolor: #263248
 dwm.switcheropacity: 92
+XRESOURCES
 ```
 
-Load them with `xrdb -merge ~/.Xresources` and send `SIGUSR2` to dwm. Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors. The highlighted row inverts the two colors.
+Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors. The highlighted row inverts the two colors.
 
 Opacity is a whole percent from 0 (invisible) to 100 (fully opaque). A missing or invalid setting leaves opacity up to the compositor's normal rules. Opacity requires a compositor that honors `_NET_WM_WINDOW_OPACITY` on override-redirect windows. Without one, the panel remains opaque.
 
-To reset a live override, merge an empty value for that key and send `SIGUSR2` to dwm. This preserves the rest of the live Xresources database. Remove the old value from `~/.Xresources` to keep it from being reapplied.
+To reset a live override, apply an empty value for that key and send `SIGUSR2` to dwm. Both commands update only the supplied keys in the global Xresources database. Remove any saved override for that key from `~/.Xresources` to keep it from being reapplied.
 
 ```sh
-printf '%s\n' 'dwm.switcheropacity:' | xrdb -merge
+printf '%s\n' 'dwm.switcheropacity:' | xrdb -global -override
 ```
 
 ## Testing

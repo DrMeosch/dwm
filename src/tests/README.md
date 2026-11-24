@@ -86,9 +86,11 @@ The XTEST switcher checks use a private Xvfb with two different-sized Xinerama
 heads. The appearance check opens the panel with a synthetic Xresources palette,
 then reloads it with SIGUSR2 while the panel is still open. It checks actual
 border and row pixels, the opacity CARDINAL at explicit settings including 100%,
-and hint removal for missing and invalid settings. It also checks that bar and
-app opacity hints stay as they were and that keyboard focus stays on the client's
-child window after each reload completes. Xvfb verifies the opacity hint.
+and hint removal for missing, invalid, and empty settings. Empty color overrides
+restore the normal foreground, background, and border. The check also verifies
+that bar and app opacity hints stay as they were and that keyboard focus stays
+on the client's child window after each reload completes. Xvfb verifies the
+opacity hint.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in

@@ -582,11 +582,13 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		long long opacity;
 	} styles[] = {
 		{ NULL, "#fedcba", "#563412", 0xffffffffUL },
+		{ "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
+		  "#d0c0a0", "#102030", -1 },
 		{ "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
 		  "#123456", "#abcdef", 0xccccccccUL },
 		{ "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
 		  "#123456", "#abcdef", 0xffffffffUL },
-		{ "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
+		{ "dwm.switcherfgcolor:\ndwm.switcherbgcolor:\ndwm.switcheropacity:\n",
 		  "#d0c0a0", "#102030", -1 },
 		{ "dwm.switcheropacity: 20\n", "#d0c0a0", "#102030", 0x33333333UL },
 		{ "", "#d0c0a0", "#102030", -1 },
