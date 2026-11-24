@@ -355,22 +355,6 @@ static const Key keys[] = {
   { ControlMask, XF86XK_MonBrightnessUp,   spawn, {.v = brightness_up_with_shift } },
   { ControlMask, XF86XK_MonBrightnessDown, spawn, {.v = brightness_down_with_shuft } },
 
-	/* { MODKEY|Mod4Mask,           XK_h,          incrgaps,               {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_l,          incrgaps,               {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_h,          incrogaps,              {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_l,          incrogaps,              {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ControlMask, XK_h,        incrigaps,              {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask|ControlMask, XK_l,        incrigaps,              {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_0,          defaultgaps,            {0} }, */
-	/* { MODKEY,                    XK_y,          incrihgaps,             {.i = +1 } }, */
-	/* { MODKEY,                    XK_o,          incrihgaps,             {.i = -1 } }, */
-	/* { MODKEY|ControlMask,        XK_y,          incrivgaps,             {.i = +1 } }, */
-	/* { MODKEY|ControlMask,        XK_o,          incrivgaps,             {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_y,          incrohgaps,             {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_o,          incrohgaps,             {.i = -1 } }, */
-	/* { MODKEY|ShiftMask,          XK_y,          incrovgaps,             {.i = +1 } }, */
-	/* { MODKEY|ShiftMask,          XK_o,          incrovgaps,             {.i = -1 } }, */
-
 };
 
 /* button definitions */
