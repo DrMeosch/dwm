@@ -2066,7 +2066,7 @@ resizeclient(Client *c, int x, int y, int w, int h)
 static void
 suppressenters(void)
 {
-	/* Suppress enter-driven focus in dispatch order: draining here can skip a queued Ctrl+Tab. */
+	/* Suppress enter-driven focus in dispatch order: draining here can skip a queued switcher opener. */
 	enterbefore = XNextRequest(dpy);
 	XSync(dpy, False);
 }
