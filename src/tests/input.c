@@ -649,13 +649,16 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 			XSync(dpy, False);
 			CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal the test dwm");
 		}
-		if (styles[i].theme == Failed) {
+		if (styles[i].theme == Failed || (i > 0 && styles[i - 1].theme == Failed)) {
+			const int width = styles[i].theme == Failed ? 3 : 2;
+
 			for (k = 0; k < 80; k++) {
-				if (XGetWindowAttributes(dpy, second, &a) && a.border_width == 3)
+				if (XGetWindowAttributes(dpy, first, &a) && a.border_width == width
+				&& XGetWindowAttributes(dpy, second, &a) && a.border_width == width)
 					break;
 				pause_millis(25);
 			}
-			CHECK(k < 80, "theme reload did not reach the failing palette");
+			CHECK(k < 80, "both client borders should be %d pixels at stage %zu", width, i);
 		}
 		CHECK(wait_panel_style(dpy, win, (panel.h - 2) / 2, styles[i].fg, styles[i].bg,
 		                       styles[i].opacity), "wrong switcher appearance at stage %zu", i);
@@ -797,6 +800,15 @@ test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 	switcher_tap(dpy, XK_Escape);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reopened panel");
+	key(dpy, XK_z, XK_Shift_L);
+	XResizeWindow(dpy, probe, 3, 1);
+	CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, 3, 1})
+	   && !same_geometry(geometry(dpy, pad), moved), "layout pass did not recenter the scratchpad");
+	CHECK(same_geometry(geometry(dpy, tile), gapless), "layout pass restored outer gaps after switcher reload");
+	key(dpy, XK_b, XK_Shift_L);
+	wait_sysmon(dpy, root, 0);
+	key(dpy, XK_b, XK_Shift_L);
+	wait_sysmon(dpy, root, 1);
 	for (i = 0; i < 2; i++) {
 		snprintf(database, sizeof database, ordinary, i);
 		set_resources(dpy, root, database);
@@ -817,8 +829,8 @@ test_switcher_closed_reload(Display *dpy, Window root, pid_t dwm_pid)
 		XSync(dpy, False);
 		CHECK(kill(dwm_pid, SIGUSR2) == 0, "could not signal ordinary reload %d", i);
 		wait_sysmon(dpy, root, 1);
-		XResizeWindow(dpy, probe, i + 3, 1);
-		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 3, 1}),
+		XResizeWindow(dpy, probe, i + 4, 1);
+		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 4, 1}),
 		      "dwm did not finish ordinary reload %d", i);
 		XGetInputFocus(dpy, &focused, &revert);
 		CHECK(focused == pad && !same_geometry(geometry(dpy, pad), moved),
