@@ -98,9 +98,9 @@ it publishes off. Ordinary theme changes take effect. Both a plain SIGUSR2 and
 an already-applied opacity replay reapply configured sysmon and refresh the
 scratchpad's focus and layout. The open panel check retries a switcher style
 after a failed theme, verifies the reopened panel and a subsequent reset, and
-checks that theme recovery restores both client borders from 3 to 2 pixels.
-Both light bars are checked for their 92% opacity hints before and after
-switcher customization and reset.
+checks that theme recovery restores both client borders from 3 to 2 pixels and
+repaints the selected border with the recovery color. The check verifies both
+light bars' opacity hints before and after switcher customization and reset.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in

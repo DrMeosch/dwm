@@ -10,7 +10,7 @@ DrMeosch's build of [dwm](https://dwm.suckless.org/) 6.5, based on [Luke Smith's
 - Optional system monitor section centred in the bar (CPU usage with a small graph of its recent samples, plus the CPU temperature and every fan's RPM where the machine reports them, and the GPU usage with its own graph on AMD and Intel GPUs, read without ever waking a sleeping GPU (Intel's needs a capability, see [Intel GPU usage](#intel-gpu-usage)); when a long status text leaves it little room the graphs shrink first, and the section is left out when there is none), off by default: <kbd>super+shift+b</kbd> or `dwm.showsysmon: 1`. A separate sampler, `dwmsysmon`, runs only while the section is shown: dwm starts it when the section is turned on and it exits when the section is turned off. It reads the sensors and publishes the values in a root window property, so dwm only draws them and stays responsive when the sampler or a sensor is missing, slow, stuck or sends garbage (the CPU then shows `-` with an empty graph, and a missing temperature or fan is not shown). See [`src/dwm.1`](src/dwm.1).
 - Xresources colors and settings (`dwm.color0`, `dwm.color4`, `dwm.borderpx`, `dwm.selbordercolor`, and `dwm.color1`..`dwm.color15` for status colors).
 - Live theme reload: `SIGUSR2` makes dwm re-read Xresources (`src/sigusr2.c`). `SIGUSR1` stays reserved for dwmblocks.
-- Configurable border width (1 or 2 px) and selected-border color (`src/borderwidth.c`, `src/selborder.c`).
+- Configurable border width and selected-border color. See the [Xresources settings in `dwm(1)`](src/dwm.1).
 
 ## Layout
 
@@ -88,17 +88,7 @@ dwm.switcheropacity: 92
 XRESOURCES
 ```
 
-Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors. The highlighted row inverts the two colors.
-
-Opacity is a whole percent from 0 (invisible) to 100 (fully opaque). A missing or invalid setting leaves opacity up to the compositor's normal rules. Opacity requires a compositor that honors `_NET_WM_WINDOW_OPACITY` on override-redirect windows. Without one, the panel remains opaque.
-
-To reset a live override, apply an empty value for that key and send `SIGUSR2` to dwm. Both commands update only the supplied keys in the global Xresources database. Remove any saved override for that key from `~/.Xresources` to keep it from being reapplied.
-
-```sh
-printf '%s\n' 'dwm.switcheropacity:' | xrdb -global -override
-```
-
-If the resources are unchanged and the requested switcher style is already active, `SIGUSR2` runs the ordinary reload. It can reapply configured settings and refresh client focus and layout.
+See the `SIGUSR2` section in [`dwm(1)`](src/dwm.1) for defaults, compositor support, and how to reset overrides.
 
 ## Testing
 
