@@ -90,14 +90,16 @@ and hint removal for missing, invalid, and empty settings. Empty color overrides
 restore the normal foreground, background, and border. The check also verifies
 that app opacity hints and keyboard focus on the client's child window survive
 each reload. With the panel closed, the check uses Mod+F5 to reload only
-switcher opacity. It verifies that the
-visible scratchpad keeps its moved geometry and child focus, and that the next
-panel uses the new opacity hint. Before the next resource reload, it runs a
+switcher opacity. It verifies that the visible scratchpad keeps its moved
+geometry and child focus and that the next panel uses the new opacity hint.
+Before the next resource reload, it runs a
 layout pass to verify the tile stays gapless and toggles sysmon once to verify
-it publishes off. Ordinary theme changes take effect. A plain SIGUSR2, an
-already-applied opacity replay, and adding the bar override with the switcher
-already at 90% all reapply configured sysmon and refresh the scratchpad's focus
-and layout. The open panel check retries a switcher style
+it publishes off. A plain SIGUSR2, an already-applied opacity replay, and
+adding or clearing the bar override all reapply configured sysmon and refresh
+the scratchpad's focus and layout. The check reads the opacity CARDINAL on
+both live bars and the reopened switcher after each ordinary reload, including
+the transition from an 80% switcher with default bars to 90% on all three
+windows. The open panel check retries a switcher style
 after a failed theme, verifies the reopened panel and a subsequent reset, and
 checks that theme recovery restores both client borders from 3 to 2 pixels and
 repaints the selected border with the recovery color. The check verifies

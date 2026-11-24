@@ -523,20 +523,21 @@ printf '%s\en' 'dwm.switcheropacity:' | xrdb \-global \-override
 .fi
 .PP
 When the requested switcher style is already active or a setting such as the
-palette or border width changes, dwm runs an ordinary reload. It reapplies any
-configured
+palette, border width, or effective bar opacity override changes, dwm runs an
+ordinary reload. It reapplies any configured
 .BR dwm.showsysmon " and " dwm.smartgaps
 values and refreshes client focus and layout when it installs the palette.
 An absent resource leaves its live toggle in its current state.
 .PP
 A switcher style change outside an ordinary reload updates an open panel and
 preserves client focus, window layout, and the live system monitor and smart
-gaps toggles. The bar opacity hint is applied independently in either case.
+gaps toggles.
 .PP
-If color allocation fails on a combined theme and switcher reload, reload the
-same resources again to retry the pending switcher style. On that retry, the
-switcher inherits any unspecified colors from the last successfully applied bar
-palette.
+If color allocation fails on a combined theme and switcher reload and the
+requested bar opacity override matches the applied setting, reload the same
+resources again to retry the pending switcher style. On that retry, the
+switcher inherits any unspecified colors from the last successfully applied
+bar palette.
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

@@ -3629,7 +3629,8 @@ xrdb(const Arg *arg)
 	int refresh, new_lightbar;
 
 	(void)arg;
-	refresh = load_xresources() || (switcheropacity == appliedswitcheropacity
+	refresh = load_xresources() || baropacity != appliedbaropacity
+	          || (switcheropacity == appliedswitcheropacity
 	          && !strcasecmp(switcherfgcolor, appliedswitcherfg)
 	          && !strcasecmp(switcherbgcolor, appliedswitcherbg));
 	if (refresh) {
@@ -3664,20 +3665,16 @@ xrdb(const Arg *arg)
 		switcherdraw();
 	}
 
-	if (refresh) {
-		strcpy(appliedfg, normfgcolor);
-		strcpy(appliedbg, normbgcolor);
-		lightbar = new_lightbar;
-	}
-	if (refresh || baropacity != appliedbaropacity) {
-		appliedbaropacity = baropacity;
-		for (m = mons; m; m = m->next)
-			updatebaropacity(m);
-	}
-	if (refresh) {
-		focus(NULL);
-		arrange(NULL);
-	}
+	if (!refresh)
+		return;
+	strcpy(appliedfg, normfgcolor);
+	strcpy(appliedbg, normbgcolor);
+	lightbar = new_lightbar;
+	appliedbaropacity = baropacity;
+	for (m = mons; m; m = m->next)
+		updatebaropacity(m);
+	focus(NULL);
+	arrange(NULL);
 }
 
 static int
