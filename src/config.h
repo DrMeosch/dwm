@@ -55,6 +55,11 @@ static const char col_gray1[]        = "#222222";
 static const char col_gray2[]        = "#444444";
 static const char col_gray3[]        = "#bbbbbb";
 
+/* Window switcher: hold switchermod and tap switcherkey to open it and step down,
+ * add Shift to cancel, release switchermod to switch. Use one modifier, not Shift. */
+static const unsigned int switchermod = ControlMask;
+static const KeySym switcherkey = XK_Escape;
+
 /* Empty switcher overrides inherit the normal bar colors. */
 static char switcherfgcolor[COLORLEN];
 static char switcherbgcolor[COLORLEN];

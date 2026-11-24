@@ -18,6 +18,8 @@
 
 static int failures;
 static int (*default_xerror)(Display *, XErrorEvent *);
+/* The switcher key held with Ctrl; switcher-key checks another configured key. */
+static KeySym opener = XK_Escape;
 
 #define CHECK(condition, ...) do { \
 	if (!(condition)) { \
@@ -52,6 +54,24 @@ active_window(Display *dpy, Window root)
 	if (data)
 		XFree(data);
 	return active;
+}
+
+static int
+wm_running(Display *dpy, Window root)
+{
+	Atom property = XInternAtom(dpy, "_NET_SUPPORTING_WM_CHECK", False);
+	Atom type;
+	int format;
+	unsigned long count, remaining;
+	unsigned char *data = NULL;
+	int found;
+
+	found = XGetWindowProperty(dpy, root, property, 0, 1, False, XA_WINDOW,
+	                           &type, &format, &count, &remaining, &data) == Success
+	     && type == XA_WINDOW && format == 32 && count == 1;
+	if (data)
+		XFree(data);
+	return found;
 }
 
 static int
@@ -519,8 +539,17 @@ static int
 open_switcher(Display *dpy, Window root, KeySym ctrl, Geometry *outer)
 {
 	switcher_key(dpy, ctrl, True);
-	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, opener);
 	return wait_panel(dpy, root, 1, outer);
+}
+
+/* With Ctrl held, Shift plus the opener cancels the panel. */
+static void
+cancel_switcher(Display *dpy)
+{
+	switcher_key(dpy, XK_Shift_L, True);
+	switcher_tap(dpy, opener);
+	switcher_key(dpy, XK_Shift_L, False);
 }
 
 static int
@@ -723,7 +752,7 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 			}
 		}
 		if (styles[i].theme == Failed) {
-			switcher_tap(dpy, XK_Escape);
+			cancel_switcher(dpy);
 			switcher_key(dpy, XK_Control_L, False);
 			if (!wait_panel(dpy, root, 0, &panel) || !open_switcher(dpy, root, XK_Control_L, &panel)
 			|| !(win = switcher_panel(dpy, root, &panel))) {
@@ -736,9 +765,9 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		check_window_opacities(dpy, root, win, first, styles[i].baropacity, i);
 	}
 close:
-	switcher_tap(dpy, XK_Escape);
+	cancel_switcher(dpy);
 	switcher_key(dpy, XK_Control_L, False);
-	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reloaded panel");
+	CHECK(wait_panel(dpy, root, 0, &panel), "cancel did not dismiss the reloaded panel");
 	XDestroyWindow(dpy, probe);
 	XDestroyWindow(dpy, first);
 	XDestroyWindow(dpy, second);
@@ -777,9 +806,9 @@ check_reopened_switcher_opacity(Display *dpy, Window root, unsigned long opacity
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
 	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, opacity),
 	      "next switcher panel did not use opacity %#lx", opacity);
-	switcher_tap(dpy, XK_Escape);
+	cancel_switcher(dpy);
 	switcher_key(dpy, XK_Control_L, False);
-	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reopened panel");
+	CHECK(wait_panel(dpy, root, 0, &panel), "cancel did not dismiss the reopened panel");
 }
 
 static void
@@ -910,7 +939,7 @@ queued_switch(Display *dpy, KeySym ctrl, KeySym step, int steps, Window target)
 	XSync(dpy, True);
 	XGrabServer(dpy);
 	switcher_key(dpy, ctrl, True);
-	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, opener);
 	while (steps-- > 0)
 		switcher_tap(dpy, step);
 	switcher_key(dpy, ctrl, False);
@@ -1099,10 +1128,10 @@ check_floating_switcher(Display *dpy, Window root, Window parent, XineramaScreen
 			continue;
 		}
 		switcher_key(dpy, XK_Control_L, True);
-		switcher_tap(dpy, XK_Tab);
+		switcher_tap(dpy, opener);
 		XTestFakeButtonEvent(dpy, button, False, CurrentTime);
 		CHECK(wait_panel(dpy, root, 1, &panel), "queued opener blocked button %d release", button);
-		switcher_tap(dpy, XK_Escape);
+		cancel_switcher(dpy);
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel after drag");
 	}
@@ -1145,15 +1174,15 @@ wait_configure_ack(Display *dpy, Window tiled)
 }
 
 static int
-wait_tab_release_handled(Display *dpy, Window tiled)
+wait_opener_release_handled(Display *dpy, Window tiled)
 {
-	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	KeyCode code = XKeysymToKeycode(dpy, opener);
 	char keys[32];
 	int i;
 
 	for (i = 0; i < 80; i++) {
 		XQueryKeymap(dpy, keys);
-		if (!(keys[tab / 8] & (1 << (tab % 8))))
+		if (!(keys[code / 8] & (1 << (code % 8))))
 			return wait_configure_ack(dpy, tiled);
 		pause_millis(25);
 	}
@@ -1192,9 +1221,9 @@ check_keyboard_scope(Display *dpy, Window root)
 	CHECK(mask.deviceid && keyboard.device_id, "independent test keyboard was not found");
 	if (mask.deviceid) {
 		XISetMask(bits, XI_KeyPress);
-		CHECK(XIGrabKeycode(dpy, mask.deviceid, XKeysymToKeycode(dpy, XK_Tab), root, GrabModeAsync,
+		CHECK(XIGrabKeycode(dpy, mask.deviceid, XKeysymToKeycode(dpy, opener), root, GrabModeAsync,
 		                    GrabModeAsync, False, &mask, 1, &mod) == 0,
-		      "dwm reserved Ctrl+Tab on an independent keyboard");
+		      "dwm reserved the Ctrl opener on an independent keyboard");
 		if (keyboard.device_id) {
 			origin = create_client(dpy, root, "keyboard scope origin", 0);
 			CHECK(wait_active(dpy, root, origin) && XISetFocus(dpy, mask.deviceid, origin, CurrentTime) == Success,
@@ -1203,7 +1232,7 @@ check_keyboard_scope(Display *dpy, Window root)
 			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, True, NULL, 0, CurrentTime);
 			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, False, NULL, 0, CurrentTime);
 			CHECK(wait_configure_ack(dpy, origin), "independent keyboard did not settle before opener");
-			CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && wait_tab_release_handled(dpy, origin)
+			CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && wait_opener_release_handled(dpy, origin)
 			   && switcher_panel(dpy, root, &panel), "panel did not stay open before independent binding");
 			XTestFakeDeviceKeyEvent(dpy, &keyboard, super, True, NULL, 0, CurrentTime);
 			XTestFakeDeviceKeyEvent(dpy, &keyboard, j, True, NULL, 0, CurrentTime);
@@ -1227,7 +1256,7 @@ check_switcher_without_numlock(Display *dpy, Window root, Window origin)
 {
 	KeyCode numlock = XKeysymToKeycode(dpy, XK_Num_Lock);
 	KeyCode altgr = XKeysymToKeycode(dpy, XK_ISO_Level3_Shift);
-	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
+	KeyCode tab = XKeysymToKeycode(dpy, opener);
 	KeySym replacement = XK_F12;
 	Display *reader;
 	XModifierKeymap *modmap;
@@ -1235,7 +1264,7 @@ check_switcher_without_numlock(Display *dpy, Window root, Window origin)
 	Geometry panel = {0};
 	int i, padded = 0;
 
-	CHECK(numlock && altgr && tab, "Num Lock regression requires Num Lock, AltGr and Tab keycodes");
+	CHECK(numlock && altgr && tab, "Num Lock regression requires Num Lock, AltGr and opener keycodes");
 	if (!numlock || !altgr || !tab)
 		return;
 	XChangeKeyboardMapping(dpy, numlock, 1, &replacement, 1);
@@ -1258,11 +1287,11 @@ check_switcher_without_numlock(Display *dpy, Window root, Window origin)
 	      "AltGr did not activate Mod5 with Ctrl");
 	tap_keycode(dpy, tab);
 	CHECK(wait_for_input(dpy, origin, KeyPress, tab, ControlMask) && !switcher_panel(dpy, root, &panel),
-	      "Ctrl+AltGr+Tab did not reach the application without Num Lock");
+	      "Ctrl+AltGr+opener did not reach the application without Num Lock");
 	XTestFakeKeyEvent(dpy, altgr, False, CurrentTime);
 	switcher_key(dpy, XK_Control_L, False);
-	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "plain Ctrl+Tab stopped working without Num Lock");
-	switcher_tap(dpy, XK_Escape);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "plain Ctrl opener stopped working without Num Lock");
+	cancel_switcher(dpy);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel without Num Lock");
 }
@@ -1271,17 +1300,16 @@ static void
 check_switcher_group(Display *dpy, Window root)
 {
 	KeySym groups[][4] = {
-		{ XK_Tab, XK_ISO_Left_Tab, XK_F3, XK_F3 },
-		{ XK_F1, XK_F1, XK_Tab, XK_ISO_Left_Tab },
+		{ opener, opener, XK_F3, XK_F3 },
+		{ XK_F1, XK_F1, opener, opener },
 		{ XK_c, XK_C, XK_j, XK_J },
-		{ XK_v, XK_V, XK_k, XK_K },
-		{ XK_F2, XK_F2, XK_Escape, XK_Escape }
+		{ XK_v, XK_V, XK_k, XK_K }
 	};
 	XkbDeviceInfoPtr keyboard = XkbGetDeviceInfo(dpy, 0, XkbUseCoreKbd, XkbDfltXIClass, XkbDfltXIId);
 	XIGrabModifiers mod = { ControlMask, 0 };
 	unsigned char bits[XIMaskLen(XI_KeyPress)] = {0};
 	XIEventMask mask = { 0, sizeof bits, bits };
-	KeyCode codes[5];
+	KeyCode codes[4];
 	Window first, middle, origin;
 	Geometry panel = {0};
 	XkbStateRec state;
@@ -1293,9 +1321,9 @@ check_switcher_group(Display *dpy, Window root)
 	mask.deviceid = keyboard->device_spec;
 	XkbFreeDeviceInfo(keyboard, XkbXI_AllDeviceFeaturesMask, True);
 	XISetMask(bits, XI_KeyPress);
-	for (i = 0; i < 5; i++)
+	for (i = 0; i < 4; i++)
 		codes[i] = XKeysymToKeycode(dpy, groups[i][0]);
-	for (i = 0; i < 5; i++)
+	for (i = 0; i < 4; i++)
 		XChangeKeyboardMapping(dpy, codes[i], 4, groups[i], 1);
 	first = create_client(dpy, root, "layout first", 0);
 	CHECK(wait_active(dpy, root, first), "first layout client was not selected");
@@ -1324,32 +1352,39 @@ check_switcher_group(Display *dpy, Window root)
 	for (i = 2; i < 5; i++) {
 		switcher_key(dpy, XK_Control_L, True);
 		tap_keycode(dpy, codes[1]);
-		CHECK(wait_panel(dpy, root, 1, &panel), "second group's Ctrl+Tab did not open");
+		CHECK(wait_panel(dpy, root, 1, &panel), "second group's Ctrl opener did not open");
 		if (i == 3)
 			tap_keycode(dpy, codes[2]);
-		tap_keycode(dpy, codes[i]);
-		if (i == 4)
-			CHECK(wait_panel(dpy, root, 0, &panel), "second group's Escape did not cancel");
+		if (i < 4) {
+			tap_keycode(dpy, codes[i]);
+		} else {
+			switcher_key(dpy, XK_Shift_L, True);
+			tap_keycode(dpy, codes[1]);
+			switcher_key(dpy, XK_Shift_L, False);
+			CHECK(wait_panel(dpy, root, 0, &panel), "second group's Shift+opener did not cancel");
+		}
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, i == 2 ? first : origin),
-		      "second group's %s left the wrong window focused", XKeysymToString(groups[i][2]));
+		      "second group's %s left the wrong window focused", i < 4 ? XKeysymToString(groups[i][2]) : "cancel");
 	}
 	mod.modifiers = ControlMask | LockMask;
 	CHECK(codes[0] < codes[1] && !XIGrabKeycode(dpy, mask.deviceid, codes[0], root, GrabModeAsync,
 	                                         GrabModeAsync, False, &mask, 1, &mod),
-	      "could not reserve Ctrl+CapsLock on the lower Tab keycode");
-	groups[0][2] = XK_Tab;
-	groups[0][3] = XK_ISO_Left_Tab;
+	      "could not reserve Ctrl+CapsLock on the lower opener keycode");
+	groups[0][2] = opener;
+	groups[0][3] = opener;
 	XChangeKeyboardMapping(dpy, codes[0], 4, groups[0], 1);
 	XSync(dpy, True);
 	CHECK(wait_configure_ack(dpy, origin), "keyboard mapping change was not acknowledged");
 	switcher_key(dpy, XK_Control_L, True);
 	tap_keycode(dpy, codes[1]);
-	CHECK(wait_panel(dpy, root, 1, &panel), "grab refusal on one Tab keycode disabled Ctrl+Tab on another");
-	tap_keycode(dpy, codes[4]);
+	CHECK(wait_panel(dpy, root, 1, &panel), "grab refusal on one opener keycode disabled it on another");
+	switcher_key(dpy, XK_Shift_L, True);
+	tap_keycode(dpy, codes[1]);
+	switcher_key(dpy, XK_Shift_L, False);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel) && active_window(dpy, root) == origin,
-	      "could not cancel the second Tab keycode's panel");
+	      "could not cancel the second opener keycode's panel");
 	XIUngrabKeycode(dpy, mask.deviceid, codes[0], root, 1, &mod);
 	XkbLockGroup(dpy, XkbUseCoreKbd, 0);
 	check_switcher_without_numlock(dpy, root, origin);
@@ -1430,58 +1465,110 @@ check_hidden_mixed_scratchpad(Display *dpy, Window root, XineramaScreenInfo head
 	CHECK(wait_active(dpy, root, None), "scratchpad test did not leave an empty monitor");
 }
 
+/* Ctrl+other must reach the application, and dwm must not hold its root grab. */
 static void
-check_switcher_tab(Display *dpy, Window root)
+check_unreserved(Display *dpy, Window root, Window origin, KeySym sym, unsigned int mods)
+{
+	XkbDeviceInfoPtr keyboard = XkbGetDeviceInfo(dpy, 0, XkbUseCoreKbd, XkbDfltXIClass, XkbDfltXIId);
+	XIGrabModifiers mod = { mods, 0 };
+	unsigned char bits[XIMaskLen(XI_KeyPress)] = {0};
+	XIEventMask mask = { 0, sizeof bits, bits };
+	KeyCode code = XKeysymToKeycode(dpy, sym);
+	Geometry panel = {0};
+
+	CHECK(keyboard && code, "could not prepare the %s check", XKeysymToString(sym));
+	if (!keyboard || !code)
+		return;
+	mask.deviceid = keyboard->device_spec;
+	XkbFreeDeviceInfo(keyboard, XkbXI_AllDeviceFeaturesMask, True);
+	XISetMask(bits, XI_KeyPress);
+	CHECK(!XIGrabKeycode(dpy, mask.deviceid, code, root, GrabModeAsync, GrabModeAsync, False, &mask, 1, &mod),
+	      "dwm reserved %s with modifiers %#x", XKeysymToString(sym), mods);
+	XIUngrabKeycode(dpy, mask.deviceid, code, root, 1, &mod);
+	XSync(dpy, True);
+	switcher_key(dpy, XK_Control_L, True);
+	if (mods & ShiftMask)
+		switcher_key(dpy, XK_Shift_L, True);
+	tap_keycode(dpy, code);
+	if (mods & ShiftMask)
+		switcher_key(dpy, XK_Shift_L, False);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_for_input(dpy, origin, KeyPress, code, ControlMask) && !switcher_panel(dpy, root, &panel)
+	   && active_window(dpy, root) == origin,
+	      "%s with modifiers %#x did not reach the focused application", XKeysymToString(sym), mods);
+}
+
+static void
+check_switcher_step(Display *dpy, Window root)
 {
 	const int rows[] = { 2, 0, 1, 2 };
-	KeyCode tab = XKeysymToKeycode(dpy, XK_Tab);
-	XKeyboardControl repeat = { .key = tab, .auto_repeat_mode = AutoRepeatModeOn };
+	KeyCode code = XKeysymToKeycode(dpy, opener);
+	XKeyboardControl repeat = { .key = code, .auto_repeat_mode = AutoRepeatModeOn };
 	Geometry panel = {0};
 	Window target, previous, origin, panelwin, focused;
 	int height, row, revert;
 
-	target = switcher_client(dpy, root, "Tab target", 1, 0);
-	CHECK(wait_active(dpy, root, target), "could not focus the Tab target");
-	previous = switcher_client(dpy, root, "Tab previous", 1, 0);
-	CHECK(wait_active(dpy, root, previous), "could not focus the previous Tab window");
-	origin = switcher_client(dpy, root, "Tab origin", 1, 0);
-	CHECK(wait_active(dpy, root, origin), "could not focus the Tab origin");
+	target = switcher_client(dpy, root, "Step target", 1, 0);
+	CHECK(wait_active(dpy, root, target), "could not focus the step target");
+	previous = switcher_client(dpy, root, "Step previous", 1, 0);
+	CHECK(wait_active(dpy, root, previous), "could not focus the previous step window");
+	origin = switcher_client(dpy, root, "Step origin", 1, 0);
+	CHECK(wait_active(dpy, root, origin), "could not focus the step origin");
 	XSelectInput(dpy, origin, KeyPressMask | StructureNotifyMask);
+	check_unreserved(dpy, root, origin, opener == XK_Escape ? XK_Tab : XK_Escape, ControlMask);
+	check_unreserved(dpy, root, origin, opener, ControlMask | ShiftMask);
 	XAutoRepeatOn(dpy);
 	XChangeKeyboardControl(dpy, KBKey | KBAutoRepeatMode, &repeat);
-	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 1000), "could not set the Tab repeat rate");
-	switcher_key(dpy, XK_Tab, True);
-	CHECK(wait_for_input(dpy, origin, KeyPress, tab, 0) && wait_for_input(dpy, origin, KeyPress, tab, 0),
-	      "holding Tab did not generate a repeat at the focused client");
-	switcher_key(dpy, XK_Tab, False);
-	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "Ctrl+Tab did not open the panel for Tab navigation");
+	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 1000), "could not set the opener repeat rate");
+	switcher_key(dpy, opener, True);
+	CHECK(wait_for_input(dpy, origin, KeyPress, code, 0) && wait_for_input(dpy, origin, KeyPress, code, 0),
+	      "holding the opener did not generate a repeat at the focused client");
+	switcher_key(dpy, opener, False);
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "the Ctrl opener did not open the panel for stepping");
 	panelwin = switcher_panel(dpy, root, &panel);
 	height = panelwin ? geometry(dpy, panelwin).h : 0;
 	row = height / 3;
 	CHECK(height == 3 * row && wait_highlight(dpy, panelwin, height, row, 1)
-	   && active_window(dpy, root) == origin, "Ctrl+Tab did not highlight the previous window while retaining focus");
+	   && active_window(dpy, root) == origin, "the opener did not highlight the previous window while retaining focus");
 	for (size_t i = 0; i < sizeof rows / sizeof rows[0]; i++) {
 		if (i == 1) {
-			switcher_key(dpy, XK_Tab, True);
-			CHECK(wait_highlight(dpy, panelwin, height, row, rows[i]), "held Tab did not wrap to the first row");
+			switcher_key(dpy, opener, True);
+			CHECK(wait_highlight(dpy, panelwin, height, row, rows[i]), "held opener did not wrap to the first row");
 			pause_millis(350);
-			switcher_key(dpy, XK_Tab, False);
-			CHECK(wait_tab_release_handled(dpy, origin), "dwm did not process the held Tab release");
+			switcher_key(dpy, opener, False);
+			CHECK(wait_opener_release_handled(dpy, origin), "dwm did not process the held opener release");
 		} else
-			switcher_tap(dpy, XK_Tab);
+			switcher_tap(dpy, opener);
 		CHECK(wait_highlight(dpy, panelwin, height, row, rows[i]),
-		      "Tab press %zu did not advance once to row %d", i + 2, rows[i]);
+		      "opener press %zu did not advance once to row %d", i + 2, rows[i]);
 		XGetInputFocus(dpy, &focused, &revert);
 		CHECK(focused == origin && active_window(dpy, root) == origin,
-		      "Tab press %zu changed focus with Ctrl held", i + 2);
+		      "opener press %zu changed focus with Ctrl held", i + 2);
 	}
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, target),
-	      "Ctrl release did not activate the window reached by Tab");
+	      "Ctrl release did not activate the window reached by the opener");
+
+	/* Cancelling after a step must neither commit the highlight nor change focus. */
+	for (int escape = 0; escape < 1 + (opener != XK_Escape); escape++) {
+		CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open the panel to cancel");
+		switcher_tap(dpy, opener);
+		if (escape)
+			switcher_tap(dpy, XK_Escape);
+		else
+			cancel_switcher(dpy);
+		CHECK(wait_panel(dpy, root, 0, &panel), "%s did not cancel the panel with Ctrl held",
+		      escape ? "Escape" : "Shift+opener");
+		switcher_key(dpy, XK_Control_L, False);
+		switcher_tap(dpy, XK_x);
+		CHECK(wait_for_input(dpy, target, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
+		   && active_window(dpy, root) == target,
+		      "Ctrl release after %s committed a row", escape ? "Escape" : "Shift+opener");
+	}
 	XDestroyWindow(dpy, origin);
 	XDestroyWindow(dpy, previous);
 	XDestroyWindow(dpy, target);
-	CHECK(wait_active(dpy, root, None), "Tab navigation did not leave an empty monitor");
+	CHECK(wait_active(dpy, root, None), "opener navigation did not leave an empty monitor");
 }
 
 static void
@@ -1510,7 +1597,7 @@ test_switcher(Display *dpy, Window root)
 	separate = heads[0].x_org + heads[0].width <= heads[1].x_org;
 	check_keyboard_scope(dpy, root);
 	switcher_key(dpy, XK_Control_L, True);
-	switcher_key(dpy, XK_Tab, True);
+	switcher_key(dpy, opener, True);
 	XSync(dpy, False);
 	for (i = 0; i < 80; i++) {
 		if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess)
@@ -1521,10 +1608,10 @@ test_switcher(Display *dpy, Window root)
 	CHECK(!switcher_panel(dpy, root, &panel), "empty monitor opened a panel");
 	if (i < 80)
 		XUngrabKeyboard(dpy, CurrentTime);
-	switcher_key(dpy, XK_Tab, False);
+	switcher_key(dpy, opener, False);
 	switcher_key(dpy, XK_Control_L, False);
 	check_hidden_mixed_scratchpad(dpy, root, heads[0]);
-	check_switcher_tab(dpy, root);
+	check_switcher_step(dpy, root);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
@@ -1554,7 +1641,7 @@ test_switcher(Display *dpy, Window root)
 	   && XkbGetState(dpy, XkbUseCoreKbd, &state) == Success
 	   && (state.latched_mods & ControlMask) && !(state.base_mods & ControlMask),
 	      "could not latch Ctrl with neither Ctrl key held");
-	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, opener);
 	switcher_tap(dpy, XK_x);
 	CHECK(wait_for_input(dpy, a2, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
 	   && active_window(dpy, root) == a2 && !switcher_panel(dpy, root, &panel),
@@ -1588,7 +1675,7 @@ test_switcher(Display *dpy, Window root)
 	record_layout(dpy, b1, b1other, &b1geom, &b1othergeom, 1);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not measure B's ordinary rows");
 	height_b = geometry(dpy, switcher_panel(dpy, root, &panel)).h;
-	switcher_tap(dpy, XK_Escape);
+	cancel_switcher(dpy);
 	switcher_key(dpy, XK_Control_L, False);
 	key(dpy, XK_apostrophe, 0);
 	CHECK(wait_active(dpy, root, pads[1][1]), "could not show B's calculator");
@@ -1602,7 +1689,7 @@ test_switcher(Display *dpy, Window root)
 	key(dpy, XK_4, XK_Control_L);
 	key(dpy, XK_k, 0); /* focus a4 so a1 is the most recent other window */
 	CHECK(wait_active(dpy, root, a4), "could not set up a multi-tag view on A");
-	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "Ctrl+Tab did not open the switcher");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "the Ctrl opener did not open the switcher");
 	if (!panel.w)
 		goto out;
 	CHECK(panel_on(panel, heads[0]), "panel was not centered inside monitor A");
@@ -1629,7 +1716,7 @@ test_switcher(Display *dpy, Window root)
 
 	check_view(dpy, root, a12, 9, heads[0], pads[0]);
 	queued_switch(dpy, XK_Control_L, NoSymbol, 0, a4);
-	CHECK(wait_active(dpy, root, a4), "queued Ctrl+Tab did not activate the previous window");
+	CHECK(wait_active(dpy, root, a4), "queued Ctrl opener did not activate the previous window");
 	queued_switch(dpy, XK_Control_R, XK_k, 2, a23);
 	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, a23),
 	      "reverse wrap did not reach the one row for the multi-tag window");
@@ -1678,24 +1765,24 @@ test_switcher(Display *dpy, Window root)
 	key(dpy, XK_Return, XK_Shift_L);
 	CHECK(wait_visible(dpy, pads[0][0], heads[0], 0), "could not hide A's scratchpad");
 
-	/* Leave Tab held after Escape long enough for auto-repeat to try to reopen. */
+	/* Leave the cancelling opener held long enough for auto-repeat to try to reopen. */
 	CHECK(XkbSetAutoRepeatRate(dpy, XkbUseCoreKbd, 150, 50), "could not set the test repeat rate");
-	switcher_key(dpy, XK_Control_L, True);
-	switcher_key(dpy, XK_Tab, True);
-	CHECK(wait_panel(dpy, root, 1, &panel), "could not open for Escape");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for cancel");
 	switcher_tap(dpy, XK_j);
-	switcher_tap(dpy, XK_Escape);
-	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the panel");
+	switcher_key(dpy, XK_Shift_L, True);
+	switcher_key(dpy, opener, True);
+	CHECK(wait_panel(dpy, root, 0, &panel), "Shift+opener did not dismiss the panel");
+	switcher_key(dpy, XK_Shift_L, False);
 	pause_millis(350);
-	CHECK(!switcher_panel(dpy, root, &panel), "held Tab reopened the switcher after Escape");
-	switcher_key(dpy, XK_Tab, False);
+	CHECK(!switcher_panel(dpy, root, &panel), "held opener reopened the switcher after cancel");
+	switcher_key(dpy, opener, False);
 	XSync(dpy, True);
 	switcher_tap(dpy, XK_j);
 	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_j), ControlMask),
-	      "the client did not receive Ctrl+j immediately after Escape");
+	      "the client did not receive Ctrl+j immediately after cancel");
 	switcher_tap(dpy, XK_k);
 	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_k), ControlMask),
-	      "the client did not receive Ctrl+k immediately after Escape");
+	      "the client did not receive Ctrl+k immediately after cancel");
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(active_window(dpy, root) == a23 && same_geometry(geometry(dpy, a23), a23geom),
 	      "cancelling the switcher changed view or focus");
@@ -1735,14 +1822,14 @@ test_switcher(Display *dpy, Window root)
 	XSelectInput(dpy, a23, KeyPressMask | StructureNotifyMask);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for target removal");
 	XSync(dpy, True);
-	CHECK(wait_tab_release_handled(dpy, a23), "opening Tab release was not handled before target removal");
+	CHECK(wait_opener_release_handled(dpy, a23), "opener release was not handled before target removal");
 	XGrabServer(dpy);
 	XDestroyWindow(dpy, a12);
-	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, opener);
 	switcher_key(dpy, XK_Control_L, False);
 	XUngrabServer(dpy);
-	CHECK(wait_tab_release_handled(dpy, a23), "queued Tab was not handled after target removal");
-	CHECK(wait_panel(dpy, root, 0, &panel), "queued Tab reopened the switcher after target removal");
+	CHECK(wait_opener_release_handled(dpy, a23), "queued opener was not handled after target removal");
+	CHECK(wait_panel(dpy, root, 0, &panel), "queued opener reopened the switcher after target removal");
 	switcher_tap(dpy, XK_x);
 	CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_x), 0)
 	   && active_window(dpy, root) == a23 && wait_visible(dpy, a1, heads[0], 0),
@@ -1750,8 +1837,8 @@ test_switcher(Display *dpy, Window root)
 
 	if (XGrabKeyboard(dpy, a23, False, GrabModeAsync, GrabModeAsync, CurrentTime) == GrabSuccess) {
 		switcher_key(dpy, XK_Control_L, True);
-		switcher_tap(dpy, XK_Tab);
-		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, XK_Tab), ControlMask)
+		switcher_tap(dpy, opener);
+		CHECK(wait_for_input(dpy, a23, KeyPress, XKeysymToKeycode(dpy, opener), ControlMask)
 		   && !switcher_panel(dpy, root, &panel), "switcher interrupted an application keyboard grab");
 		switcher_key(dpy, XK_Control_L, False);
 		XUngrabKeyboard(dpy, CurrentTime);
@@ -1764,7 +1851,7 @@ test_switcher(Display *dpy, Window root)
 	                                       heads[0].width, heads[0].height}),
 	      "could not make the selected client fullscreen");
 	switcher_key(dpy, XK_Control_L, True);
-	switcher_tap(dpy, XK_Tab);
+	switcher_tap(dpy, opener);
 	pause_millis(50);
 	CHECK(!switcher_panel(dpy, root, &panel), "switcher bypassed the fullscreen lock");
 	switcher_key(dpy, XK_Control_L, False);
@@ -1793,13 +1880,13 @@ test_switcher(Display *dpy, Window root)
 		XDestroyWindow(dpy, unrelated);
 		XWarpPointer(dpy, None, b2, 0, 0, 0, 0, 20, 20);
 		switcher_key(dpy, XK_Control_L, True);
-		switcher_tap(dpy, XK_Tab);
+		switcher_tap(dpy, opener);
 		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1,
 		                     heads[1].y_org + heads[1].height - 1, CurrentTime);
 		XUngrabServer(dpy);
 		CHECK(wait_configure_ack(dpy, a23) && switcher_panel(dpy, root, &panel) && panel_on(panel, heads[0])
 		   && active_window(dpy, root) == a23, "same-head motion on B canceled the queued opener on A");
-		switcher_tap(dpy, XK_Escape);
+		cancel_switcher(dpy);
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_panel(dpy, root, 0, &panel), "could not dismiss panel after same-head motion");
 
@@ -1827,14 +1914,14 @@ test_switcher(Display *dpy, Window root)
 				CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open before restack");
 			XSync(dpy, True);
 			if (order == ReleaseFirst)
-				CHECK(wait_tab_release_handled(dpy, a23), "dwm did not acknowledge the post-Tab configure request");
+				CHECK(wait_opener_release_handled(dpy, a23), "dwm did not acknowledge the post-opener configure request");
 			XGrabServer(dpy);
 			XDestroyWindow(dpy, unrelated);
 			if (order == RoundTrip)
 				XTestFakeMotionEvent(dpy, DefaultScreen(dpy), a23geom.x + 20, a23geom.y + 20, CurrentTime);
 			if (order == RoundTrip || order == Pending) {
 				switcher_key(dpy, XK_Control_L, True);
-				switcher_tap(dpy, XK_Tab);
+				switcher_tap(dpy, opener);
 			}
 			if (order == ReleaseFirst) {
 				switcher_key(dpy, XK_Control_L, False);
@@ -1866,7 +1953,7 @@ test_switcher(Display *dpy, Window root)
 			} else if (order == Closed) {
 				CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[0]),
 				      "closed restack changed the selected monitor");
-				switcher_tap(dpy, XK_Escape);
+				cancel_switcher(dpy);
 			}
 			CHECK(wait_panel(dpy, root, 0, &panel), "restack left the panel armed in order %d", order);
 			if (order <= Held)
@@ -1930,7 +2017,7 @@ test_switcher(Display *dpy, Window root)
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(open_switcher(dpy, root, XK_Control_L, &panel) && panel_on(panel, heads[1]),
 		      "reopening after pointer monitor selection did not stay on B");
-		switcher_tap(dpy, XK_Escape);
+		cancel_switcher(dpy);
 		switcher_key(dpy, XK_Control_L, False);
 		CHECK(wait_panel(dpy, root, 0, &panel), "B's panel did not close before the bar crossing test");
 		XTestFakeMotionEvent(dpy, DefaultScreen(dpy), heads[1].x_org + 1, heads[1].y_org + 1, CurrentTime);
@@ -1982,6 +2069,23 @@ main(int argc, char **argv)
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 switcher appearance and live reload checks passed");
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+	if (argc == 3 && !strcmp(argv[1], "switcher-key")) {
+		opener = XStringToKeysym(argv[2]);
+		if (opener == NoSymbol || !XKeysymToKeycode(dpy, opener)) {
+			fprintf(stderr, "unknown switcher key %s\n", argv[2]);
+			XCloseDisplay(dpy);
+			return EXIT_FAILURE;
+		}
+		default_xerror = XSetErrorHandler(switcher_xerror);
+		/* This check starts with dwm; wait until it manages the root window. */
+		for (int i = 0; i < 80 && !wm_running(dpy, root); i++)
+			pause_millis(25);
+		check_switcher_step(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			printf("X11 window switcher checks passed for a Ctrl+%s build\n", argv[2]);
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 	if (argc == 2 && !strcmp(argv[1], "switcher")) {

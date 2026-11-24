@@ -49,13 +49,17 @@ trap cleanup EXIT HUP INT TERM
 
 flags=$(pkg-config --cflags x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
 libs=$(pkg-config --libs x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
-$cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
-	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
-	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
-	-DVERSION=\"6.5\" $flags "$root/src/dwm.c" "$root/src/drw.c" \
-	"$root/src/borderwidth.c" "$root/src/selborder.c" \
-	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
-	$libs -lm -o "$tmp/dwm"
+# build_dwm <dwm.c> <output>: config.h is taken from the directory of dwm.c
+build_dwm() {
+	$cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
+		-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
+		-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
+		-DVERSION=\"6.5\" $flags "$1" "$root/src/drw.c" \
+		"$root/src/borderwidth.c" "$root/src/selborder.c" \
+		"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
+		$libs -lm -o "$2"
+}
+build_dwm "$root/src/dwm.c" "$tmp/dwm"
 $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-Wno-unused-parameter -Wno-sign-compare \
 	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
@@ -142,6 +146,32 @@ XRESOURCES
 	dwm_pid=$!
 	if ! "$tmp/input" switcher-appearance "$dwm_pid" || ! "$tmp/input" switcher; then
 		cat "$tmp/dwm-switcher.log" >&2
+		exit 1
+	fi
+	kill -TERM "$dwm_pid"
+	wait "$dwm_pid"
+	dwm_pid=
+	kill -TERM "$server_pid"
+	wait "$server_pid"
+	server_pid=
+
+	# A config.h that restores Ctrl+Tab must switch with it and leave Ctrl+Esc
+	# to applications.
+	mkdir "$tmp/tab-config"
+	cp "$root"/src/*.c "$root"/src/*.h "$tmp/tab-config/"
+	sed 's/^static const KeySym switcherkey = XK_Escape;$/static const KeySym switcherkey = XK_Tab;/' \
+		"$root/src/config.h" >"$tmp/tab-config/config.h"
+	if ! grep -q '^static const KeySym switcherkey = XK_Tab;$' "$tmp/tab-config/config.h"; then
+		printf '%s\n' 'could not configure the Ctrl+Tab switcher build'
+		exit 1
+	fi
+	build_dwm "$tmp/tab-config/dwm.c" "$tmp/dwm-tab"
+	start_xvfb -screen 0 1000x750x24
+	printf 'dwm.showsysmon: 0\n' | xrdb -load
+	PATH=$tmp/bin:$PATH "$tmp/dwm-tab" >"$tmp/dwm-tab.log" 2>&1 &
+	dwm_pid=$!
+	if ! "$tmp/input" switcher-key Tab; then
+		cat "$tmp/dwm-tab.log" >&2
 		exit 1
 	fi
 	kill -TERM "$dwm_pid"

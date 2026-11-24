@@ -1608,7 +1608,7 @@ switcherkeysym(KeyCode code, int group)
 }
 
 static void
-grabswitchertab(void)
+grabswitcherkey(void)
 {
 	int first, last, k;
 	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
@@ -1623,10 +1623,10 @@ grabswitchertab(void)
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
 	for (k = first; k <= last; k++)
-		if (switcherkeysym(k, state.group) == XK_Tab) {
+		if (switcherkeysym(k, state.group) == switcherkey) {
 			XIGrabModifiers mods[] = {
-				{ ControlMask, 0 }, { ControlMask | LockMask, 0 },
-				{ ControlMask | numlockmask, 0 }, { ControlMask | numlockmask | LockMask, 0 }
+				{ switchermod, 0 }, { switchermod | LockMask, 0 },
+				{ switchermod | numlockmask, 0 }, { switchermod | numlockmask | LockMask, 0 }
 			};
 			XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
 			              False, &mask, LENGTH(mods), mods);
@@ -1649,7 +1649,7 @@ grabkeys(void)
 		if (!syms)
 			return;
 		if (switcherxi)
-			grabswitchertab();
+			grabswitcherkey();
 		for (k = start; k <= end; k++) {
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
@@ -2183,7 +2183,7 @@ run(void)
 			XNextEvent(dpy, &ev);
 			if (switcherxi && ev.type == switcherxkb) {
 				if (((XkbEvent *)&ev)->any.xkb_type == XkbStateNotify)
-					grabswitchertab();
+					grabswitcherkey();
 			} else if (ev.type < LASTEvent && handler[ev.type])
 				handler[ev.type](&ev); /* call handler */
 		}
@@ -2745,8 +2745,8 @@ switcherstart(XIDeviceEvent *ev)
 	size_t count = 0, i;
 	int w, h, rowheight = bh + 6;
 
-	if (ev->flags & XIKeyRepeat || CLEANMASK(ev->mods.effective) != ControlMask
-	|| !(ev->mods.base & ControlMask) || m->mw < 3 || m->mh < rowheight + 2
+	if (ev->flags & XIKeyRepeat || CLEANMASK(ev->mods.effective) != switchermod
+	|| !(ev->mods.base & switchermod) || m->mw < 3 || m->mh < rowheight + 2
 	|| (m->sel && m->sel->isfullscreen && lockfullscreen))
 		goto refuse;
 	for (c = m->stack; c; c = c->snext)
@@ -2756,7 +2756,7 @@ switcherstart(XIDeviceEvent *ev)
 		goto refuse;
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
-	/* Replacing the passive grab prevents Tab release from ending navigation. */
+	/* Replacing the passive grab prevents the key release from ending navigation. */
 	if (XIGetFocus(dpy, ev->deviceid, &switcher.focus) != Success
 	|| XIGrabDevice(dpy, ev->deviceid, root, ev->time, None, GrabModeSync,
 	                GrabModeAsync, False, &mask) != GrabSuccess)
@@ -2821,19 +2821,20 @@ switcherevent(XEvent *e)
 	switcherungrabserial = 0;
 	sym = switcherkeysym((KeyCode)ev->detail, ev->group.effective);
 	if (!switcher.mon) {
-		if (ev->evtype == XI_KeyPress && sym == XK_Tab)
+		if (ev->evtype == XI_KeyPress && sym == switcherkey)
 			switcherstart(ev);
 		else if (ev->evtype == XI_KeyPress)
 			XIAllowEvents(dpy, ev->deviceid, XIReplayDevice, ev->time);
 	} else if (ev->evtype == XI_KeyRelease) {
 		if (XkbGetState(dpy, ev->deviceid, &state) != Success)
 			switchercancel();
-		else if (!(state.base_mods & ControlMask))
+		else if (!(state.base_mods & switchermod))
 			switchercommit();
-	} else if (sym == XK_Escape) {
+	} else if ((sym == switcherkey && CLEANMASK(ev->mods.effective) == (switchermod | ShiftMask))
+	           || (sym == XK_Escape && switcherkey != XK_Escape)) {
 		switchercancel();
-	} else if (sym == XK_j || (sym == XK_Tab && !(ev->flags & XIKeyRepeat)
-	           && CLEANMASK(ev->mods.effective) == ControlMask && (ev->mods.base & ControlMask))) {
+	} else if (sym == XK_j || (sym == switcherkey && !(ev->flags & XIKeyRepeat)
+	           && CLEANMASK(ev->mods.effective) == switchermod && (ev->mods.base & switchermod))) {
 		switcher.selected = (switcher.selected + 1) % switcher.count;
 		switcherdraw();
 	} else if (sym == XK_k) {
