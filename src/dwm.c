@@ -3691,13 +3691,14 @@ updatebaropacity(Monitor *m)
 static void
 updateswitcheropacity(void)
 {
-	unsigned long opacity = 0xffffffffULL * switcheropacity / 100;
+	if (switcheropacity >= 0) {
+		unsigned long opacity = 0xffffffffULL * switcheropacity / 100;
 
-	if (switcheropacity < 100)
 		XChangeProperty(dpy, switcher.win, opacityatom, XA_CARDINAL, 32,
 		                PropModeReplace, (const unsigned char *)&opacity, 1);
-	else
+	} else {
 		XDeleteProperty(dpy, switcher.win, opacityatom);
+	}
 }
 
 static void
@@ -3774,7 +3775,7 @@ loadstatuspalette(XrmDatabase db)
 	}
 }
 
-static unsigned int
+static int
 loadswitcheropacity(XrmDatabase db)
 {
 	XrmValue value;
@@ -3783,13 +3784,13 @@ loadswitcheropacity(XrmDatabase db)
 
 	if (!db || !XrmGetResource(db, "dwm.switcheropacity", "Dwm.Switcheropacity", &type, &value)
 	|| !value.addr || strcmp(type, "String"))
-		return 100;
+		return -1;
 	percent = strtol(value.addr, &end, 10);
 	if (end == value.addr)
-		return 100;
+		return -1;
 	while (isspace((unsigned char)*end))
 		end++;
-	return !*end && percent >= 0 && percent <= 100 ? percent : 100;
+	return !*end && percent >= 0 && percent <= 100 ? percent : -1;
 }
 
 void
@@ -3804,7 +3805,7 @@ load_xresources(void)
 	strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
 	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
 	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
-	switcheropacity = 100;
+	switcheropacity = -1;
 	borderpx = BORDERPX_DEFAULT;
 	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
 	loadstatuspalette(NULL);

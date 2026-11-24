@@ -500,14 +500,18 @@ invalid override inherits the corresponding normal bar color.
 .TP
 .B dwm.switcheropacity
 Set the switcher's opacity as a whole percent from 0 (invisible) to 100 (opaque).
-At 100, or if the value is missing or invalid, dwm leaves the opacity up to the
+If the value is missing or invalid, dwm leaves the opacity up to the
 compositor's normal rules. A compositor that honors _NET_WM_WINDOW_OPACITY
 on override-redirect windows is required for translucency. Without one,
 the panel remains opaque.
 .PP
 These three resources apply only to the switcher, including an open panel
-on SIGUSR2. To reset a value after removing it from your Xresources file,
-use xrdb -load rather than xrdb -merge before sending SIGUSR2.
+on SIGUSR2. To reset a live override, merge an empty value for that key and send
+SIGUSR2 to dwm. This preserves the rest of the live Xresources database.
+Remove the old value from your Xresources file to keep it from being reapplied.
+.nf
+printf '%s\en' 'dwm.switcheropacity:' | xrdb -merge
+.fi
 .TP
 .B SIGUSR1
 Reserved for the dwmblocks notification protocol; it does not request a dwm reload.

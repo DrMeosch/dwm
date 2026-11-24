@@ -134,7 +134,7 @@ dwm.color0: #102030
 dwm.color4: #d0c0a0
 dwm.switcherfgcolor: #fedcba
 dwm.switcherbgcolor: #563412
-dwm.switcheropacity: 20
+dwm.switcheropacity: 100
 XRESOURCES
 	PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm-switcher.log" 2>&1 &
 	dwm_pid=$!

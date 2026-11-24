@@ -58,7 +58,7 @@ static const char col_gray3[]        = "#bbbbbb";
 /* Empty switcher overrides inherit the normal bar colors. */
 static char switcherfgcolor[COLORLEN];
 static char switcherbgcolor[COLORLEN];
-static unsigned int switcheropacity = 100; /* percent */
+static int switcheropacity; /* percent */
 
 static char *colors[][3] = {
        /*               fg           bg           border   */

@@ -522,7 +522,7 @@ open_switcher(Display *dpy, Window root, KeySym ctrl, Geometry *outer)
 }
 
 static int
-has_opacity(Display *dpy, Window win, unsigned long expected)
+has_opacity(Display *dpy, Window win, long long expected)
 {
 	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False), type;
 	int format, matches = 0;
@@ -531,9 +531,9 @@ has_opacity(Display *dpy, Window win, unsigned long expected)
 
 	if (XGetWindowProperty(dpy, win, opacity, 0, 1, False, XA_CARDINAL,
 	                       &type, &format, &count, &remaining, &data) == Success)
-		matches = expected == 0xffffffffUL ? type == None
+		matches = expected < 0 ? type == None
 		        : type == XA_CARDINAL && format == 32 && count == 1 && !remaining
-		          && (*(unsigned long *)data & 0xffffffffUL) == expected;
+		          && (*(unsigned long *)data & 0xffffffffUL) == (unsigned long)expected;
 	if (data)
 		XFree(data);
 	return matches;
@@ -541,7 +541,7 @@ has_opacity(Display *dpy, Window win, unsigned long expected)
 
 static int
 wait_panel_style(Display *dpy, Window win, int rowheight, const char *fg, const char *bg,
-                 unsigned long opacity)
+                 long long opacity)
 {
 	Colormap cmap = DefaultColormap(dpy, DefaultScreen(dpy));
 	XColor colors[2], exact;
@@ -579,18 +579,23 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 	static const char base[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\n";
 	static const struct {
 		const char *resources, *fg, *bg;
-		unsigned long opacity;
+		long long opacity;
 	} styles[] = {
-		{ NULL, "#fedcba", "#563412", 0x33333333UL },
+		{ NULL, "#fedcba", "#563412", 0xffffffffUL },
 		{ "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 80\n",
 		  "#123456", "#abcdef", 0xccccccccUL },
+		{ "dwm.switcherfgcolor: #123456\ndwm.switcherbgcolor: #abcdef\ndwm.switcheropacity: 100\n",
+		  "#123456", "#abcdef", 0xffffffffUL },
 		{ "dwm.switcherfgcolor: #bogus!\ndwm.switcheropacity: 40junk\n",
-		  "#d0c0a0", "#102030", 0xffffffffUL },
+		  "#d0c0a0", "#102030", -1 },
+		{ "dwm.switcheropacity: 20\n", "#d0c0a0", "#102030", 0x33333333UL },
+		{ "", "#d0c0a0", "#102030", -1 },
 	};
 	const unsigned long client_opacity = 0x99999999UL;
-	Window first, second, win, parent, *children = NULL;
+	Window first, second, child, focused, probe, win, parent, *children = NULL;
 	Atom opacity = XInternAtom(dpy, "_NET_WM_WINDOW_OPACITY", False);
 	Geometry panel = {0};
+	int revert;
 	unsigned int j, count;
 	size_t i;
 	char database[256];
@@ -601,6 +606,10 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 	                (const unsigned char *)&client_opacity, 1);
 	second = create_client(dpy, root, "Appearance two", 0);
 	CHECK(wait_active(dpy, root, second), "second appearance client not focused");
+	child = XCreateSimpleWindow(dpy, second, 0, 0, 8, 8, 0, 0, 0);
+	XMapWindow(dpy, child);
+	XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+	probe = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
 	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for appearance check");
 	if (!(win = switcher_panel(dpy, root, &panel)))
 		goto close;
@@ -614,13 +623,18 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 		}
 		CHECK(wait_panel_style(dpy, win, (panel.h - 2) / 2, styles[i].fg, styles[i].bg,
 		                       styles[i].opacity), "wrong switcher appearance at stage %zu", i);
-		CHECK(active_window(dpy, root) == second, "appearance change disturbed focus");
+		XResizeWindow(dpy, probe, i + 2, 1);
+		CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, i + 2, 1}),
+		      "dwm did not acknowledge configure request at stage %zu", i);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == child && active_window(dpy, root) == second,
+		      "appearance change disturbed focus at stage %zu", i);
 		CHECK(XQueryTree(dpy, root, &root, &parent, &children, &count),
 		      "could not inspect non-switcher windows");
 		if (children) {
 			for (j = 0; j < count; j++)
 				CHECK(children[j] == win || has_opacity(dpy, children[j],
-				      children[j] == first ? client_opacity : 0xffffffffUL),
+				      children[j] == first ? (long long)client_opacity : -1),
 				      "switcher reload altered opacity on window %#lx", children[j]);
 			XFree(children);
 			children = NULL;
@@ -630,6 +644,7 @@ close:
 	switcher_tap(dpy, XK_Escape);
 	switcher_key(dpy, XK_Control_L, False);
 	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reloaded panel");
+	XDestroyWindow(dpy, probe);
 	XDestroyWindow(dpy, first);
 	XDestroyWindow(dpy, second);
 	CHECK(wait_active(dpy, root, None), "appearance clients did not clear focus");

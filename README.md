@@ -86,7 +86,15 @@ dwm.switcherbgcolor: #263248
 dwm.switcheropacity: 92
 ```
 
-Load them with `xrdb -merge ~/.Xresources` and send `SIGUSR2` to dwm. Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors; the highlighted row inverts the two colors. Opacity is a whole percent from 0 (invisible with a compositor) to 100 (the default, with no opacity hint). It requires a compositor that honors `_NET_WM_WINDOW_OPACITY` on override-redirect windows. Without one, the panel remains opaque. To reset an override, remove it from the file and use `xrdb -load ~/.Xresources` rather than merging before reloading dwm.
+Load them with `xrdb -merge ~/.Xresources` and send `SIGUSR2` to dwm. Even an open <kbd>Ctrl+Tab</kbd> panel updates without restarting dwm. Only the switcher uses these keys. Without color overrides it follows the normal bar colors. The highlighted row inverts the two colors.
+
+Opacity is a whole percent from 0 (invisible) to 100 (fully opaque). A missing or invalid setting leaves opacity up to the compositor's normal rules. Opacity requires a compositor that honors `_NET_WM_WINDOW_OPACITY` on override-redirect windows. Without one, the panel remains opaque.
+
+To reset a live override, merge an empty value for that key and send `SIGUSR2` to dwm. This preserves the rest of the live Xresources database. Remove the old value from `~/.Xresources` to keep it from being reapplied.
+
+```sh
+printf '%s\n' 'dwm.switcheropacity:' | xrdb -merge
+```
 
 ## Testing
 
