@@ -24,18 +24,6 @@ static int topbar             = 1;        /* 0 means bottom bar */
 static char *fonts[]          = { "monospace:size=10", "NotoColorEmoji:pixelsize=10:antialias=true:autohint=true"  };
 static const char *selfontweight = "semibold"; /* fontconfig weight of the selected tag; NULL or "" (or a fonts[] entry that sets weight=, or style= naming a face the family really has) keeps the normal font */
 
-// static char normbgcolor[]           = "#222222";
-// static char normbordercolor[]       = "#444444";
-// static char normfgcolor[]           = "#bbbbbb";
-// static char selfgcolor[]            = "#eeeeee";
-// static char selbordercolor[]        = "#770000";
-// static char selbgcolor[]            = "#005577";
-// static char *colors[][3] = {
-//        /*               fg           bg           border   */
-//        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
-//        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
-// };
-
 // https://github.com/dracula/dwm/blob/main/config.h
 #define NORMBGCOLOR_DEFAULT      "#282a36"
 #define NORMBORDERCOLOR_DEFAULT "#444444"
@@ -47,18 +35,13 @@ static const char *selfontweight = "semibold"; /* fontconfig weight of the selec
 static char normbgcolor[COLORLEN]       = NORMBGCOLOR_DEFAULT;
 static char normbordercolor[]  = NORMBORDERCOLOR_DEFAULT;
 static char selbordercolor[]       = SELBORDERCOLOR;
-//static char selbordercolor[]        = "#770000";
 static char normfgcolor[COLORLEN]       = NORMFGCOLOR_DEFAULT;
 static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
 static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
-static const char col_gray1[]        = "#222222";
-static const char col_gray2[]        = "#444444";
-static const char col_gray3[]        = "#bbbbbb";
 
 static char *colors[][3] = {
        /*               fg           bg           border   */
        [SchemeNorm] = { normfgcolor, normbgcolor, normbordercolor },
-       // [SchemeInv]  = { col_gray1, col_gray3, col_gray2 },
        [SchemeInv] = { normfgcolor, normbgcolor, normbordercolor },
        [SchemeSel]  = { selfgcolor,  selbgcolor,  selbordercolor  },
        [SchemeStatus] = { normfgcolor, normbgcolor, normbordercolor },
@@ -97,9 +80,6 @@ static const Rule rules[] = {
 	*/
 	/* class    instance      title       	 tags mask    isfloating   isterminal  noswallow  monitor */
   /* mine */
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
-  { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
   { "ibcalpha-ibc-IbcTws",     NULL,       NULL,   0,         1,          0,          0,         -1 },
   /* from larbs */
 	{ "Gimp",     NULL,       NULL,          1 << 8,      0,           0,          0,         -1 },
@@ -354,22 +334,6 @@ static const Key keys[] = {
   { 0, XF86XK_MonBrightnessDown, spawn, {.v = brightness_down } },
   { ControlMask, XF86XK_MonBrightnessUp,   spawn, {.v = brightness_up_with_shift } },
   { ControlMask, XF86XK_MonBrightnessDown, spawn, {.v = brightness_down_with_shuft } },
-
-	/* { MODKEY|Mod4Mask,           XK_h,          incrgaps,               {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_l,          incrgaps,               {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_h,          incrogaps,              {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_l,          incrogaps,              {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ControlMask, XK_h,        incrigaps,              {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask|ControlMask, XK_l,        incrigaps,              {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask|ShiftMask, XK_0,          defaultgaps,            {0} }, */
-	/* { MODKEY,                    XK_y,          incrihgaps,             {.i = +1 } }, */
-	/* { MODKEY,                    XK_o,          incrihgaps,             {.i = -1 } }, */
-	/* { MODKEY|ControlMask,        XK_y,          incrivgaps,             {.i = +1 } }, */
-	/* { MODKEY|ControlMask,        XK_o,          incrivgaps,             {.i = -1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_y,          incrohgaps,             {.i = +1 } }, */
-	/* { MODKEY|Mod4Mask,           XK_o,          incrohgaps,             {.i = -1 } }, */
-	/* { MODKEY|ShiftMask,          XK_y,          incrovgaps,             {.i = +1 } }, */
-	/* { MODKEY|ShiftMask,          XK_o,          incrovgaps,             {.i = -1 } }, */
 
 };
 
