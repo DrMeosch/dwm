@@ -82,6 +82,21 @@ while 8-bit data holding the bytes of that atom, or a single byte, does not.
 `_NET_CLIENT_INFO` set before a window maps is likewise read only as two
 32-bit CARDINALs: 8-bit data leaves the window shown on the current tags, tags
 outside the tag mask are dropped, and a 32-bit tag 2 is still restored.
+On the fresh single-monitor display, `x11 fullscreen` sends `_NET_WM_STATE`
+client messages to both tiled and dialog-style floating clients. It checks
+add/remove/toggle, repeated add and remove, the fullscreen atom in either slot,
+an unrelated state atom, focus, exact screen coverage with no border, and
+restoration of geometry, border and tiled/floating resize behavior. A tiled
+ConfigureRequest acts as a dwm round-trip barrier even for no-op messages, so
+these checks do not rely on sleeps to assume the message was processed.
+Invalid actions 3 and -1 must leave an already-fullscreen client unchanged.
+These last assertions currently fail: `clientmessage()` treats every action
+other than add or toggle as remove, clearing fullscreen and restoring normal
+geometry. The failures remain enabled; no production fix or expected-failure
+mask is applied. Run the fixture as `x11 fullscreen` against an isolated
+`DWM_TEST` dwm with no other clients to reproduce it separately if an earlier
+XTEST switcher check prevents the main script from reaching it.
+
 Negative size hints (minimum, maximum, increment and zero aspect) must leave a
 floating window at its requested size, and a root ConfigureNotify without a
 size, which any client can send, must leave the bar as it was.

@@ -163,6 +163,8 @@ fi
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
+# Client-message state transitions run on the fresh single-monitor display.
+"$tmp/x11" fullscreen
 if [ "$input_available" -eq 1 ]; then
 	"$tmp/input"
 	# dwm finds dwmblocks with pidof; never signal a real one

@@ -721,6 +721,139 @@ wait_clients(Display *dpy, Window root, const Window *wins, unsigned int count, 
 	return 0;
 }
 
+/* A tiled ConfigureRequest is a dwm round trip after the preceding message,
+ * including requests that should be ignored and therefore produce no event. */
+static void
+fullscreen_request(Display *dpy, Window root, Window win, Window barrier,
+                   long action, Atom first, Atom second)
+{
+	XEvent ev = {0};
+	XConfigureEvent reply;
+
+	while (XCheckTypedWindowEvent(dpy, barrier, ConfigureNotify, &ev))
+		;
+	memset(&ev, 0, sizeof ev);
+	ev.xclient.type = ClientMessage;
+	ev.xclient.window = win;
+	ev.xclient.message_type = XInternAtom(dpy, "_NET_WM_STATE", False);
+	ev.xclient.format = 32;
+	ev.xclient.data.l[0] = action;
+	ev.xclient.data.l[1] = first;
+	ev.xclient.data.l[2] = second;
+	CHECK(XSendEvent(dpy, root, False, SubstructureRedirectMask | SubstructureNotifyMask, &ev),
+	      "could not send fullscreen action %ld", action);
+	XResizeWindow(dpy, barrier, 17, 19);
+	XFlush(dpy);
+	CHECK(wait_tiled_configure(dpy, barrier, 17, 19, &reply),
+	      "dwm did not complete the fullscreen action %ld round trip", action);
+}
+
+static void
+check_fullscreen_state(Display *dpy, Window win, const XWindowAttributes *normal,
+                       int full, const char *kind, const char *step)
+{
+	Atom state = XInternAtom(dpy, "_NET_WM_STATE", False);
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False), type;
+	XWindowAttributes wa = {0};
+	unsigned char *data = NULL;
+	unsigned long n = 0, after;
+	int format = 0, present = 0;
+
+	CHECK(XGetWindowProperty(dpy, win, state, 0, 16, False, XA_ATOM,
+	                         &type, &format, &n, &after, &data) == Success,
+	      "%s %s: could not read fullscreen state", kind, step);
+	if (data) {
+		unsigned long i;
+
+		for (i = 0; type == XA_ATOM && format == 32 && i < n; i++)
+			if (((Atom *)data)[i] == fullscreen)
+				present = 1;
+		XFree(data);
+	}
+	CHECK(present == full, "%s %s: fullscreen property is %d, expected %d",
+	      kind, step, present, full);
+	CHECK(XGetWindowAttributes(dpy, win, &wa), "%s %s: cannot inspect geometry", kind, step);
+	CHECK(wa.x == (full ? 0 : normal->x) && wa.y == (full ? 0 : normal->y)
+	      && wa.width == (full ? DisplayWidth(dpy, DefaultScreen(dpy)) : normal->width)
+	      && wa.height == (full ? DisplayHeight(dpy, DefaultScreen(dpy)) : normal->height)
+	      && wa.border_width == (full ? 0 : normal->border_width),
+	      "%s %s: unexpected geometry (%d,%d %dx%d border %d)",
+	      kind, step, wa.x, wa.y, wa.width, wa.height, wa.border_width);
+}
+
+static void
+check_fullscreen_messages(Display *dpy, Window root)
+{
+	static const struct { long action; int second, full; const char *step; } steps[] = {
+		{ 0, 0, 0, "remove while normal" },
+		{ 1, 0, 1, "add" },
+		{ 1, 0, 1, "repeated add" },
+		{ 3, 0, 1, "invalid action 3 must be ignored" },
+		{ 1, 0, 1, "add after invalid action" },
+		{ -1, 0, 1, "invalid action -1 must be ignored" },
+		{ 1, 0, 1, "add after negative action" },
+		{ 2, 0, 0, "toggle off" },
+		{ 2, 1, 1, "toggle on using second atom" },
+		{ 0, 1, 0, "remove using second atom" },
+		{ 0, 0, 0, "repeated remove" },
+	};
+	Atom fullscreen = XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False);
+	Atom type = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
+	Atom dialog = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
+	Atom unrelated = XInternAtom(dpy, "_DWM_TEST_UNRELATED_STATE", False);
+	Window barrier, win, pair[2], focused;
+	XWindowAttributes normal = {0};
+	int floating, revert;
+	size_t i;
+
+	for (floating = 0; floating < 2; floating++) {
+		const char *kind = floating ? "floating" : "tiled";
+
+		barrier = XCreateSimpleWindow(dpy, root, 40, 40, 200, 150, 0, 0, 0);
+		XSelectInput(dpy, barrier, StructureNotifyMask);
+		XMapWindow(dpy, barrier);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, &barrier, 1, barrier), "fullscreen barrier was not managed");
+		win = XCreateSimpleWindow(dpy, root, 80, 90, 300, 200, 0, 0, 0);
+		XStoreName(dpy, win, "fullscreen-messages");
+		XSelectInput(dpy, win, StructureNotifyMask);
+		if (floating)
+			XChangeProperty(dpy, win, type, XA_ATOM, 32, PropModeReplace,
+			                (unsigned char *)&dialog, 1);
+		XMapWindow(dpy, win);
+		XFlush(dpy);
+		pair[0] = barrier; pair[1] = win;
+		CHECK(wait_clients(dpy, root, pair, 2, win), "%s fullscreen target was not managed", kind);
+		fullscreen_request(dpy, root, win, barrier, 1, unrelated, None);
+		CHECK(XGetWindowAttributes(dpy, win, &normal), "cannot inspect %s initial geometry", kind);
+		check_fullscreen_state(dpy, win, &normal, 0, kind, "unrelated state atom");
+		for (i = 0; i < sizeof steps / sizeof steps[0]; i++) {
+			fullscreen_request(dpy, root, win, barrier, steps[i].action,
+			                   steps[i].second ? unrelated : fullscreen,
+			                   steps[i].second ? fullscreen : None);
+			check_fullscreen_state(dpy, win, &normal, steps[i].full, kind, steps[i].step);
+			XGetInputFocus(dpy, &focused, &revert);
+			CHECK(focused == win, "%s %s: request changed focus", kind, steps[i].step);
+		}
+		XResizeWindow(dpy, win, 137, 119);
+		XFlush(dpy);
+		if (floating)
+			CHECK(wait_sized_configure(dpy, win, 137, 119),
+			      "fullscreen exit did not restore floating resize behavior");
+		else {
+			XConfigureEvent reply;
+
+			CHECK(wait_tiled_configure(dpy, win, 137, 119, &reply),
+			      "fullscreen exit did not restore tiled resize behavior");
+			check_fullscreen_state(dpy, win, &normal, 0, kind, "resize after exit");
+		}
+		XDestroyWindow(dpy, win);
+		XDestroyWindow(dpy, barrier);
+		XFlush(dpy);
+		CHECK(wait_clients(dpy, root, NULL, 0, root), "fullscreen fixture did not clean up its clients");
+	}
+}
+
 static void
 check_unmanage(Display *dpy, Window root)
 {
@@ -832,6 +965,15 @@ main(int argc, char *argv[])
 		check_atom_format(dpy, root);
 		check_client_info(dpy, root);
 		XCloseDisplay(dpy);
+		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
+	}
+
+	/* x11 fullscreen: client messages preserve state, geometry and floating mode */
+	if (argc == 2 && !strcmp(argv[1], "fullscreen")) {
+		check_fullscreen_messages(dpy, root);
+		XCloseDisplay(dpy);
+		if (!failures)
+			puts("X11 fullscreen client-message checks passed");
 		return failures ? EXIT_FAILURE : EXIT_SUCCESS;
 	}
 
