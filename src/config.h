@@ -181,8 +181,6 @@ static const char *sysmoncmd[] = { "dwmsysmon", NULL }; /* runs while the system
 ResourcePref resources[] = {
 		{ "color0",		STRING,	normbgcolor, sizeof normbgcolor },
 		{ "color4",		STRING,	normfgcolor, sizeof normfgcolor },
-		{ "switcherfgcolor",	STRING,	switcherfgcolor, sizeof switcherfgcolor },
-		{ "switcherbgcolor",	STRING,	switcherbgcolor, sizeof switcherbgcolor },
 		{ "snap",		INTEGER, &snap, sizeof snap },
 		{ "showbar",		INTEGER, &showbar, sizeof showbar },
 		{ "showsysmon",		INTEGER, &showsysmon, sizeof showsysmon },

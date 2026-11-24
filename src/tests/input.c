@@ -612,9 +612,10 @@ test_switcher_appearance(Display *dpy, Window root, pid_t dwm_pid)
 	XMapWindow(dpy, child);
 	XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
 	probe = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
-	CHECK(open_switcher(dpy, root, XK_Control_L, &panel), "could not open for appearance check");
-	if (!(win = switcher_panel(dpy, root, &panel)))
+	if (!open_switcher(dpy, root, XK_Control_L, &panel) || !(win = switcher_panel(dpy, root, &panel))) {
+		CHECK(0, "switcher did not stay open for the appearance check");
 		goto close;
+	}
 	for (i = 0; i < sizeof styles / sizeof styles[0]; i++) {
 		if (styles[i].resources) {
 			snprintf(database, sizeof database, "%s%s", base, styles[i].resources);
@@ -650,6 +651,56 @@ close:
 	XDestroyWindow(dpy, first);
 	XDestroyWindow(dpy, second);
 	CHECK(wait_active(dpy, root, None), "appearance clients did not clear focus");
+}
+
+static void
+test_switcher_closed_reload(Display *dpy, Window root)
+{
+	static const char resources[] = "dwm.color0: #102030\ndwm.color4: #d0c0a0\ndwm.switcheropacity: 80\n";
+	const Geometry moved = {30, 60, 180, 120};
+	XClassHint hint = { "spterm", "St" };
+	Window pad, child, focused, probe, win;
+	Geometry panel = {0};
+	int i, revert;
+
+	pad = XCreateSimpleWindow(dpy, root, 40, 40, moved.w, moved.h, 0, 0, 0);
+	XSetClassHint(dpy, pad, &hint);
+	XMapWindow(dpy, pad);
+	for (i = 0; i < 80 && geometry(dpy, pad).x >= 0; i++)
+		pause_millis(25);
+	CHECK(i < 80, "reload scratchpad did not start hidden");
+	if (i == 80)
+		goto close;
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, pad), "reload scratchpad did not gain focus");
+	XMoveWindow(dpy, pad, moved.x, moved.y);
+	CHECK(wait_geometry(dpy, pad, moved), "could not move the visible scratchpad");
+	child = XCreateSimpleWindow(dpy, pad, 0, 0, 8, 8, 0, 0, 0);
+	XMapWindow(dpy, child);
+	XSetInputFocus(dpy, child, RevertToParent, CurrentTime);
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == child, "could not focus the scratchpad child window");
+	probe = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+	XChangeProperty(dpy, root, XA_RESOURCE_MANAGER, XA_STRING, 8, PropModeReplace,
+	                (const unsigned char *)resources, sizeof resources - 1);
+	key(dpy, XK_F5, 0);
+	XResizeWindow(dpy, probe, 2, 1);
+	CHECK(wait_geometry(dpy, probe, (Geometry){0, 0, 2, 1}), "dwm did not finish the closed-panel reload");
+	XGetInputFocus(dpy, &focused, &revert);
+	CHECK(focused == child && active_window(dpy, root) == pad, "closed-panel reload changed focus");
+	CHECK(same_geometry(geometry(dpy, pad), moved), "closed-panel reload moved the scratchpad");
+	CHECK(open_switcher(dpy, root, XK_Control_L, &panel)
+	   && (win = switcher_panel(dpy, root, &panel)) && has_opacity(dpy, win, 0xccccccccUL),
+	      "next switcher panel did not use the reloaded opacity");
+	switcher_tap(dpy, XK_Escape);
+	switcher_key(dpy, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel), "Escape did not dismiss the reopened panel");
+	XDestroyWindow(dpy, probe);
+	key(dpy, XK_Return, XK_Shift_L);
+	CHECK(wait_active(dpy, root, None), "reload scratchpad did not hide");
+close:
+	XDestroyWindow(dpy, pad);
+	CHECK(wait_active(dpy, root, None), "reload scratchpad did not clear focus");
 }
 
 static void
@@ -1675,6 +1726,7 @@ main(int argc, char **argv)
 		}
 		default_xerror = XSetErrorHandler(switcher_xerror);
 		test_switcher_appearance(dpy, root, (pid_t)pid);
+		test_switcher_closed_reload(dpy, root);
 		XCloseDisplay(dpy);
 		if (!failures)
 			puts("X11 switcher appearance and live reload checks passed");

@@ -89,8 +89,10 @@ border and row pixels, the opacity CARDINAL at explicit settings including 100%,
 and hint removal for missing, invalid, and empty settings. Empty color overrides
 restore the normal foreground, background, and border. The check also verifies
 that bar and app opacity hints stay as they were and that keyboard focus stays
-on the client's child window after each reload completes. Xvfb verifies the
-opacity hint.
+on the client's child window after each reload completes. With the panel closed,
+the check uses Mod+F5 to reload only switcher opacity. It verifies that the
+visible scratchpad keeps its moved geometry and child focus, and that the next
+panel uses the new opacity hint.
 
 The navigation check checks panel placement, row counts, recent-first navigation
 and wrapping, and visible and hidden activation against the [Ctrl+Tab entry in

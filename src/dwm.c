@@ -326,7 +326,7 @@ static int xerrordummy(Display *dpy, XErrorEvent *ee);
 static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 static void xrdb(const Arg *arg);
-static void load_xresources(void);
+static int load_xresources(void);
 static void loadstatuspalette(XrmDatabase db);
 static void resource_load(XrmDatabase db, char *name, enum resource_type rtype, void *dst, size_t size);
 
@@ -3609,33 +3609,32 @@ zoom(const Arg *arg)
 void
 xrdb(const Arg *arg)
 {
-	Clr **new_scheme;
+	static int refresh;
+	Clr *new_scheme[LENGTH(colors)];
 	Monitor *m;
-	size_t i;
+	size_t first, i;
 	int new_lightbar;
 
 	(void)arg;
-	load_xresources();
-	applysysmon();
-	updateborderwidth();
-	new_lightbar = lightbarpalette();
-	new_scheme = ecalloc(LENGTH(colors), sizeof(*new_scheme));
-	for (i = 0; i < LENGTH(colors); i++) {
+	refresh |= load_xresources();
+	if (refresh) {
+		applysysmon();
+		updateborderwidth();
+	}
+	new_lightbar = refresh ? lightbarpalette() : lightbar;
+	first = refresh ? 0 : SchemeSwitcher;
+	for (i = first; i < LENGTH(colors); i++) {
 		if (!(new_scheme[i] = createscheme(i, new_lightbar))) {
-			while (i > 0)
+			while (i > first)
 				drw_scm_free(drw, new_scheme[--i], 3);
-			free(new_scheme);
 			return;
 		}
 	}
 
-	for (i = 0; i < LENGTH(colors); i++)
+	for (i = first; i < LENGTH(colors); i++) {
 		drw_scm_free(drw, scheme[i], 3);
-	free(scheme);
-	scheme = new_scheme;
-	lightbar = new_lightbar;
-	for (m = mons; m; m = m->next)
-		updatebaropacity(m);
+		scheme[i] = new_scheme[i];
+	}
 	if (switcher.win) {
 		XSetWindowBackground(dpy, switcher.win, scheme[SchemeSwitcher][ColBg].pixel);
 		XSetWindowBorder(dpy, switcher.win, scheme[SchemeSwitcher][ColBorder].pixel);
@@ -3643,8 +3642,14 @@ xrdb(const Arg *arg)
 		switcherdraw();
 	}
 
+	if (!refresh)
+		return;
+	lightbar = new_lightbar;
+	for (m = mons; m; m = m->next)
+		updatebaropacity(m);
 	focus(NULL);
 	arrange(NULL);
+	refresh = 0;
 }
 
 static int
@@ -3793,37 +3798,53 @@ loadswitcheropacity(XrmDatabase db)
 	return !*end && percent >= 0 && percent <= 100 ? percent : -1;
 }
 
-void
+int
 load_xresources(void)
 {
-	Display *display;
+	Display *display = XOpenDisplay(NULL);
 	char *resm;
-	XrmDatabase db;
+	XrmDatabase db = NULL;
 	ResourcePref *p;
+	char oldborder[sizeof selbordercolor], oldstatus[sizeof statuspalette];
+	unsigned int oldwidth = borderpx;
+	int changed = 0;
 
-	/* Missing color resources must restore the compiled palette on every reload. */
-	strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
-	strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
-	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
-	switcheropacity = -1;
-	borderpx = BORDERPX_DEFAULT;
-	(void)selborder_load(NULL, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
-	loadstatuspalette(NULL);
-	display = XOpenDisplay(NULL);
-	if (display) {
-		resm = XResourceManagerString(display);
-		if (resm) {
-			db = XrmGetStringDatabase(resm);
-			for (p = resources; p < resources + LENGTH(resources); p++)
-				resource_load(db, p->name, p->type, p->dst, p->size);
-			(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
-			(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
-			loadstatuspalette(db);
-			switcheropacity = loadswitcheropacity(db);
-			XrmDestroyDatabase(db);
-		}
-		XCloseDisplay(display);
+	if (display && (resm = XResourceManagerString(display)))
+		db = XrmGetStringDatabase(resm);
+	for (p = resources; p < resources + LENGTH(resources); p++) {
+		unsigned char old[p->size];
+
+		memcpy(old, p->dst, p->size);
+		/* Missing color resources must restore the compiled palette on every reload. */
+		if (p->dst == normbgcolor)
+			strcpy(normbgcolor, NORMBGCOLOR_DEFAULT);
+		else if (p->dst == normfgcolor)
+			strcpy(normfgcolor, NORMFGCOLOR_DEFAULT);
+		if (db)
+			resource_load(db, p->name, p->type, p->dst, p->size);
+		if (p->dst == &showsysmon)
+			showsysmon = showsysmon != 0;
+		changed |= p->type == STRING ? strcmp((char *)old, p->dst) != 0
+		                            : memcmp(old, p->dst, p->size) != 0;
 	}
+
+	strcpy(oldborder, selbordercolor);
+	memcpy(oldstatus, statuspalette, sizeof oldstatus);
+	(void)borderwidth_load(db, BORDERPX_DEFAULT, &borderpx);
+	(void)selborder_load(db, SELBORDERCOLOR, selbordercolor, sizeof selbordercolor);
+	loadstatuspalette(db);
+
+	switcherfgcolor[0] = switcherbgcolor[0] = '\0';
+	switcheropacity = loadswitcheropacity(db);
+	if (db) {
+		resource_load(db, "switcherfgcolor", STRING, switcherfgcolor, sizeof switcherfgcolor);
+		resource_load(db, "switcherbgcolor", STRING, switcherbgcolor, sizeof switcherbgcolor);
+		XrmDestroyDatabase(db);
+	}
+	if (display)
+		XCloseDisplay(display);
+	return changed || oldwidth != borderpx || strcmp(oldborder, selbordercolor)
+	       || memcmp(oldstatus, statuspalette, sizeof oldstatus);
 }
 
 int
