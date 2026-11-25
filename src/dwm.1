@@ -135,7 +135,7 @@ Zooms/cycles focused window to/from master area.
 .B Super\-j/k
 Focus next/previous window.
 .TP
-.B Ctrl\-Tab
+.B Ctrl\-Esc
 List windows across tags on the selected monitor. Focusing a window moves it
 to the front of the list. Newly managed windows can appear near the front
 before they receive focus.
@@ -147,11 +147,11 @@ starts on the first row, skipping the focused window if another row is available
 No panel opens if the list is empty, the focused window has the fullscreen
 focus lock, or dwm cannot grab the keyboard.
 .IP
-Keep Ctrl held and tap Tab again to move the highlight down one row. Tab uses
+Keep Ctrl held and tap Esc again to move the highlight down one row. Esc uses
 the same modifiers as the opening shortcut and ignores key repeat. Press j to
 move down or k to move up. The highlight wraps at either end, and navigation
 leaves focus unchanged. Release the last held Ctrl key to activate the
-highlighted window, or press Escape to cancel. A change in focus or selected
+highlighted window, or press Shift\-Esc to cancel. A change in focus or selected
 monitor cancels a pending switch, as does the removal of a listed window.
 Root window motion and window crossing events can also cancel the switch when
 they report a move onto a monitor other than the panel's.
@@ -161,11 +161,18 @@ window, dwm shows only its lowest-numbered ordinary tag on its own monitor.
 Neither operation retags or moves the window or changes another monitor's
 view, layout or remembered selection.
 .IP
-Ctrl\-Tab is the switcher's only global binding. It uses the active XKB group's
-Tab key on the core keyboard. When grabbed, it takes precedence over application
-shortcuts such as switching tabs. Ctrl\-j and Ctrl\-k remain available to
-applications while the panel is closed. The switcher requires XInput 2, XKB, and
-at least Shape 1.1 on the X server. Without them, dwm runs without the switcher.
+Ctrl\-Esc is the switcher's only global binding. It uses the active XKB group's
+Esc key on the core keyboard. When grabbed, it takes precedence over application
+shortcuts. Ctrl\-Tab, Ctrl\-Shift\-Esc, Ctrl\-j and Ctrl\-k remain available to
+applications while the panel is closed. To use another binding, set
+.B switchermod
+and
+.B switcherkey
+in
+.I config.h
+and rebuild. They take the place of Ctrl and Esc above, and with any other
+key, Esc also cancels the open panel. The switcher requires XInput 2, XKB, and at least Shape 1.1
+on the X server. Without them, dwm runs without the switcher.
 .TP
 .B Super\-Shift\-j/k
 Move selected window down/up in stack.

@@ -4,6 +4,33 @@ set -eu
 root=$1
 cc=${CC:-cc}
 missing_deps=
+# Window-state fixtures in x11.c; DWM_X11_STATE_FIXTURE runs only the named one.
+state_fixtures='fullscreen-properties titles focus-hints size-hints fullscreen
+fullscreen-state-preservation initial-fullscreen-exit fullscreen-message-formats
+active-window-messages urgency-lifecycle'
+state_fixture=${DWM_X11_STATE_FIXTURE:-}
+if [ -n "$state_fixture" ]; then
+	case " $(echo $state_fixtures) " in
+	*" $state_fixture "*) ;;
+	*) printf 'Unknown X11 state fixture: %s\n' "$state_fixture" >&2; exit 1 ;;
+	esac
+fi
+
+# Pin a UTF-8 locale: the title checks render UTF-8 _NET_WM_NAME text, which
+# dwm only decodes in one. Without any, those checks are skipped, not failed.
+utf8_locale=
+for locale in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8 \
+	$(locale -a 2>/dev/null | grep -i 'utf-*8$' || true); do
+	if [ "$(LC_ALL=$locale locale charmap 2>/dev/null)" = UTF-8 ]; then
+		utf8_locale=$locale
+		break
+	fi
+done
+if [ -n "$utf8_locale" ]; then
+	export LC_ALL="$utf8_locale"
+else
+	printf '%s\n' 'X11 UTF-8 title checks will be skipped; no UTF-8 locale is available'
+fi
 
 if ! command -v Xvfb >/dev/null 2>&1; then missing_deps="$missing_deps Xvfb"; fi
 if ! command -v xdpyinfo >/dev/null 2>&1; then missing_deps="$missing_deps xdpyinfo"; fi
@@ -49,13 +76,17 @@ trap cleanup EXIT HUP INT TERM
 
 flags=$(pkg-config --cflags x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
 libs=$(pkg-config --libs x11 xext xi xft fontconfig x11-xcb xcb xcb-res xinerama)
-$cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
-	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
-	-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
-	-DVERSION=\"6.5\" $flags "$root/src/dwm.c" "$root/src/drw.c" \
-	"$root/src/borderwidth.c" "$root/src/selborder.c" \
-	"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
-	$libs -lm -o "$tmp/dwm"
+# build_dwm <dwm.c> <output>: config.h is taken from the directory of dwm.c
+build_dwm() {
+	$cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
+		-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
+		-D_DEFAULT_SOURCE -D_BSD_SOURCE -D_XOPEN_SOURCE=700L -DXINERAMA \
+		-DVERSION=\"6.5\" $flags "$1" "$root/src/drw.c" \
+		"$root/src/borderwidth.c" "$root/src/selborder.c" \
+		"$root/src/sigusr2.c" "$root/src/sysmon.c" "$root/src/util.c" \
+		$libs -lm -o "$2"
+}
+build_dwm "$root/src/dwm.c" "$tmp/dwm"
 $cc -std=c99 -pedantic -Wall -Wextra -Wno-unused-function \
 	-Wno-unused-parameter -Wno-sign-compare \
 	-Wno-deprecated-declarations -DDWM_TEST -I"$root/src" \
@@ -126,7 +157,7 @@ mkdir "$tmp/bin"
 ln -s "$tmp/dwmsysmon" "$tmp/bin/dwmsysmon"
 # A failed scratchpad lookup must never launch the configured terminal.
 ln -s /bin/true "$tmp/bin/st"
-if [ "$input_available" -eq 1 ]; then
+if [ "$input_available" -eq 1 ] && [ -z "$state_fixture" ]; then
 	# Xvfb overlaps these heads at (0,0); different sizes keep both in dwm.
 	start_xvfb +xinerama -screen 0 1000x750x24 -screen 1 800x600x24
 	xrdb -load <<'XRESOURCES'
@@ -150,6 +181,32 @@ XRESOURCES
 	kill -TERM "$server_pid"
 	wait "$server_pid"
 	server_pid=
+
+	# A config.h that restores Ctrl+Tab must switch with it and leave Ctrl+Esc
+	# to applications.
+	mkdir "$tmp/tab-config"
+	cp "$root"/src/*.c "$root"/src/*.h "$tmp/tab-config/"
+	sed 's/^static const KeySym switcherkey = XK_Escape;$/static const KeySym switcherkey = XK_Tab;/' \
+		"$root/src/config.h" >"$tmp/tab-config/config.h"
+	if ! grep -q '^static const KeySym switcherkey = XK_Tab;$' "$tmp/tab-config/config.h"; then
+		printf '%s\n' 'could not configure the Ctrl+Tab switcher build'
+		exit 1
+	fi
+	build_dwm "$tmp/tab-config/dwm.c" "$tmp/dwm-tab"
+	start_xvfb -screen 0 1000x750x24
+	printf 'dwm.showsysmon: 0\n' | xrdb -load
+	PATH=$tmp/bin:$PATH "$tmp/dwm-tab" >"$tmp/dwm-tab.log" 2>&1 &
+	dwm_pid=$!
+	if ! "$tmp/input" switcher-key Tab; then
+		cat "$tmp/dwm-tab.log" >&2
+		exit 1
+	fi
+	kill -TERM "$dwm_pid"
+	wait "$dwm_pid"
+	dwm_pid=
+	kill -TERM "$server_pid"
+	wait "$server_pid"
+	server_pid=
 fi
 
 start_xvfb -screen 0 1200x800x24
@@ -163,6 +220,25 @@ fi
 PATH=$tmp/bin:$PATH "$tmp/dwm" >"$tmp/dwm.log" 2>&1 &
 dwm_pid=$!
 sleep 0.2
+# run_state_fixture <name>: a failure is recorded so the later checks still run
+state_failed=
+run_state_fixture() {
+	if [ "$1" = titles ] && [ -z "$utf8_locale" ]; then
+		printf '%s\n' 'X11 title checks skipped; no UTF-8 locale is available'
+	elif ! "$tmp/x11" "$1"; then
+		state_failed="$state_failed $1"
+	fi
+}
+# Isolated reproductions still use production code, with autostart disabled.
+if [ -n "$state_fixture" ]; then
+	run_state_fixture "$state_fixture"
+	[ -z "$state_failed" ] || exit 1
+	exit 0
+fi
+# These fixtures clean up their clients, so one failing does not affect the rest.
+for fixture in $state_fixtures; do
+	run_state_fixture "$fixture"
+done
 if [ "$input_available" -eq 1 ]; then
 	"$tmp/input"
 	# dwm finds dwmblocks with pidof; never signal a real one
@@ -355,4 +431,8 @@ kill -0 "$dwm_pid"
 # one sampler per display, and none left behind when dwm goes away
 sh "$root/src/tests/sysmon-lifecycle.sh" "$root" "$tmp/dwm"
 
+if [ -n "$state_failed" ]; then
+	printf 'X11 window-state fixtures failed:%s\n' "$state_failed" >&2
+	exit 1
+fi
 printf '%s\n' 'X11 integration checks passed'

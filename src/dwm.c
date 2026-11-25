@@ -22,6 +22,7 @@
  */
 #include <ctype.h>
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <locale.h>
 #include <signal.h>
@@ -231,6 +232,7 @@ static void focusin(XEvent *e);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
+static Atom *getatoms(Client *c, Atom prop, unsigned long *n);
 static int getrootptr(int *x, int *y);
 static long getstate(Window w);
 static int gettextprop(Window w, Atom atom, char *text, unsigned int size);
@@ -271,6 +273,7 @@ static void setclientstate(Client *c, long state);
 static void setclienttagprop(Client *c);
 static void setfocus(Client *c, int setinput);
 static void setfullscreen(Client *c, int fullscreen);
+static void setfullscreenstate(Client *c, int fullscreen);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
 static void setup(void);
@@ -761,9 +764,11 @@ clientmessage(XEvent *e)
 	XClientMessageEvent *cme = &e->xclient;
 	Client *c = wintoclient(cme->window);
 
-	if (!c)
+	if (!c || cme->format != 32) /* EWMH requests are always 32-bit */
 		return;
 	if (cme->message_type == netatom[NetWMState]) {
+		if (cme->data.l[0] < 0 || cme->data.l[0] > 2) /* not REMOVE, ADD or TOGGLE */
+			return;
 		if (cme->data.l[1] == netatom[NetWMFullscreen]
 		|| cme->data.l[2] == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
@@ -834,7 +839,9 @@ configurerequest(XEvent *e)
 	XWindowChanges wc;
 
 	if ((c = wintoclient(ev->window))) {
-		if (ev->value_mask & CWBorderWidth)
+		if (c->isfullscreen) /* keeps the monitor geometry, as ICCCM allows */
+			configure(c);
+		else if (ev->value_mask & CWBorderWidth)
 			c->bw = ev->border_width;
 		else if (c->isfloating || !selmon->lt[selmon->sellt]->arrange) {
 			m = c->mon;
@@ -1507,6 +1514,25 @@ getatomprop(Client *c, Atom prop)
 	return atom;
 }
 
+/* the whole 32-bit ATOM list, NULL with *n = 0 if there is none; XFree it */
+Atom *
+getatoms(Client *c, Atom prop, unsigned long *n)
+{
+	int format;
+	unsigned long dl;
+	unsigned char *p = NULL;
+	Atom type;
+
+	if (XGetWindowProperty(dpy, c->win, prop, 0L, LONG_MAX, False, XA_ATOM,
+		&type, &format, n, &dl, &p) == Success && p) {
+		if (type == XA_ATOM && format == 32 && *n)
+			return (Atom *)p;
+		XFree(p);
+	}
+	*n = 0;
+	return NULL;
+}
+
 #ifndef __OpenBSD__
 int
 getdwmblockspid()
@@ -1608,7 +1634,7 @@ switcherkeysym(KeyCode code, int group)
 }
 
 static void
-grabswitchertab(void)
+grabswitcherkey(void)
 {
 	int first, last, k;
 	unsigned char bits[XIMaskLen(XI_KeyRelease)] = {0};
@@ -1623,10 +1649,10 @@ grabswitchertab(void)
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
 	for (k = first; k <= last; k++)
-		if (switcherkeysym(k, state.group) == XK_Tab) {
+		if (switcherkeysym(k, state.group) == switcherkey) {
 			XIGrabModifiers mods[] = {
-				{ ControlMask, 0 }, { ControlMask | LockMask, 0 },
-				{ ControlMask | numlockmask, 0 }, { ControlMask | numlockmask | LockMask, 0 }
+				{ switchermod, 0 }, { switchermod | LockMask, 0 },
+				{ switchermod | numlockmask, 0 }, { switchermod | numlockmask | LockMask, 0 }
 			};
 			XIGrabKeycode(dpy, switcherkeyboard, k, root, GrabModeSync, GrabModeAsync,
 			              False, &mask, LENGTH(mods), mods);
@@ -1649,7 +1675,7 @@ grabkeys(void)
 		if (!syms)
 			return;
 		if (switcherxi)
-			grabswitchertab();
+			grabswitcherkey();
 		for (k = start; k <= end; k++) {
 			for (i = 0; i < LENGTH(keys); i++)
 				/* skip modifier codes, we do that ourselves */
@@ -1754,9 +1780,12 @@ manage(Window w, XWindowAttributes *wa)
 	XConfigureWindow(dpy, w, CWBorderWidth, &wc);
 	XSetWindowBorder(dpy, w, scheme[SchemeNorm][ColBorder].pixel);
 	configure(c); /* propagates border_width, if size doesn't change */
-	updatewindowtype(c);
 	updatesizehints(c);
 	updatewmhints(c);
+	/* before updatewindowtype(), so initial fullscreen restores it on exit */
+	if (!c->isfloating)
+		c->isfloating = trans != None || c->isfixed;
+	updatewindowtype(c);
 	{
 		int format;
 		unsigned long *data, n, extra;
@@ -1784,8 +1813,6 @@ manage(Window w, XWindowAttributes *wa)
 	c->y = c->mon->my + (c->mon->mh - HEIGHT(c)) / 2;
 	XSelectInput(dpy, w, EnterWindowMask|FocusChangeMask|PropertyChangeMask|StructureNotifyMask);
 	grabbuttons(c, 0);
-	if (!c->isfloating)
-		c->isfloating = c->oldstate = trans != None || c->isfixed;
 	if (c->isfloating)
 		raiseclient(c);
 	attach(c);
@@ -1812,10 +1839,11 @@ mappingnotify(XEvent *e)
 	XMappingEvent *ev = &e->xmapping;
 
 	XRefreshKeyboardMapping(ev);
-	if (ev->request != MappingPointer) {
-		switchercancel();
+	/* Also sent on every switch between slave keyboards, such as a physical one and
+	 * xcape's XTEST device. The switcher reads keysyms and switchermod live, so it
+	 * stays open. */
+	if (ev->request != MappingPointer)
 		grabkeys();
-	}
 }
 
 void
@@ -1981,9 +2009,8 @@ propertynotify(XEvent *e)
 	} else if (ev->window == root && ev->atom == sysmonatom) {
 		if (showsysmon)
 			updatesysmon();
-	} else if (ev->state == PropertyDelete) {
-		return; /* ignore */
 	} else if ((c = wintoclient(ev->window))) {
+		/* a deleted property is read back as absent */
 		switch(ev->atom) {
 		default: break;
 		case XA_WM_TRANSIENT_FOR:
@@ -2066,7 +2093,7 @@ resizeclient(Client *c, int x, int y, int w, int h)
 static void
 suppressenters(void)
 {
-	/* Suppress enter-driven focus in dispatch order: draining here can skip a queued Ctrl+Tab. */
+	/* Suppress enter-driven focus in dispatch order: draining here can skip a queued switcher opener. */
 	enterbefore = XNextRequest(dpy);
 	XSync(dpy, False);
 }
@@ -2183,7 +2210,7 @@ run(void)
 			XNextEvent(dpy, &ev);
 			if (switcherxi && ev.type == switcherxkb) {
 				if (((XkbEvent *)&ev)->any.xkb_type == XkbStateNotify)
-					grabswitchertab();
+					grabswitcherkey();
 			} else if (ev.type < LASTEvent && handler[ev.type])
 				handler[ev.type](&ev); /* call handler */
 		}
@@ -2304,14 +2331,33 @@ setfocus(Client *c, int setinput)
 	sendevent(c, wmatom[WMTakeFocus]);
 }
 
+/* replace only the fullscreen atom, keeping the client's other states */
+void
+setfullscreenstate(Client *c, int fullscreen)
+{
+	unsigned long i, n, j = 0;
+	Atom *states = getatoms(c, netatom[NetWMState], &n);
+	Atom *list = ecalloc(n + 1, sizeof(Atom));
+
+	for (i = 0; i < n; i++)
+		if (states[i] != netatom[NetWMFullscreen])
+			list[j++] = states[i];
+	if (fullscreen)
+		list[j++] = netatom[NetWMFullscreen];
+	XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+		PropModeReplace, (unsigned char *)list, j);
+	free(list);
+	if (states)
+		XFree(states);
+}
+
 void
 setfullscreen(Client *c, int fullscreen)
 {
 	if (fullscreen && !c->isfullscreen) {
 		if (lockfullscreen && c->win == switcher.origin)
 			switchercancel();
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)&netatom[NetWMFullscreen], 1);
+		setfullscreenstate(c, 1);
 		c->isfullscreen = 1;
 		c->oldstate = c->isfloating;
 		c->oldbw = c->bw;
@@ -2320,8 +2366,7 @@ setfullscreen(Client *c, int fullscreen)
 		resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
 		raiseclient(c);
 	} else if (!fullscreen && c->isfullscreen){
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)0, 0);
+		setfullscreenstate(c, 0);
 		c->isfullscreen = 0;
 		c->isfloating = c->oldstate;
 		c->bw = c->oldbw;
@@ -2745,8 +2790,8 @@ switcherstart(XIDeviceEvent *ev)
 	size_t count = 0, i;
 	int w, h, rowheight = bh + 6;
 
-	if (ev->flags & XIKeyRepeat || CLEANMASK(ev->mods.effective) != ControlMask
-	|| !(ev->mods.base & ControlMask) || m->mw < 3 || m->mh < rowheight + 2
+	if (ev->flags & XIKeyRepeat || CLEANMASK(ev->mods.effective) != switchermod
+	|| !(ev->mods.base & switchermod) || m->mw < 3 || m->mh < rowheight + 2
 	|| (m->sel && m->sel->isfullscreen && lockfullscreen))
 		goto refuse;
 	for (c = m->stack; c; c = c->snext)
@@ -2756,7 +2801,7 @@ switcherstart(XIDeviceEvent *ev)
 		goto refuse;
 	XISetMask(bits, XI_KeyPress);
 	XISetMask(bits, XI_KeyRelease);
-	/* Replacing the passive grab prevents Tab release from ending navigation. */
+	/* Replacing the passive grab prevents the key release from ending navigation. */
 	if (XIGetFocus(dpy, ev->deviceid, &switcher.focus) != Success
 	|| XIGrabDevice(dpy, ev->deviceid, root, ev->time, None, GrabModeSync,
 	                GrabModeAsync, False, &mask) != GrabSuccess)
@@ -2821,19 +2866,20 @@ switcherevent(XEvent *e)
 	switcherungrabserial = 0;
 	sym = switcherkeysym((KeyCode)ev->detail, ev->group.effective);
 	if (!switcher.mon) {
-		if (ev->evtype == XI_KeyPress && sym == XK_Tab)
+		if (ev->evtype == XI_KeyPress && sym == switcherkey)
 			switcherstart(ev);
 		else if (ev->evtype == XI_KeyPress)
 			XIAllowEvents(dpy, ev->deviceid, XIReplayDevice, ev->time);
 	} else if (ev->evtype == XI_KeyRelease) {
 		if (XkbGetState(dpy, ev->deviceid, &state) != Success)
 			switchercancel();
-		else if (!(state.base_mods & ControlMask))
+		else if (!(state.base_mods & switchermod))
 			switchercommit();
-	} else if (sym == XK_Escape) {
+	} else if ((sym == switcherkey && CLEANMASK(ev->mods.effective) == (switchermod | ShiftMask))
+	           || (sym == XK_Escape && switcherkey != XK_Escape)) {
 		switchercancel();
-	} else if (sym == XK_j || (sym == XK_Tab && !(ev->flags & XIKeyRepeat)
-	           && CLEANMASK(ev->mods.effective) == ControlMask && (ev->mods.base & ControlMask))) {
+	} else if (sym == XK_j || (sym == switcherkey && !(ev->flags & XIKeyRepeat)
+	           && CLEANMASK(ev->mods.effective) == switchermod && (ev->mods.base & switchermod))) {
 		switcher.selected = (switcher.selected + 1) % switcher.count;
 		switcherdraw();
 	} else if (sym == XK_k) {
@@ -3375,13 +3421,20 @@ updatetitle(Client *c)
 void
 updatewindowtype(Client *c)
 {
-	Atom state = getatomprop(c, netatom[NetWMState]);
+	unsigned long i, n;
+	Atom *states = getatoms(c, netatom[NetWMState], &n);
 	Atom wtype = getatomprop(c, netatom[NetWMWindowType]);
+	int fullscreen = 0;
 
-	if (state == netatom[NetWMFullscreen])
-		setfullscreen(c, 1);
+	/* any position in the list, see EWMH _NET_WM_STATE */
+	for (i = 0; i < n; i++)
+		fullscreen |= states[i] == netatom[NetWMFullscreen];
+	if (states)
+		XFree(states);
 	if (wtype == netatom[NetWMWindowTypeDialog])
 		c->isfloating = 1;
+	if (fullscreen)
+		setfullscreen(c, 1);
 }
 
 void
@@ -3400,7 +3453,8 @@ updatewmhints(Client *c)
 		else
 			c->neverfocus = 0;
 		XFree(wmh);
-	}
+	} else
+		c->isurgent = c->neverfocus = 0;
 }
 
 void

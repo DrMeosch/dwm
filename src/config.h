@@ -39,6 +39,11 @@ static char normfgcolor[COLORLEN]       = NORMFGCOLOR_DEFAULT;
 static char selfgcolor[]        = SELFGCOLOR_DEFAULT;
 static char selbgcolor[]        = SELBGCOLOR_DEFAULT;
 
+/* Window switcher: hold switchermod and tap switcherkey to open it and step down,
+ * add Shift to cancel, release switchermod to switch. Use one modifier, not Shift. */
+static const unsigned int switchermod = ControlMask;
+static const KeySym switcherkey = XK_Escape;
+
 /* Empty switcher overrides inherit the normal bar colors. */
 static char switcherfgcolor[COLORLEN];
 static char switcherbgcolor[COLORLEN];
