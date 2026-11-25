@@ -1839,10 +1839,10 @@ mappingnotify(XEvent *e)
 	XMappingEvent *ev = &e->xmapping;
 
 	XRefreshKeyboardMapping(ev);
-	if (ev->request != MappingPointer) {
-		switchercancel();
+	/* Also sent on every switch between slave keyboards, such as a physical one and
+	 * xcape's XTEST device. The switcher reads keysyms and Ctrl live, so it stays open. */
+	if (ev->request != MappingPointer)
 		grabkeys();
-	}
 }
 
 void

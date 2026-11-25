@@ -192,10 +192,21 @@ prevent plain Ctrl+Esc from opening the panel on the second. With Num Lock
 removed from the test keymap, plain Ctrl+Esc must still open the panel and
 Ctrl+AltGr+Esc must reach the application.
 
+The slave-switch check mirrors xcape remapping Caps Lock to Esc. Ctrl, Shift
+and Super_L come from Xvfb's own keyboard and the opener from the XTEST
+keyboard, so the server reports a keyboard MappingNotify each time the source
+changes. One opener tap must commit the previous window on Ctrl release.
+Opener taps after a Super_L tap must advance once each and wrap. Shift+opener
+and, with another opener, Escape must cancel, and a printable key must then
+reach the right client. A real keymap change while the panel is open must
+neither close it nor stop the next opener from advancing. With the opener
+remapped away, Ctrl release must still activate the highlighted row, and the
+restored opener must open the panel again.
+
 A second build sets `switcherkey` to `XK_Tab` in a copy of `config.h` and runs
-the step check with Tab on its own single-head Xvfb. It must open, step, wrap,
-commit, and cancel with Ctrl+Shift+Tab and with Escape, while Ctrl+Esc and
-Ctrl+Shift+Tab stay unreserved and reach the focused client.
+the step and slave-switch checks with Tab on its own single-head Xvfb. It must
+open, step, wrap, commit, and cancel with Ctrl+Shift+Tab and with Escape, while
+Ctrl+Esc and Ctrl+Shift+Tab stay unreserved and reach the focused client.
 
 Xvfb's heads overlap, so this is not proof of pointer crossing or side-by-side
 placement. On an isolated X server with Xinerama head 0 to the left of head 1,

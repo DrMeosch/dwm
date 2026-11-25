@@ -471,8 +471,9 @@ static int
 switcher_xerror(Display *dpy, XErrorEvent *e)
 {
 	/* A panel may disappear between the root tree snapshot and the query. */
-	if (e->error_code == BadWindow && (e->request_code == X_GetWindowAttributes
-	                               || e->request_code == X_GetGeometry))
+	if ((e->error_code == BadWindow && (e->request_code == X_GetWindowAttributes
+	                                || e->request_code == X_GetGeometry))
+	|| (e->error_code == BadDrawable && e->request_code == X_GetImage))
 		return 0;
 	return default_xerror(dpy, e);
 }
@@ -1571,6 +1572,181 @@ check_switcher_step(Display *dpy, Window root)
 	CHECK(wait_active(dpy, root, None), "opener navigation did not leave an empty monitor");
 }
 
+/* A keyboard beside the XTEST device on the core keyboard, like a physical one. */
+static int
+core_slave_keyboard(Display *dpy, XDevice *keyboard)
+{
+	XIDeviceInfo *devices;
+	int i, n, pointer, master = 0, major = 2, minor = 0;
+
+	if (XIQueryVersion(dpy, &major, &minor) != Success || !XIGetClientPointer(dpy, None, &pointer))
+		return 0;
+	devices = XIQueryDevice(dpy, XIAllDevices, &n);
+	for (i = 0; devices && i < n; i++)
+		if (devices[i].use == XIMasterKeyboard && devices[i].attachment == pointer)
+			master = devices[i].deviceid;
+	for (i = 0; devices && i < n && !keyboard->device_id; i++)
+		if (devices[i].use == XISlaveKeyboard && devices[i].attachment == master
+		&& !strstr(devices[i].name, "XTEST"))
+			keyboard->device_id = devices[i].deviceid;
+	if (devices)
+		XIFreeDeviceInfo(devices);
+	return keyboard->device_id != 0;
+}
+
+static void
+slave_key(Display *dpy, XDevice *keyboard, KeySym sym, Bool down)
+{
+	XTestFakeDeviceKeyEvent(dpy, keyboard, XKeysymToKeycode(dpy, sym), down, NULL, 0, CurrentTime);
+	XFlush(dpy);
+}
+
+static int
+remap_keycode(Display *dpy, KeyCode code, KeySym *syms, int per, Window ack)
+{
+	XChangeKeyboardMapping(dpy, code, per, syms, 1);
+	XSync(dpy, False);
+	return wait_configure_ack(dpy, ack);
+}
+
+/* Moves the committed row to the front of the recent-first stack. */
+static void
+promote_row(Window *stack, int row)
+{
+	Window win = stack[row];
+
+	memmove(stack + 1, stack, row * sizeof *stack);
+	stack[0] = win;
+}
+
+/*
+ * xcape sends the opener from the XTEST keyboard while Ctrl and Caps Lock come
+ * from the physical one. The server reports each switch between the two as a
+ * keyboard MappingNotify, which must not end navigation; nor must a real
+ * keymap change, even one that unmaps the opener.
+ */
+static void
+check_switcher_slave_switch(Display *dpy, Window root)
+{
+	const int cycle[] = { 2, 0, 1, 2 };
+	XDevice physical = {0};
+	KeyCode code = XKeysymToKeycode(dpy, opener), spare = XKeysymToKeycode(dpy, XK_F12);
+	KeyCode x = XKeysymToKeycode(dpy, XK_x);
+	KeySym *openersyms = NULL, *sparesyms = NULL, *changed = NULL;
+	Window stack[3] = {0}, panelwin = None, focused;
+	Geometry panel = {0};
+	int i, per = 0, height = 0, row = 0, revert;
+
+	if (!core_slave_keyboard(dpy, &physical) || !code || !spare || !x
+	|| !(openersyms = XGetKeyboardMapping(dpy, code, 1, &per))
+	|| !(sparesyms = XGetKeyboardMapping(dpy, spare, 1, &per))
+	|| !(changed = calloc(per, sizeof *changed))) {
+		CHECK(0, "slave switch regression requires a non-XTEST core keyboard and F12");
+		goto out;
+	}
+	stack[2] = switcher_client(dpy, root, "Slave target", 1, 0);
+	stack[1] = switcher_client(dpy, root, "Slave previous", 1, 0);
+	stack[0] = switcher_client(dpy, root, "Slave origin", 1, 0);
+	for (i = 0; i < 3; i++)
+		XSelectInput(dpy, stack[i], KeyPressMask | StructureNotifyMask);
+	CHECK(wait_active(dpy, root, stack[0]), "could not focus the slave switch origin");
+
+	/* One tap: the Ctrl release switches back to the physical keyboard. */
+	slave_key(dpy, &physical, XK_Control_L, True);
+	switcher_tap(dpy, opener);
+	if (wait_panel(dpy, root, 1, &panel) && (panelwin = switcher_panel(dpy, root, &panel)))
+		height = geometry(dpy, panelwin).h;
+	row = height / 3;
+	CHECK(height == 3 * row && wait_highlight(dpy, panelwin, height, row, 1),
+	      "the XTEST opener did not open the panel with physical Ctrl held");
+	slave_key(dpy, &physical, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, stack[1]),
+	      "physical Ctrl release after one XTEST opener did not activate the previous window");
+	promote_row(stack, 1);
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_for_input(dpy, stack[0], KeyPress, x, 0), "typing after the one-tap commit was lost");
+
+	/* Caps Lock as Super_L, then xcape's Escape: every tap switches slaves twice. */
+	slave_key(dpy, &physical, XK_Control_L, True);
+	switcher_tap(dpy, opener);
+	CHECK(wait_panel(dpy, root, 1, &panel) && (panelwin = switcher_panel(dpy, root, &panel))
+	   && wait_highlight(dpy, panelwin, height, row, 1), "the cycle did not start on the previous window");
+	for (i = 0; i < (int)(sizeof cycle / sizeof *cycle); i++) {
+		slave_key(dpy, &physical, XK_Super_L, True);
+		slave_key(dpy, &physical, XK_Super_L, False);
+		switcher_tap(dpy, opener);
+		CHECK(wait_highlight(dpy, panelwin, height, row, cycle[i]),
+		      "XTEST opener %d after a physical key did not advance once to row %d", i + 2, cycle[i]);
+		XGetInputFocus(dpy, &focused, &revert);
+		CHECK(focused == stack[0], "XTEST opener %d changed focus with physical Ctrl held", i + 2);
+	}
+	slave_key(dpy, &physical, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, stack[2]),
+	      "physical Ctrl release did not activate the row reached by the XTEST opener");
+	promote_row(stack, 2);
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_for_input(dpy, stack[0], KeyPress, x, 0), "typing after the cycled commit was lost");
+
+	/* A real keymap change keeps navigating and still refreshes the grabs. */
+	slave_key(dpy, &physical, XK_Control_L, True);
+	switcher_tap(dpy, opener);
+	CHECK(wait_panel(dpy, root, 1, &panel) && (panelwin = switcher_panel(dpy, root, &panel))
+	   && wait_highlight(dpy, panelwin, height, row, 1), "could not open the panel before a keymap change");
+	changed[0] = XK_F11;
+	CHECK(remap_keycode(dpy, spare, changed, per, stack[0]) && remap_keycode(dpy, spare, sparesyms, per, stack[0])
+	   && switcher_panel(dpy, root, &panel), "an unrelated keymap change closed the panel");
+	switcher_tap(dpy, opener);
+	CHECK(wait_highlight(dpy, panelwin, height, row, 2), "the opener did not advance after a keymap change");
+	/* Unmapping the opener must not strand the panel: Ctrl release still ends it. */
+	changed[0] = XK_F13;
+	CHECK(remap_keycode(dpy, code, changed, per, stack[0]) && switcher_panel(dpy, root, &panel),
+	      "unmapping the opener closed the panel before Ctrl release");
+	slave_key(dpy, &physical, XK_Control_L, False);
+	CHECK(wait_panel(dpy, root, 0, &panel) && wait_active(dpy, root, stack[2]),
+	      "Ctrl release with the opener unmapped did not activate the highlighted row");
+	promote_row(stack, 2);
+	CHECK(remap_keycode(dpy, code, openersyms, per, stack[0]), "could not restore the opener mapping");
+	switcher_tap(dpy, XK_x);
+	CHECK(wait_for_input(dpy, stack[0], KeyPress, x, 0), "typing after the keymap commit was lost");
+
+	/* Cancelling still keeps focus and typing at the original window. */
+	for (i = 0; i < 1 + (opener != XK_Escape); i++) {
+		slave_key(dpy, &physical, XK_Control_L, True);
+		switcher_tap(dpy, opener);
+		CHECK(wait_panel(dpy, root, 1, &panel), "the restored opener did not reopen the panel");
+		slave_key(dpy, &physical, XK_Super_L, True);
+		slave_key(dpy, &physical, XK_Super_L, False);
+		if (i) {
+			switcher_tap(dpy, XK_Escape);
+		} else {
+			slave_key(dpy, &physical, XK_Shift_L, True);
+			switcher_tap(dpy, opener);
+			slave_key(dpy, &physical, XK_Shift_L, False);
+		}
+		CHECK(wait_panel(dpy, root, 0, &panel), "%s did not cancel across a slave switch",
+		      i ? "Escape" : "Shift+opener");
+		slave_key(dpy, &physical, XK_Control_L, False);
+		switcher_tap(dpy, XK_x);
+		CHECK(wait_for_input(dpy, stack[0], KeyPress, x, 0) && active_window(dpy, root) == stack[0],
+		      "Ctrl release after %s across a slave switch committed a row", i ? "Escape" : "Shift+opener");
+	}
+	for (i = 0; i < 3; i++)
+		XDestroyWindow(dpy, stack[i]);
+	CHECK(wait_active(dpy, root, None), "slave switch checks did not leave an empty monitor");
+out:
+	if (physical.device_id) {
+		slave_key(dpy, &physical, XK_Control_L, False);
+		if (code && openersyms)
+			XChangeKeyboardMapping(dpy, code, per, openersyms, 1);
+	}
+	if (openersyms)
+		XFree(openersyms);
+	if (sparesyms)
+		XFree(sparesyms);
+	free(changed);
+	XSync(dpy, False);
+}
+
 static void
 test_switcher(Display *dpy, Window root)
 {
@@ -1612,6 +1788,7 @@ test_switcher(Display *dpy, Window root)
 	switcher_key(dpy, XK_Control_L, False);
 	check_hidden_mixed_scratchpad(dpy, root, heads[0]);
 	check_switcher_step(dpy, root);
+	check_switcher_slave_switch(dpy, root);
 	/* Start on A. Then visit B to give it an independent layout/selection. */
 	a23 = switcher_client(dpy, root, "Calendar - tags 2 + 3", 6, 0);
 	CHECK(wait_visible(dpy, a23, heads[0], 0), "sole eligible client was not hidden");
@@ -2083,6 +2260,7 @@ main(int argc, char **argv)
 		for (int i = 0; i < 80 && !wm_running(dpy, root); i++)
 			pause_millis(25);
 		check_switcher_step(dpy, root);
+		check_switcher_slave_switch(dpy, root);
 		XCloseDisplay(dpy);
 		if (!failures)
 			printf("X11 window switcher checks passed for a Ctrl+%s build\n", argv[2]);
